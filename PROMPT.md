@@ -210,7 +210,7 @@ A 和 B 只通过第 2 节的 HTTP 接口与 C 通信，D 只通过 2.8 的消�
 ### 模块 A · 实时视频输入
 
 - **目标**：真实摄像头下稳定识别进入上车区域的轮椅 / 婴儿车 / 手杖，按 2.3 上报，并提供 2.7 的画面。
-- **可以改**：`vision/yolo_bridge.py`、`vision/start_bridge.sh`、`vision/ride_signal_client.py`、`vision/demos/`、ROI 文件。
+- **可以改**：`vision/yolo_bridge.py`、`vision/aid_verifier.py`、`vision/start_bridge.sh`、`vision/ride_signal_client.py`、`vision/demos/`、ROI 文件。
 - **不要改**：`vision/monitor_zone.py`、`dashboard/`、`twin/`。
 - **独立开发**（不需要其他模块）：
 
@@ -220,9 +220,11 @@ A 和 B 只通过第 2 节的 HTTP 接口与 C 通信，D 只通过 2.8 的消�
   ```
 
   控制台应出现 `TRIGGER … → CLEAR …` 和 `{"processed_frames":120,…}`。真实摄像头先画区域：`.venv/bin/python monitor_zone.py --source 0`（回车保存 `monitor_roi.json`）。
+- **手机摄像头**：手机装 DroidCam 类应用，与电脑连同一网络（如手机热点），视频地址形如 `http://172.20.10.3:4747/video`，直接作为 `--source` 传入：先 `monitor_zone.py --source "<地址>"` 画区域，再 `bash start_demo.sh "<地址>"`。
+- **人与辅具的区分（二次确认）**：`best.pt` 的四个类别标注的都是“人 + 辅具”整体，训练集里没有只有人的画面，所以会把普通行人高置信度地判成婴儿车或轮椅。`yolo_bridge.py` 不改这份权重，而是用 `aid_verifier.py` 加了一个开放词表模型（`weights/yolov8s-world-aids.pt`）：辅具框必须在框内看到辅具本体（轮椅 / 婴儿车 / 手杖）累计 2 次才算数，确认后随该目标保持；同一个模型另外画出灰色的 `person` 框（只显示，不上报）。两类轮椅在画面和上报里都合并为 `wheelchair`。`--no-verify` 可关闭以对比。注意 `monitor_zone.py` 没有这层确认，演示和联调请用 `yolo_bridge.py`。
 - **联调**：去掉 `--no-signal`，中枢收到后 `curl http://127.0.0.1:8787/api/state` 的 `context.perception.yolo_detections` 应有对应标签。
-- **待办**：真实摄像头 / RTSP 实测；现场光照和角度下的置信度（需 ≥ 0.75 才生效）；进出区域的抖动（`--enter-frames` / `--exit-frames`）；Apple Silicon 上 `--device mps` 与 `cpu` 的帧率对比。
-- **验收**：`.venv/bin/python -m unittest test_monitor_zone -v` 5 项通过；`curl :8790/health` 返回 `ok:true` 且 `fps > 0`；实物进入区域后 dashboard 出现 `NEEDS_CONFIRMATION`，离开后检测清空。
+- **待办**：二次确认目前只在仓库自带的五段视频上验证过（真辅具全部确认，旁观者零误确认），手机实拍下的效果待测，尤其是手杖和婴儿车；效果不够时的后备方案是加入“只有人”的负样本重训。真实摄像头 / RTSP 实测；现场光照和角度下的置信度（需 ≥ 0.75 才生效）；进出区域的抖动（`--enter-frames` / `--exit-frames`）；Apple Silicon 上 `--device mps` 与 `cpu` 的帧率对比。
+- **验收**：`.venv/bin/python -m unittest test_monitor_zone test_aid_verifier` 11 项通过；`curl :8790/health` 返回 `ok:true` 且 `fps > 0`；实物进入区域后 dashboard 出现 `NEEDS_CONFIRMATION`，离开后检测清空。
 
 ### 模块 B · App 输入与乘客反馈（手机网页 / PWA）
 

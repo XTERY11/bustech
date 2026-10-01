@@ -11,3 +11,5 @@ vision/monitor_roi.json
 vision/*.jsonl
 vision/*.avi
 .DS_Store
+/weights/
+vision/weights/yolov8s-worldv2.pt

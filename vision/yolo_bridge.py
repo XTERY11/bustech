@@ -27,6 +27,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from aid_verifier import WEIGHTS as VERIFY_WEIGHTS, AidVerifier, ConfirmedTracks
 from monitor_zone import Trigger, anchor_point, is_inside, load_roi
 from ride_signal_client import RideSignalClient
 
@@ -111,6 +112,10 @@ def parse_args():
     p.add_argument('--classes', type=int, nargs='+', help='Class IDs; default is all four classes')
     p.add_argument('--device', default='auto', help='auto, cpu, mps, or GPU index such as 0')
     p.add_argument('--imgsz', type=int, default=640)
+    p.add_argument('--verify-model', type=Path, default=VERIFY_WEIGHTS, help='Open-vocabulary weights that must see the device inside an aid box (see aid_verifier.py)')
+    p.add_argument('--no-verify', action='store_true', help='Report raw detections without the device check and without person boxes')
+    p.add_argument('--verify-conf', type=float, default=0.15, help='Minimum device score inside an aid box')
+    p.add_argument('--verify-hits', type=int, default=2, help='Device sightings needed before an aid box counts')
     p.add_argument('--enter-frames', type=int, default=2)
     p.add_argument('--exit-frames', type=int, default=5)
     p.add_argument('--width', type=int, default=1280, help='Maximum processed/streamed frame width')
@@ -160,12 +165,19 @@ def main():
     names = model.names
     if args.classes and any(c not in names for c in args.classes):
         raise ValueError(f'Available classes: {names}')
+    verifier = None
+    if not args.no_verify:
+        if args.verify_model.is_file():
+            verifier = AidVerifier(args.verify_model, device, conf=args.verify_conf)
+        else:
+            print(f'Verifier weights not found: {args.verify_model}. Running unverified; build them with: python aid_verifier.py', flush=True)
+    tracks = ConfirmedTracks(hits=args.verify_hits)
 
     shared = SharedFrame()
     info = {'source': str(args.source), 'device': device, 'roi': str(args.roi), 'bridge_url': None if args.no_signal else args.bridge_url}
     server = ThreadingHTTPServer((args.mjpeg_host, args.mjpeg_port), make_handler(shared, info))
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    print(f'Device: {device}; classes: {names}; anchor: {args.anchor}', flush=True)
+    print(f'Device: {device}; classes: {names}; anchor: {args.anchor}; device check: {"on" if verifier else "off"}', flush=True)
     print(f'Preview: http://127.0.0.1:{args.mjpeg_port}/stream.mjpg  Health: http://127.0.0.1:{args.mjpeg_port}/health', flush=True)
 
     client = None if args.no_signal else RideSignalClient(args.bridge_url, args.bridge_token)
@@ -208,7 +220,7 @@ def main():
             ok, frame = cap.read()
             if not ok:
                 if is_file and args.loop:
-                    cap.release(); cap = open_capture(source); trigger.reset(); continue
+                    cap.release(); cap = open_capture(source); trigger.reset(); tracks.reset(); continue
                 if is_file:
                     print('Video finished.', flush=True); break
                 raise RuntimeError('Camera/stream stopped delivering frames.')
@@ -220,17 +232,26 @@ def main():
             view = frame.copy()
             result = model.predict(frame, imgsz=args.imgsz, conf=args.conf, classes=args.classes, device=device, verbose=False)[0]
             inside_detections, all_detections = [], []
-            for box in result.boxes.data.cpu().tolist():
+            boxes = result.boxes.data.cpu().tolist()
+            # An aid box only counts once the verifier has seen an actual device inside it.
+            verified = tracks.step([box[:4] for box in boxes], lambda b: verifier.has_device(frame, b)) if verifier else [True] * len(boxes)
+            persons = verifier.persons(frame) if verifier else []
+            for x1, y1, x2, y2, confidence in persons:
+                cv2.rectangle(view, (int(x1), int(y1)), (int(x2), int(y2)), (170, 170, 170), 1)
+                cv2.putText(view, f'person {confidence:.2f}', (max(0, int(x1)), max(20, int(y1) - 6)), cv2.FONT_HERSHEY_SIMPLEX, .45, (170, 170, 170), 1)
+            for box, confirmed in zip(boxes, verified):
                 x1, y1, x2, y2, confidence, cls = box
                 label = CLASS_MAP.get(str(names[int(cls)]).lower())
                 inside = is_inside(box[:4], points, width, height, args.anchor)
-                item = {'label': label or 'UNKNOWN', 'confidence': round(float(confidence), 3), 'model_class': names[int(cls)]}
+                item = {'label': label or 'UNKNOWN', 'confidence': round(float(confidence), 3), 'model_class': names[int(cls)], 'verified': confirmed}
                 all_detections.append(item)
+                if not confirmed:
+                    continue
                 if inside and label:
                     inside_detections.append({'label': label, 'confidence': round(float(confidence), 3)})
                 color = (0, 100, 255) if inside else (220, 180, 70)
                 cv2.rectangle(view, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
-                cv2.putText(view, f'{names[int(cls)]} {confidence:.2f}', (max(0, int(x1)), max(20, int(y1) - 8)), cv2.FONT_HERSHEY_SIMPLEX, .6, color, 2)
+                cv2.putText(view, f'{(label or names[int(cls)]).lower()} {confidence:.2f}', (max(0, int(x1)), max(20, int(y1) - 8)), cv2.FONT_HERSHEY_SIMPLEX, .6, color, 2)
                 cv2.circle(view, tuple(round(v) for v in anchor_point(box[:4], args.anchor)), 5, color, -1)
             active, entered = trigger.update(len(inside_detections) > 0)
             processed += 1
@@ -252,7 +273,7 @@ def main():
             cv2.putText(view, f'inside {len(inside_detections)} | {device} | {shared.fps:.0f} fps', (width - 290, 36), cv2.FONT_HERSHEY_SIMPLEX, .55, (200, 200, 200), 1)
             ok_jpeg, buf = cv2.imencode('.jpg', view, [cv2.IMWRITE_JPEG_QUALITY, args.jpeg_quality])
             if ok_jpeg:
-                shared.set(buf.tobytes(), {'triggered': active, 'inside': len(inside_detections), 'detections': all_detections[:20], 'frames': processed})
+                shared.set(buf.tobytes(), {'triggered': active, 'inside': len(inside_detections), 'detections': all_detections[:20], 'persons': len(persons), 'frames': processed})
             fps_count += 1
             if time.monotonic() - tick_fps >= 1:
                 shared.fps = fps_count / (time.monotonic() - tick_fps); tick_fps = time.monotonic(); fps_count = 0

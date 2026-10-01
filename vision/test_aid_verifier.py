@@ -1,0 +1,52 @@
+import unittest
+
+from aid_verifier import ConfirmedTracks, iou
+
+BOX = [100, 100, 200, 300]
+NEAR = [104, 102, 204, 302]
+FAR = [600, 100, 700, 300]
+
+
+class ConfirmedTracksTest(unittest.TestCase):
+    def test_box_without_device_is_never_confirmed(self):
+        tracks = ConfirmedTracks(hits=2, window=30)
+        for _ in range(200):
+            self.assertEqual(tracks.step([BOX], lambda b: False), [False])
+
+    def test_confirms_after_enough_hits_and_stays_latched(self):
+        tracks = ConfirmedTracks(hits=2, window=30)
+        self.assertEqual(tracks.step([BOX], lambda b: True), [False])
+        self.assertEqual(tracks.step([NEAR], lambda b: True), [True])
+        calls = []
+        self.assertEqual(tracks.step([BOX], lambda b: calls.append(b) or False), [True])
+        self.assertEqual(calls, [])  # confirmed boxes are not re-checked
+
+    def test_hits_outside_window_do_not_count(self):
+        tracks = ConfirmedTracks(hits=2, window=5)
+        answers = iter([True] + [False] * 5 + [True])
+        for _ in range(7):
+            confirmed = tracks.step([BOX], lambda b: next(answers))
+        self.assertEqual(confirmed, [False])
+
+    def test_latch_survives_short_gap_but_not_long_absence(self):
+        tracks = ConfirmedTracks(hits=1, max_misses=3)
+        self.assertEqual(tracks.step([BOX], lambda b: True), [True])
+        for _ in range(3):
+            tracks.step([], lambda b: False)
+        self.assertEqual(tracks.step([BOX], lambda b: False), [True])
+        for _ in range(4):
+            tracks.step([], lambda b: False)
+        self.assertEqual(tracks.step([BOX], lambda b: False), [False])
+
+    def test_boxes_are_tracked_independently(self):
+        tracks = ConfirmedTracks(hits=1)
+        self.assertEqual(tracks.step([BOX, FAR], lambda b: b == BOX), [True, False])
+        self.assertEqual(tracks.step([FAR, NEAR], lambda b: False), [False, True])
+
+    def test_iou(self):
+        self.assertEqual(iou(BOX, FAR), 0.0)
+        self.assertAlmostEqual(iou(BOX, BOX), 1.0)
+
+
+if __name__ == '__main__':
+    unittest.main()
