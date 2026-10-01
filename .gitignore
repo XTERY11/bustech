@@ -12,4 +12,5 @@ vision/*.jsonl
 vision/*.avi
 .DS_Store
 /weights/
-vision/weights/yolov8s-worldv2.pt
+vision/weights/yolov8*-worldv2.pt
+vision/weights/yolov8x-world-aids.pt

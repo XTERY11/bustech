@@ -57,6 +57,13 @@ class ConfirmedTracksTest(unittest.TestCase):
         tracks.step([BOX, FAR], lambda b: 'WHEELCHAIR' if b == BOX else None)
         self.assertEqual(tracks.evidence, ['WHEELCHAIR', None])
 
+    def test_label_must_repeat_before_it_confirms(self):
+        tracks = ConfirmedTracks(hits=2)
+        answers = iter([('WHEELCHAIR', .5), ('CANE', .4), ('CANE', .6)])
+        results = [tracks.step([BOX], lambda b: next(answers)) for _ in range(3)]
+        self.assertEqual(results, [[False], [False], [True]])
+        self.assertEqual(tracks.evidence, [('CANE', .6)])
+
     def test_iou(self):
         self.assertEqual(iou(BOX, FAR), 0.0)
         self.assertAlmostEqual(iou(BOX, BOX), 1.0)

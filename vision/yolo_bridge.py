@@ -27,7 +27,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from aid_verifier import WEIGHTS as VERIFY_WEIGHTS, AidVerifier, ConfirmedTracks
+from aid_verifier import WEIGHTS as VERIFY_WEIGHTS, AidVerifier, ConfirmedTracks, iou
 from monitor_zone import Trigger, anchor_point, load_roi
 from ride_signal_client import RideSignalClient
 
@@ -282,30 +282,34 @@ def main():
                 frame = cv2.resize(frame, (args.width, round(frame.shape[0] * args.width / frame.shape[1])))
             height, width = frame.shape[:2]
             view = frame.copy()
-            result = model.predict(frame, imgsz=args.imgsz, conf=args.conf, classes=args.classes, device=device, verbose=False)[0]
+            result = model.predict(frame, imgsz=args.imgsz, conf=args.conf, classes=args.classes, device=device, agnostic_nms=True, verbose=False)[0]
             if region_mask is None or region_mask.shape != (height, width):
                 region_mask = np.zeros((height, width), np.uint8)
                 cv2.fillPoly(region_mask, [np.round(np.asarray(points) * [width - 1, height - 1]).astype(np.int32)], 1)
             inside_detections, all_detections = [], []
-            boxes = result.boxes.data.cpu().tolist()
-            # An aid box only counts once the verifier has seen an actual device inside it.
-            verified = tracks.step([box[:4] for box in boxes], lambda b: verifier.evidence(frame, b)) if verifier else [True] * len(boxes)
-            stand_in = tracks.evidence if verifier else [None] * len(boxes)
+            boxes = sorted(result.boxes.data.cpu().tolist(), key=lambda box: -box[4])
+            # An aid box only counts once the verifier has seen an object with the person inside it.
+            own = {tuple(box[:4]): CLASS_MAP.get(str(names[int(box[5])]).lower()) for box in boxes}
+            verified = tracks.step([box[:4] for box in boxes], lambda b: verifier.evidence(frame, b, own[tuple(b)])) if verifier else [True] * len(boxes)
+            evidence = tracks.evidence if verifier else [None] * len(boxes)
+            shown = []
             if verifier and processed % 2 == 0:  # person boxes are display-only; every other frame is enough
                 persons = verifier.persons(frame)
             for x1, y1, x2, y2, confidence in persons:
                 cv2.rectangle(view, (int(x1), int(y1)), (int(x2), int(y2)), (170, 170, 170), 1)
                 cv2.putText(view, f'person {confidence:.2f}', (max(0, int(x1)), max(20, int(y1) - 6)), cv2.FONT_HERSHEY_SIMPLEX, .45, (170, 170, 170), 1)
-            for box, confirmed, found in zip(boxes, verified, stand_in):
+            for box, confirmed, found in zip(boxes, verified, evidence):
                 x1, y1, x2, y2, confidence, cls = box
-                # A stand-in object decides the label; for a real aid the detector's own class is kept.
-                kind, seen = found or ('DEVICE', 0.0)
-                label = kind if kind != 'DEVICE' else CLASS_MAP.get(str(names[int(cls)]).lower())
+                # The verifier's object decides the label (see AidVerifier.evidence); unverified runs keep the detector's class.
+                label, seen = found or (own[tuple(box[:4])], 0.0)
                 # Two independent models agree on this target: combine them (noisy-OR) into the reported confidence.
                 detector_confidence, confidence = confidence, 1 - (1 - confidence) * (1 - seen)
                 inside = in_region(box[:4], region_mask, args.anchor)
                 if not confirmed:
                     continue
+                if any(other == label and iou(box[:4], kept) >= 0.4 for kept, other in shown):
+                    continue  # the detector sometimes gives two boxes for one person
+                shown.append((box[:4], label))
                 all_detections.append({'label': label or 'UNKNOWN', 'confidence': round(float(confidence), 3), 'detector_confidence': round(float(detector_confidence), 3), 'model_class': names[int(cls)]})
                 if inside and label:
                     inside_detections.append({'label': label, 'confidence': round(float(confidence), 3)})
