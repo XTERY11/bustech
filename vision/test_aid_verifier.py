@@ -1,5 +1,7 @@
 import unittest
 
+import numpy as np
+
 from aid_verifier import ConfirmedTracks, iou
 
 BOX = [100, 100, 200, 300]
@@ -58,6 +60,25 @@ class ConfirmedTracksTest(unittest.TestCase):
     def test_iou(self):
         self.assertEqual(iou(BOX, FAR), 0.0)
         self.assertAlmostEqual(iou(BOX, BOX), 1.0)
+
+
+class InRegionTest(unittest.TestCase):
+    def setUp(self):
+        from yolo_bridge import in_region
+        self.in_region = in_region
+        self.mask = np.zeros((100, 100), np.uint8)
+        self.mask[60:80, 40:70] = 1
+
+    def test_anchor_inside(self):
+        self.assertTrue(self.in_region([45, 20, 60, 70], self.mask, 'bottom-center'))
+
+    def test_box_running_past_the_region_edge_still_counts(self):
+        # bottom-centre falls below the region, but the lower part of the box covers it
+        self.assertTrue(self.in_region([40, 10, 70, 99], self.mask, 'bottom-center'))
+
+    def test_box_elsewhere_does_not_count(self):
+        self.assertFalse(self.in_region([0, 0, 20, 50], self.mask, 'bottom-center'))
+        self.assertFalse(self.in_region([75, 10, 95, 99], self.mask, 'bottom-center'))
 
 
 if __name__ == '__main__':

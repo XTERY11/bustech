@@ -28,7 +28,7 @@ import cv2
 import numpy as np
 
 from aid_verifier import WEIGHTS as VERIFY_WEIGHTS, AidVerifier, ConfirmedTracks
-from monitor_zone import Trigger, anchor_point, is_inside, load_roi
+from monitor_zone import Trigger, anchor_point, load_roi
 from ride_signal_client import RideSignalClient
 
 ROOT = Path(__file__).resolve().parent
@@ -108,7 +108,7 @@ def parse_args():
     p.add_argument('--model', type=Path, default=ROOT / 'runs/bustech_yolov8n/weights/best.pt')
     p.add_argument('--roi', type=Path, default=ROOT / 'monitor_roi.json')
     p.add_argument('--anchor', choices=['bottom-center', 'center'], default=None)
-    p.add_argument('--conf', type=float, default=0.4)
+    p.add_argument('--conf', type=float, default=None, help='Detector confidence; default 0.25 with the device check on, 0.4 with --no-verify')
     p.add_argument('--classes', type=int, nargs='+', help='Class IDs; default is all four classes')
     p.add_argument('--device', default='auto', help='auto, cpu, mps, or GPU index such as 0')
     p.add_argument('--imgsz', type=int, default=640)
@@ -118,7 +118,7 @@ def parse_args():
     p.add_argument('--verify-hits', type=int, default=2, help='Device sightings needed before an aid box counts')
     p.add_argument('--strict-verify', action='store_true', help='Only real aids count; do not accept stand-ins such as an office chair')
     p.add_argument('--enter-frames', type=int, default=2)
-    p.add_argument('--exit-frames', type=int, default=5)
+    p.add_argument('--exit-frames', type=int, default=30, help='Frames without a target before the region clears (about 1 s), so a flickering box does not end the trigger')
     p.add_argument('--width', type=int, default=1280, help='Maximum processed/streamed frame width')
     p.add_argument('--rotate', choices=['none', 'cw', 'ccw', '180'], default='none')
     p.add_argument('--jpeg-quality', type=int, default=80)
@@ -162,6 +162,21 @@ class LatestFrame:
         self.cap.release()
 
 
+def in_region(box, mask, anchor):
+    """A target counts as in the region when its anchor point is inside, or when the lower part of
+    its box (where the wheels / feet are) overlaps the region. A single point alone misses a target
+    whose box runs past the region edge or the bottom of the frame."""
+    height, width = mask.shape
+    x, y = anchor_point(box, anchor)
+    if 0 <= int(y) < height and 0 <= int(x) < width and mask[int(y), int(x)]:
+        return True
+    x1, x2 = max(0, int(box[0])), min(width, int(box[2]))
+    y2 = min(height, int(box[3])); y1 = max(0, int(box[3] - 0.3 * (box[3] - box[1])))
+    if x2 <= x1 or y2 <= y1:
+        return False
+    return float(mask[y1:y2, x1:x2].mean()) >= 0.25
+
+
 def open_capture(source):
     cap = cv2.VideoCapture(source, cv2.CAP_DSHOW) if isinstance(source, int) and os.name == 'nt' else cv2.VideoCapture(source)
     if not cap.isOpened() and isinstance(source, int) and os.name == 'nt':
@@ -200,7 +215,10 @@ def main():
             verifier = AidVerifier(args.verify_model, device, conf=args.verify_conf, stand_ins=not args.strict_verify)
         else:
             print(f'Verifier weights not found: {args.verify_model}. Running unverified; build them with: python aid_verifier.py', flush=True)
+    if args.conf is None:  # with the device check on, the check filters false alarms, so the detector can be more sensitive
+        args.conf = 0.25 if verifier else 0.4
     tracks = ConfirmedTracks(hits=args.verify_hits, interval=3)
+    region_mask = None
     persons = []
 
     shared = SharedFrame()
@@ -227,7 +245,9 @@ def main():
             return
         try:
             # Same envelope as integrations/ride_signal_client.py; zone is informational for the dashboard.
-            client.signal('perception', {'yolo_detections': detections[:20], 'target_match_confirmed': False,
+            # target_match_confirmed: a verified aid is standing in the drawn boarding region. The hub ignores
+            # camera detections without it; it still never authorises a ramp without a booking.
+            client.signal('perception', {'yolo_detections': detections[:20], 'target_match_confirmed': bool(detections),
                                          'zone': {'triggered': bool(detections), 'roi_id': roi_id}},
                           observed_at=datetime.now(timezone.utc).isoformat())
             shared.status['last_signal'] = {'at': time.time(), 'reason': reason, 'labels': [d['label'] for d in detections]}
@@ -263,6 +283,9 @@ def main():
             height, width = frame.shape[:2]
             view = frame.copy()
             result = model.predict(frame, imgsz=args.imgsz, conf=args.conf, classes=args.classes, device=device, verbose=False)[0]
+            if region_mask is None or region_mask.shape != (height, width):
+                region_mask = np.zeros((height, width), np.uint8)
+                cv2.fillPoly(region_mask, [np.round(np.asarray(points) * [width - 1, height - 1]).astype(np.int32)], 1)
             inside_detections, all_detections = [], []
             boxes = result.boxes.data.cpu().tolist()
             # An aid box only counts once the verifier has seen an actual device inside it.
@@ -276,17 +299,21 @@ def main():
             for box, confirmed, found in zip(boxes, verified, stand_in):
                 x1, y1, x2, y2, confidence, cls = box
                 # A stand-in object decides the label; for a real aid the detector's own class is kept.
-                label = found if found not in (None, 'DEVICE') else CLASS_MAP.get(str(names[int(cls)]).lower())
-                inside = is_inside(box[:4], points, width, height, args.anchor)
+                kind, seen = found or ('DEVICE', 0.0)
+                label = kind if kind != 'DEVICE' else CLASS_MAP.get(str(names[int(cls)]).lower())
+                # Two independent models agree on this target: combine them (noisy-OR) into the reported confidence.
+                detector_confidence, confidence = confidence, 1 - (1 - confidence) * (1 - seen)
+                inside = in_region(box[:4], region_mask, args.anchor)
                 if not confirmed:
                     continue
-                all_detections.append({'label': label or 'UNKNOWN', 'confidence': round(float(confidence), 3), 'model_class': names[int(cls)]})
+                all_detections.append({'label': label or 'UNKNOWN', 'confidence': round(float(confidence), 3), 'detector_confidence': round(float(detector_confidence), 3), 'model_class': names[int(cls)]})
                 if inside and label:
                     inside_detections.append({'label': label, 'confidence': round(float(confidence), 3)})
                 color = (0, 100, 255) if inside else (220, 180, 70)
                 cv2.rectangle(view, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
                 cv2.putText(view, f'{(label or names[int(cls)]).lower()} {confidence:.2f}', (max(0, int(x1)), max(20, int(y1) - 8)), cv2.FONT_HERSHEY_SIMPLEX, .6, color, 2)
                 cv2.circle(view, tuple(round(v) for v in anchor_point(box[:4], args.anchor)), 5, color, -1)
+            was_active = trigger.active
             active, entered = trigger.update(len(inside_detections) > 0)
             processed += 1
             if entered:
@@ -294,7 +321,7 @@ def main():
                 post(inside_detections, 'enter'); last_heartbeat = time.monotonic()
             elif active and inside_detections and time.monotonic() - last_heartbeat >= args.heartbeat:
                 post(inside_detections, 'heartbeat'); last_heartbeat = time.monotonic()
-            elif not active and trigger.misses == args.exit_frames:  # exactly on the exit transition
+            elif was_active and not active:  # exit transition
                 record({'event': 'CLEAR', 'frame': processed})
                 post([], 'exit')
             # overlay: region, state bar

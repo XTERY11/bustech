@@ -114,10 +114,12 @@ class AidVerifier:
         return max((row[4] for row in self._objects(frame, box) if int(row[5]) in DEVICES), default=0.0)
 
     def evidence(self, frame, box):
-        """'DEVICE' for a real aid, a hub label for a stand-in object, None for a bare person."""
+        """(kind, score): kind is 'DEVICE' for a real aid or a hub label for a stand-in object.
+        None for a bare person."""
         rows = self._objects(frame, box)
-        if max((row[4] for row in rows if int(row[5]) in DEVICES), default=0.0) >= self.conf:
-            return 'DEVICE'
+        device = max((row[4] for row in rows if int(row[5]) in DEVICES), default=0.0)
+        if device >= self.conf:
+            return 'DEVICE', device
         if not self.stand_ins:
             return None
         area = (box[2] - box[0]) * (box[3] - box[1])
@@ -130,7 +132,7 @@ class AidVerifier:
                 continue
             if best is None or score > best[0]:
                 best = (score, STAND_INS[cls])
-        return best[1] if best else None
+        return (best[1], best[0]) if best else None
 
     def has_device(self, frame, box):
         return self.evidence(frame, box) is not None

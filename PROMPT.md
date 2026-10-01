@@ -83,13 +83,16 @@
 ```json
 { "event_id": "perception-1042", "observed_at": "2026-10-01T10:00:00Z",
   "payload": { "yolo_detections": [{ "label": "WHEELCHAIR", "confidence": 0.96 }],
-               "target_match_confirmed": false,
+               "target_match_confirmed": true,
                "zone": { "triggered": true, "roi_id": "monitor_roi" } } }
 ```
 
+- `target_match_confirmed`：`true` 表示“经过二次确认的辅具正处在画好的上车区域内”。**中枢只采信带 `true` 的检测**；为 `false` 时检测只会产生一个 `YOLO_TARGET_UNMATCHED` 标记，不影响决策。即使为 `true`，没有预约时结果仍是 `NEEDS_CONFIRMATION`（感知不能单独授权坡道）。
+
 - `label` 取值：`WHEELCHAIR` `CRUTCH` `CANE` `WALKER` `STROLLER` `PERSON` `NONE` `UNKNOWN`。
-- `confidence` 0–1；策略阈值 0.75，低于它不算有效识别。最多 20 条；可选 `track_id`。
-- 只发结构化结果，**不发图像**。进入区域发一次，占用期间按心跳重发，离开时发空数组。
+- `confidence` 0–1；策略阈值 0.75，低于它不算有效识别。检测桥上报的是检测模型与确认模型两者合并后的置信度（noisy-OR：`1-(1-检测)(1-确认)`）。最多 20 条；可选 `track_id`。
+- 只发结构化结果，**不发图像**。进入区域发一次，占用期间按心跳（默认 2 秒）重发，离开时发空数组。
+- “在区域内”的判定：检测框底边中点落在区域内，或框的下部 30% 与区域重叠达到 25%。连续 2 帧成立即触发，连续 30 帧（约 1 秒）没有目标才解除。
 
 ### 2.4 预约：`POST /api/booking`（模块 B → 中枢）
 
