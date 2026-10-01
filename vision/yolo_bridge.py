@@ -133,6 +133,34 @@ def parse_args():
     return p.parse_args()
 
 
+class LatestFrame:
+    """Reader thread for live sources: always hand out the newest frame, so inference that is
+    slower than the camera never builds up a backlog (which shows up as growing delay)."""
+    def __init__(self, cap):
+        self.cap, self.frame, self.ok = cap, None, True
+        self.fresh = threading.Event()
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        while self.ok:
+            ok, frame = self.cap.read()
+            self.ok, self.frame = ok, frame
+            self.fresh.set()
+
+    def read(self):
+        if not self.fresh.wait(10):
+            return False, None
+        self.fresh.clear()
+        return self.ok, self.frame
+
+    def get(self, prop):
+        return self.cap.get(prop)
+
+    def release(self):
+        self.ok = False
+        self.cap.release()
+
+
 def open_capture(source):
     cap = cv2.VideoCapture(source, cv2.CAP_DSHOW) if isinstance(source, int) and os.name == 'nt' else cv2.VideoCapture(source)
     if not cap.isOpened() and isinstance(source, int) and os.name == 'nt':
@@ -171,7 +199,8 @@ def main():
             verifier = AidVerifier(args.verify_model, device, conf=args.verify_conf)
         else:
             print(f'Verifier weights not found: {args.verify_model}. Running unverified; build them with: python aid_verifier.py', flush=True)
-    tracks = ConfirmedTracks(hits=args.verify_hits)
+    tracks = ConfirmedTracks(hits=args.verify_hits, interval=3)
+    persons = []
 
     shared = SharedFrame()
     info = {'source': str(args.source), 'device': device, 'roi': str(args.roi), 'bridge_url': None if args.no_signal else args.bridge_url}
@@ -206,6 +235,8 @@ def main():
             record({'event': 'SIGNAL_FAILED', 'reason': reason, 'error': str(failure)[:200]})
 
     cap = open_capture(source)
+    if not is_file:
+        cap = LatestFrame(cap)
     fps_src = cap.get(cv2.CAP_PROP_FPS)
     fps_src = fps_src if np.isfinite(fps_src) and 0 < fps_src <= 240 else 30
     processed = 0
@@ -235,7 +266,8 @@ def main():
             boxes = result.boxes.data.cpu().tolist()
             # An aid box only counts once the verifier has seen an actual device inside it.
             verified = tracks.step([box[:4] for box in boxes], lambda b: verifier.has_device(frame, b)) if verifier else [True] * len(boxes)
-            persons = verifier.persons(frame) if verifier else []
+            if verifier and processed % 2 == 0:  # person boxes are display-only; every other frame is enough
+                persons = verifier.persons(frame)
             for x1, y1, x2, y2, confidence in persons:
                 cv2.rectangle(view, (int(x1), int(y1)), (int(x2), int(y2)), (170, 170, 170), 1)
                 cv2.putText(view, f'person {confidence:.2f}', (max(0, int(x1)), max(20, int(y1) - 6)), cv2.FONT_HERSHEY_SIMPLEX, .45, (170, 170, 170), 1)

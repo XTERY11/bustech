@@ -43,8 +43,9 @@ def iou(a, b):
 class ConfirmedTracks:
     """Frame-to-frame box association with a verification latch (no model inside)."""
 
-    def __init__(self, hits=2, window=30, max_misses=15, match_iou=0.3):
+    def __init__(self, hits=2, window=30, max_misses=15, match_iou=0.3, interval=1):
         self.hits, self.window, self.max_misses, self.match_iou = hits, window, max_misses, match_iou
+        self.interval = interval  # check an unconfirmed box only every Nth frame it is seen
         self.tracks = []
 
     def reset(self):
@@ -59,9 +60,10 @@ class ConfirmedTracks:
             if track is not None and iou(track['box'], box) >= self.match_iou:
                 free.remove(track)
             else:
-                track = {'checks': deque(maxlen=self.window), 'confirmed': False}
+                track = {'checks': deque(maxlen=self.window), 'confirmed': False, 'seen': 0}
             track['box'], track['misses'] = list(box), 0
-            if not track['confirmed']:
+            track['seen'] += 1
+            if not track['confirmed'] and (track['seen'] - 1) % self.interval == 0:
                 track['checks'].append(bool(check(box)))
                 track['confirmed'] = sum(track['checks']) >= self.hits
             alive.append(track); result.append(track['confirmed'])

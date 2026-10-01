@@ -43,6 +43,13 @@ class ConfirmedTracksTest(unittest.TestCase):
         self.assertEqual(tracks.step([BOX, FAR], lambda b: b == BOX), [True, False])
         self.assertEqual(tracks.step([FAR, NEAR], lambda b: False), [False, True])
 
+    def test_interval_skips_checks_between_frames(self):
+        tracks = ConfirmedTracks(hits=2, interval=3)
+        calls = []
+        results = [tracks.step([BOX], lambda b: calls.append(1) or True) for _ in range(4)]
+        self.assertEqual(results, [[False], [False], [False], [True]])
+        self.assertEqual(len(calls), 2)
+
     def test_iou(self):
         self.assertEqual(iou(BOX, FAR), 0.0)
         self.assertAlmostEqual(iou(BOX, BOX), 1.0)
