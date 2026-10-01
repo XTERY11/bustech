@@ -26,8 +26,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 WEIGHTS = ROOT / 'weights/yolov8s-world-aids.pt'
 BASE_WEIGHTS = ROOT / 'weights/yolov8s-worldv2.pt'
-# Index 0 must stay "person"; every other prompt counts as evidence of a device.
-PROMPTS = ['person', 'wheelchair', 'stroller', 'baby carriage', 'walking cane', 'crutch']
+# Index 0 must stay "person". DEVICES are the prompts that count as evidence of an aid;
+# the chair prompts are decoys so a person on a wheeled office chair is not scored as a wheelchair.
+PROMPTS = ['person', 'wheelchair', 'stroller', 'baby carriage', 'walking cane', 'crutch', 'office chair', 'chair']
+DEVICES = {1, 2, 3, 4, 5}
 
 
 def iou(a, b):
@@ -89,7 +91,7 @@ class AidVerifier:
         if x2 - x1 < 8 or y2 - y1 < 8:
             return 0.0
         result = self.model.predict(frame[y1:y2, x1:x2], imgsz=self.imgsz, conf=0.03, device=self.device, verbose=False)[0]
-        return max((row[4] for row in result.boxes.data.cpu().tolist() if int(row[5]) != 0), default=0.0)
+        return max((row[4] for row in result.boxes.data.cpu().tolist() if int(row[5]) in DEVICES), default=0.0)
 
     def has_device(self, frame, box):
         return self.device_score(frame, box) >= self.conf
