@@ -243,10 +243,9 @@ def main():
                 x1, y1, x2, y2, confidence, cls = box
                 label = CLASS_MAP.get(str(names[int(cls)]).lower())
                 inside = is_inside(box[:4], points, width, height, args.anchor)
-                item = {'label': label or 'UNKNOWN', 'confidence': round(float(confidence), 3), 'model_class': names[int(cls)], 'verified': confirmed}
-                all_detections.append(item)
                 if not confirmed:
                     continue
+                all_detections.append({'label': label or 'UNKNOWN', 'confidence': round(float(confidence), 3), 'model_class': names[int(cls)]})
                 if inside and label:
                     inside_detections.append({'label': label, 'confidence': round(float(confidence), 3)})
                 color = (0, 100, 255) if inside else (220, 180, 70)
@@ -273,7 +272,7 @@ def main():
             cv2.putText(view, f'inside {len(inside_detections)} | {device} | {shared.fps:.0f} fps', (width - 290, 36), cv2.FONT_HERSHEY_SIMPLEX, .55, (200, 200, 200), 1)
             ok_jpeg, buf = cv2.imencode('.jpg', view, [cv2.IMWRITE_JPEG_QUALITY, args.jpeg_quality])
             if ok_jpeg:
-                shared.set(buf.tobytes(), {'triggered': active, 'inside': len(inside_detections), 'detections': all_detections[:20], 'persons': len(persons), 'frames': processed})
+                shared.set(buf.tobytes(), {'triggered': active, 'inside': len(inside_detections), 'detections': all_detections[:20], 'rejected': len(verified) - sum(verified), 'persons': len(persons), 'frames': processed})
             fps_count += 1
             if time.monotonic() - tick_fps >= 1:
                 shared.fps = fps_count / (time.monotonic() - tick_fps); tick_fps = time.monotonic(); fps_count = 0
