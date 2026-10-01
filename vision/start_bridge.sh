@@ -12,4 +12,4 @@ case "$SRC" in demos/*) ROI="monitor_example_roi.json"; EXTRA+=(--loop);; esac
 if [ ! -f "$ROI" ]; then
   echo "No region file $ROI. Draw one first (ENTER saves):"; echo "  $PY monitor_zone.py --source $SRC --roi $ROI"; exit 1
 fi
-exec "$PY" yolo_bridge.py --source "$SRC" --roi "$ROI" "${EXTRA[@]}" "$@"
+exec "$PY" yolo_bridge.py --source "$SRC" --roi "$ROI" ${EXTRA[@]+"${EXTRA[@]}"} "$@"
