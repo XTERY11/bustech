@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "points_normalized": [
+    [
+      0.35,
+      0.5
+    ],
+    [
+      0.7,
+      0.5
+    ],
+    [
+      0.7,
+      0.9
+    ],
+    [
+      0.35,
+      0.9
+    ]
+  ],
+  "anchor": "bottom-center",
+  "source_hint": "camera"
+}

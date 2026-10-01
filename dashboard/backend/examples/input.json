@@ -1,0 +1,61 @@
+{
+  "request_id": "demo-wheelchair_auto",
+  "request": {
+    "active": true,
+    "observation_age_ms": 100,
+    "intent": "BOARDING",
+    "route_id": "DEMO_ROUTE",
+    "stop_id": "DEMO_STOP",
+    "accessibility_need": "WHEELCHAIR",
+    "assistance_requested": [
+      "WHEELCHAIR_RAMP",
+      "ADDITIONAL_BOARDING_TIME"
+    ],
+    "ramp_preference": "REQUESTED",
+    "preferred_interaction": "VISUAL",
+    "language": "en-SG"
+  },
+  "perception": {
+    "observation_age_ms": 100,
+    "target_match_confirmed": true,
+    "yolo_detections": [
+      {
+        "label": "WHEELCHAIR",
+        "confidence": 0.94
+      }
+    ],
+    "geometry": {
+      "geometry_valid": true,
+      "confidence": 0.95,
+      "measured_gap_cm": 8,
+      "measured_slope_deg": 7
+    }
+  },
+  "vehicle_context": {
+    "observation_age_ms": 100,
+    "route_id": "DEMO_ROUTE",
+    "stop_id": "DEMO_STOP",
+    "motion_state": "STOPPED",
+    "parking_brake_engaged": true,
+    "emergency_stop_active": false,
+    "single_entrance_state": "OPEN",
+    "entrance_clear": true,
+    "ramp_area_clear": true,
+    "ramp_state": "STOWED",
+    "wheelchair_area_ready": true,
+    "supervision_mode": "ONBOARD_SAFETY_OPERATOR",
+    "safety_operator_available": true,
+    "safety_operator_approval": true,
+    "wheelchair_button_pressed": false,
+    "hardware_capabilities": {
+      "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
+      "manual_ramp": "AVAILABLE_FOR_DEMO",
+      "automatic_ramp_limits_verified": true,
+      "automatic_ramp_max_gap_cm": 10,
+      "automatic_ramp_max_slope_deg": 8,
+      "external_speaker": "AVAILABLE_FOR_DEMO",
+      "external_display": "AVAILABLE_FOR_DEMO",
+      "entrance_audio_beacon": "AVAILABLE_FOR_DEMO"
+    }
+  }
+}

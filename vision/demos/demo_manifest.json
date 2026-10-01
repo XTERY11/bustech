@@ -1,0 +1,98 @@
+[
+  {
+    "source": "source/cane-002.MOV",
+    "clip": "./demos/clips/cane-002.mp4",
+    "start_seconds": 162.48,
+    "source_duration": 334.96,
+    "duration_seconds": 10.0,
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "orientation_correction": "none",
+    "evaluation_note": "Source video used to construct training/validation data; demonstration only",
+    "output": "./demos/cane-002_yolov8_demo.mp4",
+    "frames": 300,
+    "model": "./runs/bustech_yolov8n/weights/best.pt",
+    "confidence_threshold": 0.25,
+    "detections_by_class_across_frames": {
+      "cane": 300
+    }
+  },
+  {
+    "source": "source/stroller-004.MOV",
+    "clip": "./demos/clips/stroller-004.mp4",
+    "start_seconds": 143.075,
+    "source_duration": 296.15,
+    "duration_seconds": 10.0,
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "orientation_correction": "none",
+    "evaluation_note": "Source video used to construct training/validation data; demonstration only",
+    "output": "./demos/stroller-004_yolov8_demo.mp4",
+    "frames": 300,
+    "model": "./runs/bustech_yolov8n/weights/best.pt",
+    "confidence_threshold": 0.25,
+    "detections_by_class_across_frames": {
+      "stroller": 300
+    }
+  },
+  {
+    "source": "source/wheelchair 2.MOV",
+    "clip": "./demos/clips/wheelchair_2.mp4",
+    "start_seconds": 152.22,
+    "source_duration": 314.44,
+    "duration_seconds": 10.0,
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "orientation_correction": "90 degrees counterclockwise",
+    "evaluation_note": "Source video used to construct training/validation data; demonstration only",
+    "output": "./demos/wheelchair_2_yolov8_demo.mp4",
+    "frames": 300,
+    "model": "./runs/bustech_yolov8n/weights/best.pt",
+    "confidence_threshold": 0.25,
+    "detections_by_class_across_frames": {
+      "wheelchair_with": 300
+    }
+  },
+  {
+    "source": "source/wheelchair test.MOV",
+    "clip": "./demos/clips/wheelchair_test.mp4",
+    "start_seconds": 37.26,
+    "source_duration": 84.52,
+    "duration_seconds": 10.0,
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "orientation_correction": "90 degrees counterclockwise",
+    "evaluation_note": "Independent source video (not used in training)",
+    "output": "./demos/wheelchair_test_yolov8_demo.mp4",
+    "frames": 300,
+    "model": "./runs/bustech_yolov8n/weights/best.pt",
+    "confidence_threshold": 0.25,
+    "detections_by_class_across_frames": {
+      "wheelchair_without": 300,
+      "stroller": 45
+    }
+  },
+  {
+    "source": "source/wheelchair-003.MOV",
+    "clip": "./demos/clips/wheelchair-003.mp4",
+    "start_seconds": 157.225,
+    "source_duration": 324.45,
+    "duration_seconds": 10.0,
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "orientation_correction": "90 degrees counterclockwise",
+    "evaluation_note": "Source video used to construct training/validation data; demonstration only",
+    "output": "./demos/wheelchair-003_yolov8_demo.mp4",
+    "frames": 300,
+    "model": "./runs/bustech_yolov8n/weights/best.pt",
+    "confidence_threshold": 0.25,
+    "detections_by_class_across_frames": {
+      "wheelchair_without": 300
+    }
+  }
+]

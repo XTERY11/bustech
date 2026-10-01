@@ -1,0 +1,507 @@
+[
+  {
+    "path": "AGENTS.md",
+    "bytes": 247,
+    "sha256": "001925ba71077fe926ebe2749a690ff03731b7bb15720353bff35e88d3e05b96"
+  },
+  {
+    "path": "AGENT_HANDOFF.md",
+    "bytes": 11239,
+    "sha256": "e017731d741b564a6765c44d7340b40bc444dbab8af1480fa686be6860b45ce1"
+  },
+  {
+    "path": "build_transfer_bundle.py",
+    "bytes": 8961,
+    "sha256": "4df3acc90d142268a8d04f110d20a067b8b8f1a11c51e623fb5b217f6cc82c8b"
+  },
+  {
+    "path": "check_install.py",
+    "bytes": 1327,
+    "sha256": "ce3a92ce72435e3ea89553501d053c9b2bec8e48ed70e067cc7b0f645298916b"
+  },
+  {
+    "path": "demo_pipeline.py",
+    "bytes": 1427,
+    "sha256": "846053993eb3589a31cacc7b5934e5a7a1c39f80cd84726e7fbb85820b4e7792"
+  },
+  {
+    "path": "finish_transfer_bundle.py",
+    "bytes": 4874,
+    "sha256": "f80904a414620fc70ea3f654b29348f4893f40c9fb84546183e79e077ed4f99a"
+  },
+  {
+    "path": "inspect_samples.py",
+    "bytes": 1409,
+    "sha256": "961cc125a24e5b351317b131478d634190b62bf66087c80eb698a8f6f57ed6c9"
+  },
+  {
+    "path": "label_preview.jpg",
+    "bytes": 195688,
+    "sha256": "ca5772e37fa46bec9b03c0a798178985a690ee0a7be1324b8d6826ff3109d95f"
+  },
+  {
+    "path": "launch_monitor.py",
+    "bytes": 455,
+    "sha256": "1b187a29de5f37a60ee4aa10f1c7ac82ed5a83bf1169b0b185190c331a1fd108"
+  },
+  {
+    "path": "make_demos.py",
+    "bytes": 9854,
+    "sha256": "334d91ad62c15060c794abb1e37eefe01f4d0fe6e69b0f4a4c1a0a433bbe474d"
+  },
+  {
+    "path": "MIGRATION_REPORT.md",
+    "bytes": 1092,
+    "sha256": "57827f0d1258f6bcdb36ecb87950909f387c3ab96880d09a83ad779336c14946"
+  },
+  {
+    "path": "monitor_demo.mp4",
+    "bytes": 2927828,
+    "sha256": "d07827a7cd3e72111a01fb0bc25e6a51f389a22cd85a416187521996df05fc6b"
+  },
+  {
+    "path": "monitor_example_roi.json",
+    "bytes": 263,
+    "sha256": "0c271d5e825c7b66f205c02f1258f4cc76e97a772f27a203811edce04e973cc1"
+  },
+  {
+    "path": "MONITOR_GUIDE.md",
+    "bytes": 4818,
+    "sha256": "5cf76e3d9be6bf2ede192a3bc2b3c3af1cd2a8af9c886c8b43a4f930cc2fc6a8"
+  },
+  {
+    "path": "monitor_zone.py",
+    "bytes": 14612,
+    "sha256": "9d59a4f79a366e40d48685d010bd0caff54acad8f6fc1324d28d042138868ca3"
+  },
+  {
+    "path": "prepare_dataset.py",
+    "bytes": 7656,
+    "sha256": "faae881de4a71538ebb87a242c83a8a9e9f55ce7f4421a35d7f178a46a945ad9"
+  },
+  {
+    "path": "project_paths.py",
+    "bytes": 1326,
+    "sha256": "7f2b953e7055d92e8a7473041ecb1b7d3237e2ed3b03d16fd6ef8ec94160db22"
+  },
+  {
+    "path": "README.md",
+    "bytes": 650,
+    "sha256": "156f38166f956eab616b46f119d60431be5dcb206697b9e70a9da3a260967f89"
+  },
+  {
+    "path": "requirements-lock.txt",
+    "bytes": 824,
+    "sha256": "bbb20bdbbb74a5fb9820bb8ad8f9ac0ffc66e18006371090f55ad3e3dd956a74"
+  },
+  {
+    "path": "requirements-portable.txt",
+    "bytes": 189,
+    "sha256": "70d3ae9511959ca434c4e8a512e39544c4df9a6e9af34999c98bbcb2bfb5e30f"
+  },
+  {
+    "path": "requirements.txt",
+    "bytes": 56,
+    "sha256": "85291f98681a08286d352e9d09c5bb1a0a82cc7569ee0a9e946fd12787058607"
+  },
+  {
+    "path": "run_pipeline.py",
+    "bytes": 3817,
+    "sha256": "b257a96c647125b812cf91ff7cbd722f00356a4f8b1832a96909ca0fdd3b895a"
+  },
+  {
+    "path": "setup_environment.py",
+    "bytes": 1929,
+    "sha256": "9887e86ec02db476b12f49d9bf3f4c54b9ba91f23d4681e89860c518caa27e4a"
+  },
+  {
+    "path": "setup_unix.sh",
+    "bytes": 153,
+    "sha256": "f249b253e842dcaa5951f3609e7708d3c686da3b6551deaf1fe076638bef8bfe"
+  },
+  {
+    "path": "setup_windows_cpu.cmd",
+    "bytes": 302,
+    "sha256": "dee00838f40b199b586c29edd1c788aa59b3a7dd291e69e5e4196177647941db"
+  },
+  {
+    "path": "setup_windows_nvidia.cmd",
+    "bytes": 328,
+    "sha256": "be4c0dc3e45cb402c5ba39a95fee27f3de32b87e1f76f627d2625d6aa6f46ad6"
+  },
+  {
+    "path": "start_monitor.cmd",
+    "bytes": 237,
+    "sha256": "944c1afb95c7155be0fc53095398eb4f13fe6acfceb73c4d3e1c49415db888b0"
+  },
+  {
+    "path": "start_monitor.command",
+    "bytes": 69,
+    "sha256": "c0c3a65799b6c4e7739e74b56c3cefc9d070d0f2cd29d72155a6595fb666b64f"
+  },
+  {
+    "path": "start_monitor.sh",
+    "bytes": 198,
+    "sha256": "7eb0ea9a0bf4408cdfd86c88c3da4a0d3dd07c3af87cc6c21655786d582fd928"
+  },
+  {
+    "path": "test_monitor_zone.py",
+    "bytes": 2458,
+    "sha256": "cef054b1eb3f9294a6d3004c00eba1e65eb748eebb48cbc4d88fc52b4c3b8e98"
+  },
+  {
+    "path": "train.py",
+    "bytes": 1861,
+    "sha256": "9fb6f50d6b5867e24fa77c627ff90992af5db1e32fb3e80b92ef44a4d2e39315"
+  },
+  {
+    "path": "verify_dataset.py",
+    "bytes": 3150,
+    "sha256": "fbc8026db23a19e5344ca9deec312e1b4726b6ddc3b4d9e3e553210dac66b720"
+  },
+  {
+    "path": "yolov8n.pt",
+    "bytes": 6549796,
+    "sha256": "f59b3d833e2ff32e194b5bb8e08d211dc7c5bdf144b90d2c8412c47ccfc83b36"
+  },
+  {
+    "path": "demos/cane-002_yolov8_demo.mp4",
+    "bytes": 1829277,
+    "sha256": "bf32549cbe6c5f00f07fc04adfba7501b588356f35dff20708a5e88eb0768139"
+  },
+  {
+    "path": "demos/demo_manifest.json",
+    "bytes": 3248,
+    "sha256": "250a064d3f704fc12c2768c67d5540b81361b226c6a85ca1b6159f197a41f723"
+  },
+  {
+    "path": "demos/index.html",
+    "bytes": 2177,
+    "sha256": "a39415169ff27769007389ade74dedc47eea3bbf65db703388d09f3b94b09614"
+  },
+  {
+    "path": "demos/overview.jpg",
+    "bytes": 279937,
+    "sha256": "234488b23cecb07c53fac1b7a92e7418ea15b154448a0b7098cf34095447b7da"
+  },
+  {
+    "path": "demos/stroller-004_yolov8_demo.mp4",
+    "bytes": 2054501,
+    "sha256": "0779d3ed6a7bfa4825737fb10ed66e2577196d1c43abd40e5fef13c872b33fc5"
+  },
+  {
+    "path": "demos/wheelchair-003_yolov8_demo.mp4",
+    "bytes": 2162716,
+    "sha256": "3e934f4012e161de02de2130abea3f3039abe19ff862dbc361d2c111df9266e8"
+  },
+  {
+    "path": "demos/wheelchair_2_yolov8_demo.mp4",
+    "bytes": 1927379,
+    "sha256": "39b8d17190fc4c301a77375ba3196e900ad231fae2762131bf89a859465d9519"
+  },
+  {
+    "path": "demos/wheelchair_test_result.json",
+    "bytes": 623,
+    "sha256": "94abcf9efa7b17a08d0c2527a48dd3b70c0236f7711291a21026833224f226c1"
+  },
+  {
+    "path": "demos/wheelchair_test_yolov8_demo.mp4",
+    "bytes": 2070314,
+    "sha256": "61a18033c4adb8d4dc69edbfc8f60cc7e92f41c391a1a8b4c501bb914db4181d"
+  },
+  {
+    "path": "docs/original_materials_availability.json",
+    "bytes": 16281,
+    "sha256": "6a6c5c4c151e1a4765e5b4138cc5286ce647cef9165321cc4c3df3cea6f0f9c4"
+  },
+  {
+    "path": "weights/yolo26n.pt",
+    "bytes": 5544453,
+    "sha256": "9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef"
+  },
+  {
+    "path": "demos/clips/cane-002.json",
+    "bytes": 355,
+    "sha256": "727d669448775f10af1cbcb762881202a26db312413de7889b4195398daaee14"
+  },
+  {
+    "path": "demos/clips/cane-002.mp4",
+    "bytes": 2444482,
+    "sha256": "d8ce17864ea5741aee64ba3b0c1402154663b5f43484c2e54a553c166a377407"
+  },
+  {
+    "path": "demos/clips/stroller-004.json",
+    "bytes": 364,
+    "sha256": "c4b52be2d792ba0868ca2d2ce1937da742783c0c4c92833d1cb90e5e825978c8"
+  },
+  {
+    "path": "demos/clips/stroller-004.mp4",
+    "bytes": 2638941,
+    "sha256": "8379273a36973db7d2c92b0168a956ad8826d241fbe85af272d20029f8e62904"
+  },
+  {
+    "path": "demos/clips/wheelchair-003.json",
+    "bytes": 391,
+    "sha256": "ef8019030c0d308ee70f3b70f4ccf0ce6a12240bc1f7b1597138a1437a7974c7"
+  },
+  {
+    "path": "demos/clips/wheelchair-003.mp4",
+    "bytes": 2913229,
+    "sha256": "00943c2ed3755e6186bdba3d4b82533367c17d82148b2bd9674db8b9ef8f8789"
+  },
+  {
+    "path": "demos/clips/wheelchair_2.json",
+    "bytes": 386,
+    "sha256": "66ee4213393bfdfba562ad84b7abb0c5f2ad39cb023af41a531ab2e93e4c85c7"
+  },
+  {
+    "path": "demos/clips/wheelchair_2.mp4",
+    "bytes": 3001107,
+    "sha256": "ee4b1d3bce9ebe447171c128caa80f9ffbc3c007b8da06cde41214d91544f7c9"
+  },
+  {
+    "path": "demos/clips/wheelchair_test.json",
+    "bytes": 362,
+    "sha256": "014ca0085dceec094d38f79af48d6f13fb8dc5818f39fb1e1302891abd6fdeb8"
+  },
+  {
+    "path": "demos/clips/wheelchair_test.mp4",
+    "bytes": 3072047,
+    "sha256": "bd26f4b7b23c6d60c721bff0b2c233e3e73de36cd53543870514e5997720335c"
+  },
+  {
+    "path": "demos/previews/cane-002_demo_000.jpg",
+    "bytes": 230494,
+    "sha256": "86cf86e194c2f43619dbbf06a80b63551a32ea22fcc9dd2a8015d6ec6b650d54"
+  },
+  {
+    "path": "demos/previews/cane-002_demo_150.jpg",
+    "bytes": 238420,
+    "sha256": "7da27afbbf344739749afc695df95672ca0b4c28c286255d1098bbf6087d7913"
+  },
+  {
+    "path": "demos/previews/cane-002_demo_299.jpg",
+    "bytes": 238945,
+    "sha256": "c2e4db32cb6218d2c11dfb7ceb6491e46444bcae69fada6802d05b42f800ac7e"
+  },
+  {
+    "path": "demos/previews/cane-002_source.jpg",
+    "bytes": 222726,
+    "sha256": "7546e6a0fbffaf3352995f2972c56f3d91a5e0d1f092168dca4a034828266f9d"
+  },
+  {
+    "path": "demos/previews/stroller-004_demo_000.jpg",
+    "bytes": 219878,
+    "sha256": "cba36dbe4c1b039d1e9e3b9a9ce6d278d8472ff3099ca59b5a6c95f4524635da"
+  },
+  {
+    "path": "demos/previews/stroller-004_demo_150.jpg",
+    "bytes": 216945,
+    "sha256": "fb9c35b26cd2137a8a326b85ba40a37e0f16c0fef52191de7f900e44597b161c"
+  },
+  {
+    "path": "demos/previews/stroller-004_demo_299.jpg",
+    "bytes": 222448,
+    "sha256": "998039aeda0e5f6c176beb7af71fdc93fd047121ad689f9c5162a83b8a80f173"
+  },
+  {
+    "path": "demos/previews/stroller-004_source.jpg",
+    "bytes": 214652,
+    "sha256": "6843948086fd93bacf869242793a2ac6ab52248ceb7875a17a7b5a4fa26531b9"
+  },
+  {
+    "path": "demos/previews/wheelchair-003_demo_000.jpg",
+    "bytes": 222475,
+    "sha256": "209a5636271b89ef13b1e5f583b1f4680c1b5dba433f1d85d95884443a6dcb5b"
+  },
+  {
+    "path": "demos/previews/wheelchair-003_demo_150.jpg",
+    "bytes": 234303,
+    "sha256": "f8c61d09d7d9b5c2df8f30d3e504e363c86356978afffccc7c18693eaf809b81"
+  },
+  {
+    "path": "demos/previews/wheelchair-003_demo_299.jpg",
+    "bytes": 232616,
+    "sha256": "a5121ea497ce74bdee9d85b5aff00cd722bd195509846e3645ab98c90ad9b5ed"
+  },
+  {
+    "path": "demos/previews/wheelchair-003_source.jpg",
+    "bytes": 213991,
+    "sha256": "24ad8ff352739ae0b362375cd6f4eb736d1c1d3f1a9bdab86cbdc4c292d3a58c"
+  },
+  {
+    "path": "demos/previews/wheelchair_2_demo_000.jpg",
+    "bytes": 244248,
+    "sha256": "451969f994869ac8b566adbbad419346a7b2e93203c9da9e70a0c70a53e88fd3"
+  },
+  {
+    "path": "demos/previews/wheelchair_2_demo_150.jpg",
+    "bytes": 248876,
+    "sha256": "cbbea001f530bd1e4bad0acbffd3121fdc10022e9500c313841fad00af60176b"
+  },
+  {
+    "path": "demos/previews/wheelchair_2_demo_299.jpg",
+    "bytes": 249347,
+    "sha256": "d79d4c71281129b1d0b2b4cee40e0dfcd90e14a129ba2e8c74ce04637272789f"
+  },
+  {
+    "path": "demos/previews/wheelchair_2_source.jpg",
+    "bytes": 236373,
+    "sha256": "9607022e2b3da2943362cbfbd6a9de0ea18a769d4657c451432e23f213227a6d"
+  },
+  {
+    "path": "demos/previews/wheelchair_test_demo_000.jpg",
+    "bytes": 250339,
+    "sha256": "f93ad831959621bc8951147c1e84680057fa1c3a91101e84cbe4adbe145ffe38"
+  },
+  {
+    "path": "demos/previews/wheelchair_test_demo_150.jpg",
+    "bytes": 256803,
+    "sha256": "80e33899a1f9b99bda6b4a9e8e543b4451d0ec228cc40d3ecd11f189cb3d4435"
+  },
+  {
+    "path": "demos/previews/wheelchair_test_demo_299.jpg",
+    "bytes": 258466,
+    "sha256": "6d0f4f77e017a30e999f173d7b17ea6231377d7a70ad8ba3c5bb59b870b275da"
+  },
+  {
+    "path": "demos/previews/wheelchair_test_source.jpg",
+    "bytes": 242814,
+    "sha256": "3d7bf8d97077f8c9ee9d9e21314820d0bc986297e8be26cbc41d67d29fb54c08"
+  },
+  {
+    "path": "docs/history/audit_report.json",
+    "bytes": 10678,
+    "sha256": "515895f36b6156d99b7e989eaca0e6ffd6cb1d5943430ac9bc6c0fe044262b23"
+  },
+  {
+    "path": "docs/history/image_validation_report.json",
+    "bytes": 362,
+    "sha256": "b3dc8e29f555fbf528f3fc3c19e3a005b382dc6d01df9f840de44abe54fdf9f5"
+  },
+  {
+    "path": "docs/history/README.original.md",
+    "bytes": 3917,
+    "sha256": "d175ac42acd782359b2d34a90b578edfc7af7a9a14b407931ceac0e74de6cfd0"
+  },
+  {
+    "path": "runs/bustech_yolov8n/args.yaml",
+    "bytes": 1892,
+    "sha256": "def590e4ed540a4646e842eca6cc68a44eb6108c8c3a17168eb0ec6195966055"
+  },
+  {
+    "path": "runs/bustech_yolov8n/BoxF1_curve.png",
+    "bytes": 105578,
+    "sha256": "010744cc54f72af44aa4d2c7a0b3e87056549326f9e1be2346f9f96f7e88aab3"
+  },
+  {
+    "path": "runs/bustech_yolov8n/BoxPR_curve.png",
+    "bytes": 86317,
+    "sha256": "0b9bc81c1a60f61a025dd79e39b50559c424b520556a97cadc53c50148106af1"
+  },
+  {
+    "path": "runs/bustech_yolov8n/BoxP_curve.png",
+    "bytes": 77929,
+    "sha256": "8df1d6881218cce33b26e5117f10be3cb587870c5d62d2a387b9f59d3fb993f4"
+  },
+  {
+    "path": "runs/bustech_yolov8n/BoxR_curve.png",
+    "bytes": 105928,
+    "sha256": "5189f8f3bf67e8ff0a77662fa8743852a38c1446c4652652418ef4867a662e99"
+  },
+  {
+    "path": "runs/bustech_yolov8n/confusion_matrix.png",
+    "bytes": 125644,
+    "sha256": "65af874caccbe8fbd64ef84bed76cbf5241af9affbe016e0f3bb4aa40f4f1d7f"
+  },
+  {
+    "path": "runs/bustech_yolov8n/confusion_matrix_normalized.png",
+    "bytes": 125569,
+    "sha256": "19dcdbd6368887010f2acaa627d2710f36474c770ceddc0340c31a051f5de6ea"
+  },
+  {
+    "path": "runs/bustech_yolov8n/labels.jpg",
+    "bytes": 127987,
+    "sha256": "c1720faf72603a1396584d8c6c55e652dd108f5ca30c27d64f99133c7117f299"
+  },
+  {
+    "path": "runs/bustech_yolov8n/results.csv",
+    "bytes": 11936,
+    "sha256": "25858aea4f70804110f644c5327208b46b4a917d507265305df0712526ec950f"
+  },
+  {
+    "path": "runs/bustech_yolov8n/results.png",
+    "bytes": 300881,
+    "sha256": "913b05c335b7392c9e065c8d4fd276c921616f6b3a698d9d3f9d77d93de57145"
+  },
+  {
+    "path": "runs/bustech_yolov8n/train_batch0.jpg",
+    "bytes": 420021,
+    "sha256": "cc3e0ff0e515fb4bb21a2ee4f97019f5771c99449aabde0fc4002e54ced29f6e"
+  },
+  {
+    "path": "runs/bustech_yolov8n/train_batch1.jpg",
+    "bytes": 426023,
+    "sha256": "1ef2cfb0f64ae399654e07955e4be1baf1ae193600e5041c501542b45652e49a"
+  },
+  {
+    "path": "runs/bustech_yolov8n/train_batch2.jpg",
+    "bytes": 406959,
+    "sha256": "956e556ace757fe65ff15034365215dcf5719801a45c98f836d20abe30d2eeb4"
+  },
+  {
+    "path": "runs/bustech_yolov8n/train_batch28080.jpg",
+    "bytes": 310447,
+    "sha256": "470a51a7d1e734f1742829f14611add1e0a5b469573285c381693949ef9581f3"
+  },
+  {
+    "path": "runs/bustech_yolov8n/train_batch28081.jpg",
+    "bytes": 302432,
+    "sha256": "315df17e85fdc04c41d576a4dcab5db53e962e767aedb0b0fd5d9374dfba2fad"
+  },
+  {
+    "path": "runs/bustech_yolov8n/train_batch28082.jpg",
+    "bytes": 318371,
+    "sha256": "ac3e1478f822a5316b57798259bc3538972c370b370e4ebeeb343426de5d8bbc"
+  },
+  {
+    "path": "runs/bustech_yolov8n/val_batch0_labels.jpg",
+    "bytes": 381493,
+    "sha256": "327ba32d72315469e3b141d2a0145f96fd30dcab44aed5d152559b91f63e949b"
+  },
+  {
+    "path": "runs/bustech_yolov8n/val_batch0_pred.jpg",
+    "bytes": 390933,
+    "sha256": "bbd2254c420bf7148000f65f065e3aff39c33d9ef13517a501a0a718c9d0a53e"
+  },
+  {
+    "path": "runs/bustech_yolov8n/val_batch1_labels.jpg",
+    "bytes": 379662,
+    "sha256": "cdfb5ef1564d46123c3329c7f804cc71a542955761bc207a74b1f90fffe261fb"
+  },
+  {
+    "path": "runs/bustech_yolov8n/val_batch1_pred.jpg",
+    "bytes": 388719,
+    "sha256": "73d225ec2c5ebb81294d18c9c09e8b0a7f4c224bea3dd409f3f093036fba3e40"
+  },
+  {
+    "path": "runs/bustech_yolov8n/val_batch2_labels.jpg",
+    "bytes": 380578,
+    "sha256": "488223d36490ff00791cf679fb60775442fa1e9518653d04eaa63fbbd6c81a6a"
+  },
+  {
+    "path": "runs/bustech_yolov8n/val_batch2_pred.jpg",
+    "bytes": 390269,
+    "sha256": "e05897d519f47c318c25d4ed8c64bb1813936578bb70cb9e977725bfe8fe59e6"
+  },
+  {
+    "path": "runs/bustech_yolov8n/weights/best.pt",
+    "bytes": 6233386,
+    "sha256": "cc7f3a174b58e5c33d4fb2f6ebfbc8f55e3252425ec33c06738cceb458a1e3ec"
+  },
+  {
+    "path": "runs/bustech_yolov8n/weights/last.pt",
+    "bytes": 6233386,
+    "sha256": "3f121901e270ad09b59f70a192334326f3d71cc429b3f9d291ca4d12f9fa2be4"
+  }
+]

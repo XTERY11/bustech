@@ -1,0 +1,39 @@
+{
+  "checkedAt": "2026-09-11T18:28:16.900Z",
+  "channels": [
+    "booking",
+    "perception"
+  ],
+  "vehicleSource": "SIMULATED_SCENARIO",
+  "decisionSummary": [
+    "网页演示场景：App 预约 WHEELCHAIR 并明确请求坡道，模拟条件设定停车、开门、坡道区域净空、测量与批准均满足。",
+    "YOLO 检出轮椅但目标未匹配，仅作参考，不取消本次预约；按模拟计划展示展开自动短坡道并延长停站。",
+    "展开后仍需等待登乘、落座与安全带确认，本简化版不发车。"
+  ],
+  "meta": {
+    "mode": "single",
+    "source": "llm",
+    "model": "deepseek-flash",
+    "api_calls": 1,
+    "usage": {
+      "prompt_tokens": 1704,
+      "completion_tokens": 242,
+      "total_tokens": 1946,
+      "prompt_cache_hit_tokens": 0,
+      "prompt_cache_miss_tokens": 1704
+    },
+    "latency_ms": 1342,
+    "validation_passed": true
+  },
+  "actions": [
+    "HOLD_AT_STOP",
+    "CHECK_SINGLE_ENTRANCE_CLEARANCE",
+    "KEEP_SINGLE_ENTRANCE_CLEAR",
+    "PREPARE_WHEELCHAIR_AREA",
+    "EXTEND_DWELL_TIME",
+    "DEPLOY_AUTOMATIC_SHORT_RAMP",
+    "SHOW_EXTERNAL_DISPLAY",
+    "WAIT_FOR_BOARDING_CONFIRMATION",
+    "WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION"
+  ]
+}

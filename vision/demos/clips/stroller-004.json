@@ -1,0 +1,12 @@
+{
+  "source": "source/stroller-004.MOV",
+  "clip": "./demos/clips/stroller-004.mp4",
+  "start_seconds": 143.075,
+  "source_duration": 296.15,
+  "duration_seconds": 10.0,
+  "width": 1280,
+  "height": 720,
+  "fps": 30,
+  "orientation_correction": "none",
+  "evaluation_note": "Source video used to construct training/validation data; demonstration only"
+}

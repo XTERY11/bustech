@@ -1,0 +1,12 @@
+{
+  "source": "source/cane-002.MOV",
+  "clip": "./demos/clips/cane-002.mp4",
+  "start_seconds": 162.48,
+  "source_duration": 334.96,
+  "duration_seconds": 10.0,
+  "width": 1280,
+  "height": 720,
+  "fps": 30,
+  "orientation_correction": "none",
+  "evaluation_note": "Source video used to construct training/validation data; demonstration only"
+}

@@ -1,0 +1,12 @@
+{
+  "source": "source/wheelchair test.MOV",
+  "clip": "./demos/clips/wheelchair_test.mp4",
+  "start_seconds": 37.26,
+  "source_duration": 84.52,
+  "duration_seconds": 10.0,
+  "width": 1280,
+  "height": 720,
+  "fps": 30,
+  "orientation_correction": "90 degrees counterclockwise",
+  "evaluation_note": "Independent source video (not used in training)"
+}

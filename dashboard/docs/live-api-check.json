@@ -1,0 +1,65 @@
+{
+  "workflows": [
+    {
+      "scenario": "轮椅",
+      "mode": "single",
+      "meta": {
+        "mode": "single",
+        "source": "llm",
+        "model": "deepseek-flash",
+        "api_calls": 1,
+        "usage": {
+          "prompt_tokens": 1593,
+          "completion_tokens": 246,
+          "total_tokens": 1839,
+          "prompt_cache_hit_tokens": 640,
+          "prompt_cache_miss_tokens": 953
+        },
+        "latency_ms": 1310,
+        "validation_passed": true
+      },
+      "actions": [
+        "HOLD_AT_STOP",
+        "CHECK_SINGLE_ENTRANCE_CLEARANCE",
+        "KEEP_SINGLE_ENTRANCE_CLEAR",
+        "PREPARE_WHEELCHAIR_AREA",
+        "EXTEND_DWELL_TIME",
+        "DEPLOY_AUTOMATIC_SHORT_RAMP",
+        "SHOW_EXTERNAL_DISPLAY",
+        "WAIT_FOR_BOARDING_CONFIRMATION",
+        "WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION"
+      ]
+    },
+    {
+      "scenario": "拐杖",
+      "mode": "two_turn",
+      "meta": {
+        "mode": "two_turn",
+        "source": "llm",
+        "model": "deepseek-flash",
+        "api_calls": 2,
+        "usage": {
+          "prompt_tokens": 3206,
+          "completion_tokens": 299,
+          "total_tokens": 3505,
+          "prompt_cache_hit_tokens": 2048,
+          "prompt_cache_miss_tokens": 1158
+        },
+        "latency_ms": 2265,
+        "validation_passed": true
+      },
+      "actions": [
+        "HOLD_AT_STOP",
+        "CHECK_SINGLE_ENTRANCE_CLEARANCE",
+        "KEEP_SINGLE_ENTRANCE_CLEAR",
+        "EXTEND_DWELL_TIME",
+        "KEEP_RAMPS_STOWED",
+        "SHOW_EXTERNAL_DISPLAY",
+        "WAIT_FOR_BOARDING_CONFIRMATION",
+        "WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION"
+      ]
+    }
+  ],
+  "pageErrors": [],
+  "mobileHorizontalOverflow": false
+}

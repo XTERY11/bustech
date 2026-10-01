@@ -1,0 +1,46 @@
+.connectionBar { max-width:1740px; margin:18px auto 0; padding:0 clamp(18px,3vw,44px); display:flex; align-items:center; gap:24px; }
+.connectionBar label,.liveForm label { display:grid; gap:6px; color:#405269; font-size:14px; }
+.connectionBar select,.liveForm select,.liveForm input[type=number],.settingsFields input { min-height:40px; padding:8px 10px; border:1px solid var(--line); border-radius:9px; background:white; color:var(--ink); min-width:0; width:100%; }
+.connectionDescription { font-size:14px; line-height:1.6; flex:1; }.connectionDescription small { display:block; color:var(--muted); font-size:13px; }
+.connectionSettings { position:relative; font-size:14px; }summary { cursor:pointer; font-size:14px; color:var(--navy); }
+.settingsFields { position:absolute; top:32px; right:0; z-index:30; width:min(380px,85vw); padding:18px; background:white; border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow); display:grid; gap:12px; }
+.connectionDot { height:8px; width:8px; border-radius:50%; background:#aab5c2; }.connectionDot.online { background:var(--green); }
+.scenarioTabs { grid-template-columns:repeat(3,minmax(0,1fr)); }.scenarioTab strong { font-size:15px; }.scenarioTab small { font-size:13px; }
+.workspace { grid-template-columns:minmax(250px,.9fr) minmax(350px,1.45fr) minmax(330px,1.15fr); }
+.inputSourceSwitch { display:flex; padding:14px 0; gap:5px; }.inputSourceSwitch button { padding:8px; border:1px solid var(--line); background:white; color:var(--muted); border-radius:8px; font-size:13px; }.inputSourceSwitch button.active { background:var(--navy-soft); color:var(--navy); border-color:#adc5e7; }
+.liveForm { display:grid; gap:12px; }.liveForm .checkLabel { display:flex; align-items:center; gap:9px; line-height:1.5; }.checkLabel input { width:17px; height:17px; accent-color:var(--navy); }.liveForm small { font-size:13px; line-height:1.65; color:var(--muted); }
+.inputSection h3 { font-size:14px; text-transform:none; letter-spacing:0; }.inputJson { font-size:12px; max-height:320px; overflow:auto; background:var(--canvas); padding:10px; border-radius:8px; }
+.flowRibbon { display:flex; justify-content:space-between; gap:7px; margin:18px 0; font-size:14px; color:var(--muted); }.flowRibbon .current { color:var(--purple); }
+.liveTraceCard { padding:18px; margin-bottom:14px; border:1px solid #d4deea; border-radius:13px; background:#f7f9fc; }.liveTraceCard.complete { background:#f2f9f4; border-color:#c4dfce; }.liveTraceCard .stepLabel { font-size:16px; }.liveTraceCard small { color:var(--muted); font-size:13px; line-height:1.5; }.liveTraceCard p { font-size:15px; line-height:1.7; }
+.summaryList { padding-left:20px; margin:16px 0; display:grid; gap:12px; font-size:16px; line-height:1.75; }.summaryList li::marker { color:var(--green); }.waitingText { color:var(--muted); font-size:15px; line-height:1.8; padding:12px 0; }
+.resultMeta { display:flex; flex-wrap:wrap; gap:8px 16px; margin-top:14px; font-size:14px; }.resultMeta strong { color:var(--green); }.metricRow { display:flex; flex-wrap:wrap; gap:18px; margin:14px 0 0; font-size:12px; color:var(--muted); }.metricRow strong { color:var(--ink); font-size:18px; margin-right:4px; }
+.signalHistory { padding-top:5px; }.signalHistory h3 { font-size:14px; }.signalHistory ol { list-style:none; padding:0; margin:0; display:grid; gap:8px; }.signalHistory li { display:flex; gap:16px; font-size:14px; }.signalHistory time { font-family:var(--font-geist-mono); color:var(--muted); font-size:12px; }.signalHistory p { color:var(--muted); font-size:14px; }
+.errorNotice { padding:13px; border:1px solid #f0bbc5; border-radius:9px; background:var(--red-soft); color:#9a1932; font-size:14px; line-height:1.6; overflow-wrap:anywhere; }
+.actionParameters { overflow-wrap:anywhere; word-break:break-word; }.actionName code { font-size:13px; }.actionItem p { font-size:12px; line-height:1.6; }.outputBlockHead h3 { font-size:16px; }.externalDisplay p { font-size:16px; line-height:1.8; }.emptyOutput p { font-size:14px; }
+.primaryButton,.secondaryButton,.audioButton { font-size:14px; min-height:40px; }.promptNotice strong { font-size:14px; }.promptNotice p { font-size:13px; }.simBadge,.planStatus { font-size:12px; letter-spacing:0; }.panelHeader h2 { font-size:18px; }.sectionKicker,.eyebrow { font-size:12px; }.safetyCheck strong { font-size:14px; }.safetyCheck span { font-size:12px; overflow-wrap:anywhere; }.footer { font-size:12px; }
+.liveDialog::backdrop { background:rgba(8,20,34,.55); backdrop-filter:blur(4px); }.liveDialog { margin:auto; }.allowlist { columns:2; font-size:14px; padding-left:20px; }.allowlist li { margin-bottom:12px; overflow-wrap:anywhere; }
+button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible { outline:3px solid #4d81d0; outline-offset:3px; }
+@media(max-width:1200px) { .workspace { grid-template-columns:280px minmax(0,1fr); }.outputPanel { grid-column:1 / -1; grid-template-columns:1.2fr 1fr; }.outputPanel>.panelHeader,.outputPanel>.outputActions { grid-column:1 / -1; } }
+@media(max-width:900px) { .workspace { grid-template-columns:1fr; }.outputPanel { grid-column:auto; grid-template-columns:1fr; }.connectionBar { flex-wrap:wrap; gap:12px; }.connectionDescription { min-width:200px; }.traceHeader { flex-wrap:wrap; gap:14px; }.settingsFields { right:auto; left:0; } }
+@media(max-width:680px) { .scenarioTabs { grid-template-columns:repeat(2,minmax(0,1fr)); }.connectionDescription { flex-basis:100%; order:3; }.allowlist { columns:1; }.primaryButton { width:100%; }.vehicleThumb { min-height:130px; } }
+@media(max-width:680px) { .demoShell { padding-bottom:76px; }.traceHeader>.primaryButton { position:fixed; left:18px; right:18px; bottom:max(14px,env(safe-area-inset-bottom)); width:auto; z-index:35; min-height:48px; box-shadow:0 5px 22px #10213644; justify-content:center; } }
+.demoShell { --font-geist-sans: Inter, "Segoe UI", "Microsoft YaHei", Arial, sans-serif; font-family:var(--font-geist-sans); }
+.simulationPreview { grid-column:1 / -1; display:grid; grid-template-columns:1fr 1fr; gap:14px; padding:16px; margin-top:16px; border:1px solid #c4dfce; border-radius:12px; background:#f2f9f4; }
+.simulationPreview small { display:block; color:var(--muted); font-size:12px; margin-bottom:8px; }.simulationPreview strong { color:var(--green); font-size:20px; }.simulationPreview p { grid-column:1 / -1; margin:0; color:var(--muted); font-size:12px; }
+.actionTitle { display:block; font-size:14px; margin-bottom:5px; }.inputSection>summary+.liveForm { margin-top:14px; }
+.scenarioTab>span:last-child { min-width:0; }.scenarioTab strong,.scenarioTab small { white-space:normal; overflow:visible; overflow-wrap:break-word; line-height:1.45; }
+.actionName code { min-width:0; white-space:normal; word-break:break-word; }
+
+/* Stage row: live camera (Sense) and the embedded bus digital twin, above the signal workspace. */
+.stageRow { max-width:1740px; margin:18px auto 0; padding:0 clamp(18px,3vw,44px); display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:18px; }
+.stagePanel { display:flex; flex-direction:column; min-height:0; }
+.stageMedia { position:relative; margin-top:12px; border-radius:12px; overflow:hidden; background:#0f1419; aspect-ratio:16 / 9; border:1px solid var(--line); }
+.stageMedia img,.stageMedia iframe { position:absolute; inset:0; width:100%; height:100%; border:0; display:block; object-fit:contain; background:#0f1419; }
+.twinPanel .stageMedia { background:#eceef1; }
+.stagePlaceholder { position:absolute; inset:0; display:grid; place-content:center; text-align:center; color:#c7d2de; padding:24px; gap:8px; }
+.stagePlaceholder strong { font-size:16px; color:white; }.stagePlaceholder p { font-size:13px; line-height:1.8; }.stagePlaceholder code { color:#9ed0ff; font-size:12px; }
+.stageFooter { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; font-size:13px; color:var(--muted); }
+.stageMeta { font-family:var(--font-geist-mono); font-size:12px; }
+.stageSettings { position:relative; font-size:13px; }.stageSettings .settingsFields { top:28px; }.stageSettings .settingsFields input { width:100%; }
+.simBadge.online { background:#e7f6ec; color:#1d6b3a; border-color:#bfe3cc; }.simBadge.triggered { background:#fde8e8; color:#9a1932; border-color:#f0bbc5; }
+@media(max-width:1000px) { .stageRow { grid-template-columns:1fr; } }

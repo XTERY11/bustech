@@ -1,0 +1,10 @@
+{
+  "checked": 3098,
+  "repaired": [
+    {
+      "image": "C:\\Users\\Kervi\\Documents\\ChatGPT\\Bustech\\dataset\\images\\train\\cane__frame_00000829.jpg",
+      "original_error": "cannot identify image file 'C:\\\\Users\\\\Kervi\\\\Documents\\\\ChatGPT\\\\Bustech\\\\dataset\\\\images\\\\train\\\\cane__frame_00000829.jpg'"
+    }
+  ],
+  "errors": []
+}

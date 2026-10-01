@@ -1,0 +1,142 @@
+{
+  "source": "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech",
+  "classes": [
+    "cane",
+    "stroller",
+    "wheelchair_with",
+    "wheelchair_without"
+  ],
+  "groups": {
+    "cane": {
+      "images": 800,
+      "matched": 792,
+      "empty_labels": 0,
+      "boxes": {
+        "cane": 792
+      },
+      "split": {
+        "train": 630,
+        "gap": 11,
+        "val": 151
+      },
+      "source_video": "cane-002.MOV"
+    },
+    "stroller": {
+      "images": 800,
+      "matched": 740,
+      "empty_labels": 0,
+      "boxes": {
+        "stroller": 740
+      },
+      "split": {
+        "train": 589,
+        "gap": 7,
+        "val": 144
+      },
+      "source_video": "stroller-004.MOV"
+    },
+    "wheelchair_with_people": {
+      "images": 800,
+      "matched": 799,
+      "empty_labels": 0,
+      "boxes": {
+        "wheelchair_with": 799
+      },
+      "split": {
+        "train": 636,
+        "gap": 9,
+        "val": 154
+      },
+      "source_video": "wheelchair 2.MOV"
+    },
+    "wheelchair_without_people": {
+      "images": 800,
+      "matched": 800,
+      "empty_labels": 0,
+      "boxes": {
+        "wheelchair_without": 800
+      },
+      "split": {
+        "train": 636,
+        "gap": 6,
+        "val": 158
+      },
+      "source_video": "wheelchair-003.MOV"
+    }
+  },
+  "errors": [],
+  "missing_labels": [
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\cane\\frame_00001233.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\cane\\frame_00001249.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\cane\\frame_00001254.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\cane\\frame_00001278.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\cane\\frame_00003229.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\cane\\frame_00003251.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\cane\\frame_00020047.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\cane\\frame_00020056.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00001684.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00001692.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00003504.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00003511.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00005135.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00005147.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00005170.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00005369.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00005378.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00005380.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00005403.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00005426.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00005433.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00007068.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00007093.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00007432.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00008900.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00008901.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00008926.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00008950.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00008972.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00008993.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00009022.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00009027.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00009033.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00009047.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00009058.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00009061.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00009072.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00010651.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00010658.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00010675.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00010680.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00010698.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00010703.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00010743.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00010755.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00010789.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00010818.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00010819.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00010840.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00010841.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00010852.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00012495.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00012501.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00012508.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00012578.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00012583.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00012600.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00012653.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00012685.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00015979.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00016026.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00017620.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00017621.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00017640.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00017666.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00017675.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00017677.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\stroller\\frame_00017707.jpg",
+    "C:\\Users\\Kervi\\OneDrive - National University of Singapore\\Study_and_work\\Bustech\\data\\wheelchair_with_people\\part_1\\frame_00006221.jpg"
+  ],
+  "orphan_labels": [],
+  "split_note": "Per-video chronological 80/20 split with 2-sided temporal gap; same-video validation is not an independent generalization test.",
+  "gap_seconds_each_side": 2.0
+}

@@ -1,0 +1,525 @@
+{
+  "unavailable_originals": [
+    {
+      "path": "source/data/cane/frame_00001233.jpg",
+      "expected_bytes": 1265559,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/cane/frame_00001249.jpg",
+      "expected_bytes": 1189213,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/cane/frame_00001254.jpg",
+      "expected_bytes": 1210514,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/cane/frame_00001278.jpg",
+      "expected_bytes": 1239562,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/cane/frame_00003229.jpg",
+      "expected_bytes": 1253765,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/cane/frame_00003251.jpg",
+      "expected_bytes": 1285959,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/cane/frame_00015490.jpg",
+      "expected_bytes": 1274348,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/cane/frame_00015500.jpg",
+      "expected_bytes": 1285125,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/cane/frame_00015514.jpg",
+      "expected_bytes": 1301671,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/cane/frame_00015600.jpg",
+      "expected_bytes": 1241761,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/cane/frame_00015609.jpg",
+      "expected_bytes": 1260180,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/cane/frame_00015648.jpg",
+      "expected_bytes": 1211259,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/cane/frame_00015650.jpg",
+      "expected_bytes": 1219108,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/cane/frame_00015654.jpg",
+      "expected_bytes": 1230793,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/cane/frame_00015661.jpg",
+      "expected_bytes": 1251214,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/cane/frame_00015681.jpg",
+      "expected_bytes": 1299220,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/cane/frame_00015701.jpg",
+      "expected_bytes": 1202656,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/cane/frame_00020047.jpg",
+      "expected_bytes": 1270592,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/cane/frame_00020056.jpg",
+      "expected_bytes": 1276430,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00001684.jpg",
+      "expected_bytes": 1216048,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00001692.jpg",
+      "expected_bytes": 1236956,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00003504.jpg",
+      "expected_bytes": 1196384,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00003511.jpg",
+      "expected_bytes": 1215893,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00005135.jpg",
+      "expected_bytes": 1095418,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00005147.jpg",
+      "expected_bytes": 1151927,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00005170.jpg",
+      "expected_bytes": 1193459,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00005369.jpg",
+      "expected_bytes": 1219898,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00005378.jpg",
+      "expected_bytes": 1119536,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00005380.jpg",
+      "expected_bytes": 1127300,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00005403.jpg",
+      "expected_bytes": 1181983,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00005426.jpg",
+      "expected_bytes": 1210743,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00005433.jpg",
+      "expected_bytes": 1098292,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00007068.jpg",
+      "expected_bytes": 1209889,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00007093.jpg",
+      "expected_bytes": 1137666,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00007432.jpg",
+      "expected_bytes": 1265453,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00008900.jpg",
+      "expected_bytes": 1214541,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00008901.jpg",
+      "expected_bytes": 1217126,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00008926.jpg",
+      "expected_bytes": 1158134,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00008950.jpg",
+      "expected_bytes": 1200459,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00008972.jpg",
+      "expected_bytes": 1091470,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00008993.jpg",
+      "expected_bytes": 1172331,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00009022.jpg",
+      "expected_bytes": 1222604,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00009027.jpg",
+      "expected_bytes": 1225306,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00009033.jpg",
+      "expected_bytes": 1106674,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00009047.jpg",
+      "expected_bytes": 1162845,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00009058.jpg",
+      "expected_bytes": 1195126,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00009061.jpg",
+      "expected_bytes": 1200730,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00009072.jpg",
+      "expected_bytes": 1221123,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00010651.jpg",
+      "expected_bytes": 1177353,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00010658.jpg",
+      "expected_bytes": 1191754,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00010675.jpg",
+      "expected_bytes": 1217299,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00010680.jpg",
+      "expected_bytes": 1224163,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00010698.jpg",
+      "expected_bytes": 1161399,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00010703.jpg",
+      "expected_bytes": 1168040,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00010743.jpg",
+      "expected_bytes": 1096169,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00010755.jpg",
+      "expected_bytes": 1144269,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00010789.jpg",
+      "expected_bytes": 1216125,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00010818.jpg",
+      "expected_bytes": 1172050,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00010819.jpg",
+      "expected_bytes": 1173746,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00010840.jpg",
+      "expected_bytes": 1220135,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00010841.jpg",
+      "expected_bytes": 1220657,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00010852.jpg",
+      "expected_bytes": 1235123,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00012495.jpg",
+      "expected_bytes": 1202390,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00012501.jpg",
+      "expected_bytes": 1210891,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00012508.jpg",
+      "expected_bytes": 1211390,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00012578.jpg",
+      "expected_bytes": 1136063,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00012583.jpg",
+      "expected_bytes": 1151371,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00012600.jpg",
+      "expected_bytes": 1189985,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00012653.jpg",
+      "expected_bytes": 1198853,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00012685.jpg",
+      "expected_bytes": 1234958,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00014030.jpg",
+      "expected_bytes": 1235086,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00014079.jpg",
+      "expected_bytes": 1210124,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00014094.jpg",
+      "expected_bytes": 1226481,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00014100.jpg",
+      "expected_bytes": 1232619,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00014156.jpg",
+      "expected_bytes": 1217538,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00014170.jpg",
+      "expected_bytes": 1133640,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00014186.jpg",
+      "expected_bytes": 1178849,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00015979.jpg",
+      "expected_bytes": 1195438,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00016026.jpg",
+      "expected_bytes": 1193653,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00017620.jpg",
+      "expected_bytes": 1209561,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00017621.jpg",
+      "expected_bytes": 1210646,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00017640.jpg",
+      "expected_bytes": 1255020,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00017666.jpg",
+      "expected_bytes": 1201575,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00017675.jpg",
+      "expected_bytes": 1216017,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00017677.jpg",
+      "expected_bytes": 1220045,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/stroller/frame_00017707.jpg",
+      "expected_bytes": 1149208,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/wheelchair_without_people/frames.csv",
+      "expected_bytes": 25465,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/wheelchair_with_people/frames.csv",
+      "expected_bytes": 25459,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/wheelchair_without_people/part_2/frame_00015533.jpg",
+      "expected_bytes": 1482737,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/wheelchair_without_people/part_2/frame_00015563.jpg",
+      "expected_bytes": 1458183,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/wheelchair_without_people/part_2/frame_00015590.jpg",
+      "expected_bytes": 1510645,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/wheelchair_without_people/part_2/frame_00015609.jpg",
+      "expected_bytes": 1458248,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/wheelchair_without_people/part_2/frame_00015638.jpg",
+      "expected_bytes": 1497985,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/wheelchair_without_people/part_2/frame_00015689.jpg",
+      "expected_bytes": 1446908,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/wheelchair_with_people/part_1/frame_00006221.jpg",
+      "expected_bytes": 1573257,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/wheelchair_with_people/part_2/frame_00014691.jpg",
+      "expected_bytes": 1538114,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/wheelchair_with_people/part_2/frame_00014695.jpg",
+      "expected_bytes": 1546250,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/wheelchair_with_people/part_2/frame_00014708.jpg",
+      "expected_bytes": 1572349,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/wheelchair_with_people/part_2/frame_00014790.jpg",
+      "expected_bytes": 1588267,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/wheelchair_with_people/part_2/frame_00014810.jpg",
+      "expected_bytes": 1523019,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/wheelchair_with_people/part_2/frame_00014845.jpg",
+      "expected_bytes": 1583714,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/wheelchair_with_people/part_2/frame_00014858.jpg",
+      "expected_bytes": 1480187,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/wheelchair_with_people/part_2/frame_00014891.jpg",
+      "expected_bytes": 1570479,
+      "error": "[Errno 22] Invalid argument"
+    },
+    {
+      "path": "source/data/wheelchair_with_people/part_2/frame_00014899.jpg",
+      "expected_bytes": 1575948,
+      "error": "[Errno 22] Invalid argument"
+    }
+  ],
+  "recovered_from_prepared_dataset": []
+}
