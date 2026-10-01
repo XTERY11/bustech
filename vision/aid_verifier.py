@@ -7,11 +7,15 @@ touch those weights. It adds an open-vocabulary detector (YOLO-World) that knows
 the devices themselves:
 
   * AidVerifier.persons(frame)       -> person boxes for the preview overlay
-  * AidVerifier.device_score(frame, box) -> best "wheelchair / stroller / cane"
-    score inside one aid box (run on a zoomed crop of that box)
-  * ConfirmedTracks                  -> an aid box only counts after the device
+  * AidVerifier.evidence(frame, box) -> what object accompanies the person in one
+    aid box (run on a zoomed crop of that box): a real device, a stand-in such as
+    an office chair used as a wheelchair in rehearsals, or nothing (a bare person)
+  * ConfirmedTracks                  -> an aid box only counts after an object
     was seen in it `hits` times within the last `window` checks; the confirmation
     then stays with that box while it keeps being detected.
+
+The rule is deliberately loose about which object it is and strict about there
+being one: a person alone is never reported as an aid.
 
 Build the verifier weights once (downloads the CLIP text encoder, ~340 MB, only
 for this step; the saved file is ~26 MB and needs no text encoder at run time):
@@ -26,10 +30,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 WEIGHTS = ROOT / 'weights/yolov8s-world-aids.pt'
 BASE_WEIGHTS = ROOT / 'weights/yolov8s-worldv2.pt'
-# Index 0 must stay "person". DEVICES are the prompts that count as evidence of an aid;
-# the chair prompts are decoys so a person on a wheeled office chair is not scored as a wheelchair.
-PROMPTS = ['person', 'wheelchair', 'stroller', 'baby carriage', 'walking cane', 'crutch', 'office chair', 'chair']
+# Index 0 must stay "person". DEVICES are real aids: the detector's own class is kept.
+# STAND_INS are everyday objects accepted in place of an aid; they decide the reported label.
+# With stand-ins switched off the chair prompts still act as decoys, so a person on a wheeled
+# office chair is not scored as a wheelchair.
+PROMPTS = ['person', 'wheelchair', 'stroller', 'baby carriage', 'walking cane', 'crutch',
+           'office chair', 'chair', 'trolley', 'suitcase', 'umbrella', 'stick']
 DEVICES = {1, 2, 3, 4, 5}
+STAND_INS = {6: 'WHEELCHAIR', 7: 'WHEELCHAIR', 8: 'STROLLER', 9: 'STROLLER', 10: 'CANE', 11: 'CANE'}
+BULKY = {6, 7, 8, 9}  # must fill a real share of the box, so a chair in the background does not count
 
 
 def iou(a, b):
@@ -64,7 +73,10 @@ class ConfirmedTracks:
             track['box'], track['misses'] = list(box), 0
             track['seen'] += 1
             if not track['confirmed'] and (track['seen'] - 1) % self.interval == 0:
-                track['checks'].append(bool(check(box)))
+                found = check(box)
+                track['checks'].append(bool(found))
+                if found:
+                    track['evidence'] = found
                 track['confirmed'] = sum(track['checks']) >= self.hits
             alive.append(track); result.append(track['confirmed'])
         for track in free:  # not detected in this frame: keep briefly so flicker does not drop the latch
@@ -72,31 +84,56 @@ class ConfirmedTracks:
             if track['misses'] <= self.max_misses:
                 alive.append(track)
         self.tracks = alive
+        self.evidence = [t.get('evidence') for t in alive[:len(result)]]  # what `check` returned, per box
         return result
 
 
 class AidVerifier:
-    def __init__(self, weights=WEIGHTS, device='cpu', conf=0.15, person_conf=0.35, imgsz=480, pad=0.15):
+    def __init__(self, weights=WEIGHTS, device='cpu', conf=0.15, person_conf=0.35, imgsz=480, pad=0.15,
+                 stand_ins=True, stand_in_conf=0.3, bulky_share=0.15):
         from ultralytics import YOLO
         self.model = YOLO(str(weights))
         self.device, self.conf, self.person_conf, self.imgsz, self.pad = device, conf, person_conf, imgsz, pad
+        self.stand_ins, self.stand_in_conf, self.bulky_share = stand_ins, stand_in_conf, bulky_share
 
     def persons(self, frame, imgsz=640):
         result = self.model.predict(frame, imgsz=imgsz, conf=self.person_conf, classes=[0], device=self.device, verbose=False)[0]
         return [box[:5] for box in result.boxes.data.cpu().tolist()]
 
-    def device_score(self, frame, box):
+    def _objects(self, frame, box):
         height, width = frame.shape[:2]
         dx, dy = self.pad * (box[2] - box[0]), self.pad * (box[3] - box[1])
         x1, y1 = int(max(0, box[0] - dx)), int(max(0, box[1] - dy))
         x2, y2 = int(min(width, box[2] + dx)), int(min(height, box[3] + dy))
         if x2 - x1 < 8 or y2 - y1 < 8:
-            return 0.0
+            return []
         result = self.model.predict(frame[y1:y2, x1:x2], imgsz=self.imgsz, conf=0.03, device=self.device, verbose=False)[0]
-        return max((row[4] for row in result.boxes.data.cpu().tolist() if int(row[5]) in DEVICES), default=0.0)
+        return result.boxes.data.cpu().tolist()
+
+    def device_score(self, frame, box):
+        return max((row[4] for row in self._objects(frame, box) if int(row[5]) in DEVICES), default=0.0)
+
+    def evidence(self, frame, box):
+        """'DEVICE' for a real aid, a hub label for a stand-in object, None for a bare person."""
+        rows = self._objects(frame, box)
+        if max((row[4] for row in rows if int(row[5]) in DEVICES), default=0.0) >= self.conf:
+            return 'DEVICE'
+        if not self.stand_ins:
+            return None
+        area = (box[2] - box[0]) * (box[3] - box[1])
+        best = None
+        for x1, y1, x2, y2, score, cls in rows:
+            cls = int(cls)
+            if cls not in STAND_INS or score < self.stand_in_conf:
+                continue
+            if cls in BULKY and (x2 - x1) * (y2 - y1) < self.bulky_share * area:
+                continue
+            if best is None or score > best[0]:
+                best = (score, STAND_INS[cls])
+        return best[1] if best else None
 
     def has_device(self, frame, box):
-        return self.device_score(frame, box) >= self.conf
+        return self.evidence(frame, box) is not None
 
 
 def build_weights(base=BASE_WEIGHTS, output=WEIGHTS):

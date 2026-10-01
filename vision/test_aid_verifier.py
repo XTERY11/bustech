@@ -50,6 +50,11 @@ class ConfirmedTracksTest(unittest.TestCase):
         self.assertEqual(results, [[False], [False], [False], [True]])
         self.assertEqual(len(calls), 2)
 
+    def test_evidence_is_kept_per_box(self):
+        tracks = ConfirmedTracks(hits=1)
+        tracks.step([BOX, FAR], lambda b: 'WHEELCHAIR' if b == BOX else None)
+        self.assertEqual(tracks.evidence, ['WHEELCHAIR', None])
+
     def test_iou(self):
         self.assertEqual(iou(BOX, FAR), 0.0)
         self.assertAlmostEqual(iou(BOX, BOX), 1.0)

@@ -116,6 +116,7 @@ def parse_args():
     p.add_argument('--no-verify', action='store_true', help='Report raw detections without the device check and without person boxes')
     p.add_argument('--verify-conf', type=float, default=0.15, help='Minimum device score inside an aid box')
     p.add_argument('--verify-hits', type=int, default=2, help='Device sightings needed before an aid box counts')
+    p.add_argument('--strict-verify', action='store_true', help='Only real aids count; do not accept stand-ins such as an office chair')
     p.add_argument('--enter-frames', type=int, default=2)
     p.add_argument('--exit-frames', type=int, default=5)
     p.add_argument('--width', type=int, default=1280, help='Maximum processed/streamed frame width')
@@ -196,7 +197,7 @@ def main():
     verifier = None
     if not args.no_verify:
         if args.verify_model.is_file():
-            verifier = AidVerifier(args.verify_model, device, conf=args.verify_conf)
+            verifier = AidVerifier(args.verify_model, device, conf=args.verify_conf, stand_ins=not args.strict_verify)
         else:
             print(f'Verifier weights not found: {args.verify_model}. Running unverified; build them with: python aid_verifier.py', flush=True)
     tracks = ConfirmedTracks(hits=args.verify_hits, interval=3)
@@ -265,15 +266,17 @@ def main():
             inside_detections, all_detections = [], []
             boxes = result.boxes.data.cpu().tolist()
             # An aid box only counts once the verifier has seen an actual device inside it.
-            verified = tracks.step([box[:4] for box in boxes], lambda b: verifier.has_device(frame, b)) if verifier else [True] * len(boxes)
+            verified = tracks.step([box[:4] for box in boxes], lambda b: verifier.evidence(frame, b)) if verifier else [True] * len(boxes)
+            stand_in = tracks.evidence if verifier else [None] * len(boxes)
             if verifier and processed % 2 == 0:  # person boxes are display-only; every other frame is enough
                 persons = verifier.persons(frame)
             for x1, y1, x2, y2, confidence in persons:
                 cv2.rectangle(view, (int(x1), int(y1)), (int(x2), int(y2)), (170, 170, 170), 1)
                 cv2.putText(view, f'person {confidence:.2f}', (max(0, int(x1)), max(20, int(y1) - 6)), cv2.FONT_HERSHEY_SIMPLEX, .45, (170, 170, 170), 1)
-            for box, confirmed in zip(boxes, verified):
+            for box, confirmed, found in zip(boxes, verified, stand_in):
                 x1, y1, x2, y2, confidence, cls = box
-                label = CLASS_MAP.get(str(names[int(cls)]).lower())
+                # A stand-in object decides the label; for a real aid the detector's own class is kept.
+                label = found if found not in (None, 'DEVICE') else CLASS_MAP.get(str(names[int(cls)]).lower())
                 inside = is_inside(box[:4], points, width, height, args.anchor)
                 if not confirmed:
                     continue
