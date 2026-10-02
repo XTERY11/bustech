@@ -1,6 +1,6 @@
 # AccessRide: App + Python YOLO + DeepSeek + Web Demo
 
-This integrates the existing RideAssistant_demo website with a signal server. App bookings and Python YOLO detections trigger DeepSeek; SSE delivers the decision summary and actions to the dashboard. **No physical vehicle or vehicle interface is required.** Stopping, door, ramp geometry and approval conditions come from a simulated scene. Results remain visible for presentation.
+This integrates the existing RideAssistant_demo website with a signal server. App bookings and Python YOLO detections trigger DeepSeek; SSE delivers the decision summary and actions to the dashboard. The trusted policy also reads simulated cabin occupancy, assigns an available seat or wheelchair bay, and validates the model's guidance target. **No physical vehicle or vehicle interface is required.** Stopping, door, ramp geometry, cabin occupancy and approval conditions come from a simulated scene. Results remain visible for presentation.
 
 The interface, model summaries, rule-based results, error messages and passenger guidance are in English. The dashboard renders validated passenger guidance as text.
 
@@ -95,4 +95,4 @@ npm run lint            Run ESLint
 - `app/live-dashboard.tsx`: the English dashboard.
 - `integrations/`: Python signal client, camera/YOLO adapter and demo publisher.
 
-Wheelchair bookings with an explicit ramp request show **Deploy automatic ramp**. The crutch preset shows **Keep ramp stowed** and extra boarding time. Vision and hearing support show audio and display guidance respectively. The dashboard includes readable action labels, raw JSON, API calls, latency and token usage. Expand Simulation settings to edit preset conditions.
+Wheelchair bookings with an explicit ramp request show **Deploy automatic ramp**. Walking passengers are assigned a validated empty seat; wheelchair users are assigned the wheelchair bay. Use **Preview boarding** in the twin to show the passenger entering, following the highlighted route and reaching that destination while the vehicle waits for operator confirmation. The crutch preset shows **Keep ramp stowed** and extra boarding time. Vision and hearing support show audio and display guidance respectively. The dashboard includes readable action labels, raw JSON, API calls, latency and token usage. Expand Simulation settings to edit preset conditions.

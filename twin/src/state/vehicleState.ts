@@ -32,6 +32,11 @@ export function applyPatch(state: VehicleState, patch: VehicleStatePatch): Vehic
   if (patch.seatOccupancy) {
     next.seatOccupancy = { ...state.seatOccupancy, ...normalizeSeatOccupancy(patch.seatOccupancy) };
   }
+  if ('passengerJourney' in patch) {
+    next.passengerJourney = patch.passengerJourney
+      ? { ...patch.passengerJourney, destination: { ...patch.passengerJourney.destination } }
+      : null;
+  }
   return next;
 }
 

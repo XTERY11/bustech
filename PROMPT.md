@@ -5,7 +5,7 @@
 > **「我负责模块 X，请先读第 1–3 节了解全局和契约，再只按第 4 节里模块 X 的内容执行。」**
 > 第 2 节的接口契约是全队共同的上层接口，任何人不得单方面修改；要改先看第 5 节。
 
-状态：v0.3（2026-10-01）· 契约负责人：模块 C 负责人（集成负责人）
+状态：v0.4（2026-10-02）· 契约负责人：模块 C 负责人（集成负责人）
 
 ---
 
@@ -41,7 +41,7 @@
 | 目录 | 内容 | 状态 |
 |---|---|---|
 | `vision/` | YOLOv8n 权重（4 类：`wheelchair_with` / `wheelchair_without` / `cane` / `stroller`）、区域绘制 `monitor_zone.py`、桥接 `yolo_bridge.py`、测试视频 `demos/clips/` | 可运行；真实摄像头未实测 |
-| `dashboard/backend/` | 信号中枢 `hub.mjs` + `server.mjs`、规划器 `planner/`、系统提示词 `prompts/system_prompt.txt`、25 个预设案例 `examples/demo_cases.json` | 可运行，42 项测试 |
+| `dashboard/backend/` | 信号中枢 `hub.mjs` + `server.mjs`、规划器 `planner/`、系统提示词 `prompts/system_prompt.txt`、25 个预设案例 `examples/demo_cases.json` | 可运行，46 项测试 |
 | `dashboard/app/` | 页面：摄像头面板、孪生面板、输入信号、Thinking→Action、输出 | 可运行 |
 | `twin/` | React Three Fiber 公交模型 + embed 模式，构建为单文件 `dashboard/public/twin/index.html` | 可运行 |
 | 手机 App | **尚无代码**。形态定为手机网页 / PWA。参考仓库 `github.com/apinfiniteloop/buspulse-sg`（目前对外不可见，需要仓库所有者开权限） | 待开发 |
@@ -87,7 +87,7 @@
                "zone": { "triggered": true, "roi_id": "monitor_roi", "event": "enter" } } }
 ```
 
-- `zone.event`：站台区域发生了什么。`enter`（进入时发一次）、`present`（占用期间的心跳）、`exit`（区域空了，此时 `yolo_detections` 为空，`zone.left` 列出刚才在场的辅具类别）。这是系统的**两个触发**：`enter` 是“到站”，驱动决策和给乘客的反馈；READY 之后的 `exit` 被视为“已上车”，驱动孪生播放上车的后半段。
+- `zone.event`：站台区域发生了什么。`enter`（进入时发一次）、`present`（占用期间的心跳）、`exit`（区域空了，此时 `yolo_detections` 为空，`zone.left` 列出刚才在场的辅具类别）。`enter` 驱动决策和给乘客的反馈；`exit` 只说明目标离开监控区，**不能证明已上车**，不会单独触发车辆或入座动作。
 - `target_match_confirmed`：`true` 表示“经过二次确认的辅具正处在画好的上车区域内”。**中枢只采信带 `true` 的检测**；为 `false` 时检测只会产生一个 `YOLO_TARGET_UNMATCHED` 标记，不影响决策。即使为 `true`，没有预约时结果仍是 `NEEDS_CONFIRMATION`（感知不能单独授权坡道）。
 
 - `label` 取值：`WHEELCHAIR` `CRUTCH` `CANE` `WALKER` `STROLLER` `PERSON` `NONE` `UNKNOWN`。
@@ -120,6 +120,18 @@
 
 取消预约：发一条新事件，`"active": false`。原型只保留**一个**当前预约，预约超过 5 分钟视为过期。
 
+模拟车辆上下文可带可选座舱快照：
+
+```json
+"cabin": {
+  "layout_id": "byd-b70a02-photo-v1",
+  "occupied_seat_ids": ["S01", "S04", "S06", "S08", "S10", "S13", "S15"],
+  "wheelchair_bay_occupied": false
+}
+```
+
+`occupied_seat_ids` 只允许 `S01`–`S16` 和 `F01`，不得重复。缺少 `cabin` 表示座位状态未知，不得当作空车；`F01` 是轮椅区折叠座，不分配给上车乘客。
+
 ### 2.5 输出：`GET /api/state`（一次性）与 `GET /api/events`（SSE）
 
 SSE 每条为 `data: {"id":n,"type":"…","at":ms,"data":{…}}`，连接后先收到一条 `snapshot`。事件类型：
@@ -141,6 +153,7 @@ type Result = {
   request_id: string;
   plan_status: 'READY' | 'NEEDS_CONFIRMATION' | 'CANNOT_EXECUTE';
   simulated: boolean; execution_authorized: boolean;
+  boarding_target: { type: 'SEAT' | 'WHEELCHAIR_BAY'; id: string } | null;
   decision_summary: string[]; safety_flags: string[];
   action_plan: { step: number; action: string; parameters: object }[];
   passenger_communication: { channel: string; language: string;
@@ -149,8 +162,10 @@ type Result = {
 };
 ```
 
-`action` 只能取这 17 个（`dashboard/backend/planner/contracts.mjs` 的 `ACTIONS`）：
-`ABORT_ASSISTANCE_SEQUENCE` `HOLD_AT_STOP` `REQUEST_ONBOARD_SAFETY_OPERATOR` `CHECK_SINGLE_ENTRANCE_CLEARANCE` `KEEP_SINGLE_ENTRANCE_CLEAR` `PREPARE_WHEELCHAIR_AREA` `EXTEND_DWELL_TIME` `KEEP_RAMPS_STOWED` `OPEN_SINGLE_ENTRANCE` `DEPLOY_AUTOMATIC_SHORT_RAMP` `REQUEST_MANUAL_RAMP_DEPLOYMENT` `ACTIVATE_EXTERNAL_SPEAKER` `CONFIRM_ROUTE_IDENTITY` `PLAY_ENTRANCE_AUDIO_BEACON` `SHOW_EXTERNAL_DISPLAY` `WAIT_FOR_BOARDING_CONFIRMATION` `WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION`
+`action` 只能取这 18 个（`dashboard/backend/planner/contracts.mjs` 的 `ACTIONS`）：
+`ABORT_ASSISTANCE_SEQUENCE` `HOLD_AT_STOP` `REQUEST_ONBOARD_SAFETY_OPERATOR` `CHECK_SINGLE_ENTRANCE_CLEARANCE` `KEEP_SINGLE_ENTRANCE_CLEAR` `PREPARE_WHEELCHAIR_AREA` `EXTEND_DWELL_TIME` `KEEP_RAMPS_STOWED` `OPEN_SINGLE_ENTRANCE` `DEPLOY_AUTOMATIC_SHORT_RAMP` `REQUEST_MANUAL_RAMP_DEPLOYMENT` `ACTIVATE_EXTERNAL_SPEAKER` `CONFIRM_ROUTE_IDENTITY` `PLAY_ENTRANCE_AUDIO_BEACON` `SHOW_EXTERNAL_DISPLAY` `WAIT_FOR_BOARDING_CONFIRMATION` `GUIDE_PASSENGER_TO_ASSIGNED_PLACE` `WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION`
+
+`boarding_target` 由可信规则根据座舱快照选择，DeepSeek 只能原样返回。普通乘客只会分配到已知空座；轮椅乘客使用 `WHEELCHAIR_BAY`。`GUIDE_PASSENGER_TO_ASSIGNED_PLACE` 的参数包含相同目标，座位状态未知或计划未就绪时目标为 `null`。
 
 ### 2.6 控制（dashboard → 中枢）
 
@@ -179,14 +194,19 @@ type Result = {
   destination?: string;
   announcement?: { active: boolean; text: string };
   passengerInfo?: { title?: string; message?: string } | null;
-  // ↓ v0.3 计划新增（可选字段，向后兼容；由模块 D 实现，实现前孪生会忽略它）
-  passenger?: { aid: 'wheelchair'|'cane'|'crutch'|'walker'|'stroller'|'visual'|'hearing'|'none';
-                stage: 'hidden'|'waiting'|'boarding'|'onboard' } | null }
+  seatOccupancy?: Record<string, boolean>;
+  passengerJourney?: {
+    journeyId: string;
+    aid: 'wheelchair'|'cane'|'crutch'|'walker'|'stroller'|'visual'|'hearing'|'none';
+    stage: 'hidden'|'boarding'|'navigating'|'seated'|'secured';
+    destination: { type: 'SEAT'|'WHEELCHAIR_BAY'; id: string };
+    progress?: number;
+  } | null }
 ```
 
-- 帧里还可以带 `seatOccupancy`（座位号 → 是否有人，见 `twin/src/data/cabinLayout.ts`）。
+- `seatOccupancy` 使用稳定座位号（见 `twin/src/data/cabinLayout.ts`）；`passengerJourney: null` 清除当前移动乘客，缺少该字段则保持旧状态。`SEAT` 目标只接受 `S01`–`S16`，轮椅区目标必须为 `WHEELCHAIR_BAY`。
 - 切换视角：`{type:'twin:camera', preset}`，`preset` 为 `overview` / `entrance` / `ramp` / `cutaway` / `interior`。
-- 时间线在 `dashboard/app/lib/twinScenario.ts`，分两半：`actionsToScenario` 是到站（下蹲、开门、伸坡道、Ready to board）；`boardingScenario` 是上车（乘客上车 → 剖面视角显示入座或轮椅位 → 收坡道 → 关门 → Boarding complete），由 READY 之后的 `zone.event = exit` 触发，从 READY 的姿态接着播，不复位。孪生只显示，不回写任何状态。
+- 时间线在 `dashboard/app/lib/twinScenario.ts`，分两半：`actionsToScenario` 是到站（下蹲、开门、伸坡道、Ready to board）；`boardingScenario` 是演示上车（从车门进入 → 沿高亮路径前往经校验的空座/轮椅区 → 显示到位）。它只由页面的 **Preview boarding** 显式触发。到位后保持车门/坡道的已验证状态并等待安全员确认，不自行宣称完成、关门或发车。孪生只显示，不回写任何状态。
 
 ---
 
@@ -196,7 +216,7 @@ type Result = {
 2. **全员不得修改**：`vision/monitor_zone.py`、`dashboard/backend/hub.mjs`。`twin/` 下的 3D 组件只有模块 D 可以改。
 3. 页面与乘客提示文案保持英文（评委界面）；代码风格跟随所在文件。
 4. 密钥（`DEEPSEEK_API_KEY`、`BRIDGE_TOKEN`）只通过环境变量传入，不写进文件、不提交。
-5. 每个模块在自己的分支开发：`mod-a-vision`、`mod-b-app`、`mod-c-dashboard`、`mod-d-twin`；合并前必须通过自己模块的验收命令和 `cd dashboard && npm test`（42 项全过）。
+5. 每个模块在自己的分支开发：`mod-a-vision`、`mod-b-app`、`mod-c-dashboard`、`mod-d-twin`；合并前必须通过自己模块的验收命令和 `cd dashboard && npm test`（46 项全过）。
 6. 环境：Node ≥ 22.13，Python 3.10–3.12。不要全局安装依赖，全部留在 `vision/.venv`、`dashboard/node_modules`、`twin/node_modules`。
 7. 遇到失败：贴出原始报错，提出最小修复，不要重构或重写已有代码。
 
@@ -278,7 +298,7 @@ A 和 B 只通过第 2 节的 HTTP 接口与 C 通信，D 只通过 2.8 的消�
 - **独立开发**（不需要摄像头和 App，用页面上的预设场景按钮驱动）：
 
   ```bash
-  cd dashboard && npm ci && npm test                      # 42 项，改策略 / 提示词后必须全过
+  cd dashboard && npm ci && npm test                      # 46 项，改策略 / 提示词后必须全过
   npm run dev:integrated                                  # 中枢 + 页面
   DEEPSEEK_API_KEY=... npm run dev:integrated             # 真实模型；key 只放环境变量
   ```
@@ -288,21 +308,21 @@ A 和 B 只通过第 2 节的 HTTP 接口与 C 通信，D 只通过 2.8 的消�
   - C2：摘要的可读性（面向评委，短、英文、不泄露内部字段名）；`single` 与 `two_turn` 的延迟与观感取舍；`STROLLER` 标签的提示词覆盖；模型超时 / 出错时的展示。
   - C3：`NEEDS_CONFIRMATION` 与 `CANNOT_EXECUTE` 在输出面板上的区分度；乘客提示与 App 上显示的文字保持一致。
 - **验收**：
-  - 25 个预设在 `rules` 模式下结果不变，`npm test` 42 项全过。
+  - 25 个预设在 `rules` 模式下结果不变，`npm test` 46 项全过。
   - `single` 模式下 `meta.source` 为 “DeepSeek response”、`meta.validation_passed` 为 true；同一输入在三种模式下 `plan_status` 与动作集合一致。
 
 ### 模块 D · 公交孪生嵌入 dashboard（本队负责，当前最不完善）
 
-- **目标**：评委在大屏右上角看到一个完整的上车场景：哪一类乘客在站台等候，公交如何为这位乘客做出响应，乘客如何上车。现在只有公交本身。
+- **目标**：评委在大屏右上角看到一个完整的上车场景：哪一类乘客在站台等候，公交如何为这位乘客做出响应，以及乘客如何被引导到经校验的空座或轮椅区。
 - **现状**：
 
 | 已有 | 缺口 |
 |---|---|
-| 程序化建模的公交：车身、车门、坡道、下蹲、目的地屏、状态灯 | 没有任何乘客或辅具模型（轮椅、手杖、拐杖、助行器、婴儿车） |
-| HUD：播报条和乘客信息条 | 没有站台环境（路缘、站牌、与摄像头绿色区域对应的上车区） |
-| iframe 嵌入 + `twin:telemetry` 驱动 | 帧里没有“乘客是哪一类”的字段，孪生不知道该显示什么 |
-| 时间线：准备 → 下蹲 → 开门 → 伸坡道 → Ready to board | 时间线停在 `ready`；`boarding` / `complete`、收坡道、关门、复位都没有触发 |
-| 三个相机预设 `overview` / `entrance` / `ramp` | 嵌入模式下不会随阶段自动切换视角 |
+| 程序化公交、车门、坡道、下蹲、客舱、16 个固定座和 F01 折叠座 | 尚无真实车载座位传感器；座位状态是演示快照 |
+| 已占座乘客、移动乘客及轮椅/手杖/拐杖/助行器/婴儿车模型 | 暂只演示一名新乘客，孪生状态不回写中枢 |
+| iframe + `twin:telemetry`，支持 `seatOccupancy` / `passengerJourney` | 没有站台环境（路缘、站牌、与摄像头绿色区域对应的上车区） |
+| 到站动作 + 上车、走道导航、入座/到轮椅区动画 | “已坐稳/已固定”仍需安全员真实确认，本原型不会授权离站 |
+| `overview` / `entrance` / `ramp` / `cutaway` / `interior` 视角自动切换 | 多乘客调度和持久化座位更新尚未实现 |
 
 - **可以改**：`twin/` 全部、`dashboard/app/lib/twinScenario.ts`、`dashboard/app/components/TwinPanel.tsx`。
 - **不要改**：后端、`dashboard/app/live-dashboard.tsx`（需要新数据时找模块 C）。
@@ -328,18 +348,18 @@ A 和 B 只通过第 2 节的 HTTP 接口与 C 通信，D 只通过 2.8 的消�
 | `none` | 不显示 | 无预约且无识别 |
 
 3. **辅具类型怎么定**（写在 `twinScenario.ts`）：优先用预约的 `context.request.accessibility_need`；没有预约时用感知里置信度最高且 ≥ 0.75 的标签；都没有则 `none`。
-4. **契约扩展**：按 2.8 新增可选字段 `passenger: { aid, stage }`。需要同步改三处：`twin/src/types/vehicle.ts`（状态）、`twin/src/adapters/telemetryAdapter.ts` 的 `normalizeTelemetry`（解析）、`twinScenario.ts` 的 `TwinFrame`（发送）。
+4. **契约扩展**：按 2.8 使用可选字段 `passengerJourney`。实现同步位于 `twin/src/types/vehicle.ts`（状态）、`twin/src/adapters/telemetryAdapter.ts`（解析）和 `twinScenario.ts`（发送）；旧帧不带该字段时仍兼容。
 5. **时间线补全**（`twinScenario.ts`）：
 
 | 阶段 | 乘客 `stage` | 公交 |
 |---|---|---|
-| 识别到或有预约，结果未出 / `NEEDS_CONFIRMATION` | `waiting`（站在上车区） | 不动，显示安全员提示 |
-| `READY` | `waiting` | 现有序列：下蹲 → 开门 → 伸坡道（是否伸坡道只看动作计划） |
-| Ready to board 之后 | `boarding`（沿坡道或车门移动进车） | `boardingStatus: boarding` |
-| 进入车内 | `onboard` | 收坡道 → 关门 → 复位 → `complete` |
-| `CANNOT_EXECUTE` | `waiting` | 复位，显示暂停提示 |
+| 结果未出 / `NEEDS_CONFIRMATION` | 无旅程或 `hidden` | 不动，显示安全员提示 |
+| `READY` | 尚未开始旅程 | 下蹲 → 开门 → 伸坡道（是否伸坡道只看动作计划） |
+| Preview boarding | `boarding` → `navigating` | 保持入口开放，切到入口与剖面视角 |
+| 到达目标 | `seated`（座位）或轮椅留在 bay | 更新展示用座位占用，等待安全员确认 |
+| `CANNOT_EXECUTE` | 清除旅程 | 复位并显示暂停提示 |
 
-   上车阶段由谁触发需要定一下：系统是开环的，没有“乘客已上车”的真实信号。建议第一版在 Ready to board 后停留几秒自动播放上车和收尾；第二版再考虑在 dashboard 上加一个 “Confirm boarded” 按钮（需要模块 C 配合）。
+   系统是开环的，没有“乘客已上车”的真实确认。dashboard 的 **Preview boarding** 只驱动画面，不会写回中枢或替代安全员确认；`zone.event = exit` 仅保留为感知观察数据。
 6. **各类乘客的画面差异**都来自动作计划，孪生不写死：轮椅且请求坡道 → 下蹲 + 坡道；婴儿车 → 坡道保持收起、显示延长停靠时间；视觉协助 → 播报条；听觉协助 → 信息条。
 7. **嵌入体验**：阶段变化时自动切换相机预设（等候 `overview`，开门 `entrance`，伸坡道和上车 `ramp`）；iframe 尺寸变化时画面自适应；新结果到来时乘客和公交一起复位。
 
@@ -352,14 +372,15 @@ A 和 B 只通过第 2 节的 HTTP 接口与 C 通信，D 只通过 2.8 的消�
   ```
 
 - **里程碑**：
-  - M1：`passenger` 字段打通 + 轮椅模型 + `waiting` 显示（预设 `wheelchair_auto` 能看到轮椅乘客在站台）。
-  - M2：婴儿车、手杖、拐杖模型 + 上车与收尾动画 + 相机自动切换。
-  - M3：站台环境、助行器、视觉 / 听觉图标、细节打磨。
+  - M1（完成）：座舱快照 + `boarding_target` + 经校验的空座/轮椅区分配。
+  - M2（完成）：`passengerJourney` + 多种辅具模型 + 上车、走道导航、入座动画和相机切换。
+  - M3（待做）：站台环境、多乘客调度、真实安全员确认与座位状态回写。
 - **验收**：
-  - `wheelchair_auto` 预设 → 站台出现轮椅乘客，公交依次下蹲、开门、伸出坡道，乘客沿坡道上车，随后收坡道、关门，状态到 `complete`。
-  - `stroller` 预设 → 出现婴儿车，坡道保持收起；`crutch` 预设 → 出现拐杖乘客；`emergency_stop` 预设 → 复位并显示暂停提示。
-  - 只有感知没有预约（`yolo_only` 预设）→ 显示对应乘客在等候，公交不动。
-  - `cd twin && npm run typecheck` 通过；`dashboard/public/twin/index.html` ≤ 3 MB；旧帧（不带 `passenger`）仍能正常驱动。
+  - `wheelchair_auto` 预设 → `boarding_target=WHEELCHAIR_BAY`；公交下蹲、开门、伸坡道；Preview 后轮椅沿路径进入 bay，并停在安全员确认状态。
+  - `crutch` 预设 → 分配当前空的最近优先座（baseline 为 `S03`），乘客沿走道到该座并显示落座；已占座绝不被分配。
+  - 满座 / 轮椅区占用 → `NEEDS_CONFIRMATION` 且 `boarding_target=null`；`emergency_stop` → 复位并显示暂停提示。
+  - 只有感知没有预约（`yolo_only`）→ 公交不动；旧帧（不带 `passengerJourney`）仍可驱动车门和坡道。
+  - `cd twin && npm test && npm run typecheck` 通过；`dashboard/public/twin/index.html` ≤ 3 MB。
 
 ---
 
