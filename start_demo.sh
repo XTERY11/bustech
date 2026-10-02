@@ -6,6 +6,7 @@
 #   DEEPSEEK_API_KEY=sk-... bash start_demo.sh 0
 #   LAN=1 bash start_demo.sh 0         # bind to 0.0.0.0 with a generated BRIDGE_TOKEN for phones / other PCs
 #   BRIDGE_WINDOW=1 bash start_demo.sh 0   # also show the annotated camera view in a local window (Q stops the bridge)
+#   BRIDGE_RECORD=1 bash start_demo.sh 0   # also save the raw camera frames to vision/recordings/ for replay
 #
 # Ports: dashboard 3000 · signal hub 8787 · camera MJPEG/health 8790. Ctrl+C stops everything.
 set -euo pipefail
@@ -29,9 +30,10 @@ else
 fi
 
 WINDOW_FLAG="--no-window"; [ -n "${BRIDGE_WINDOW:-}" ] && WINDOW_FLAG=""
+RECORD_FLAG=""; [ -n "${BRIDGE_RECORD:-}" ] && RECORD_FLAG="--record $ROOT/vision/recordings/live_$(date +%H%M%S).mp4"
 cleanup() { trap - INT TERM; kill 0 2>/dev/null || true; }
 trap cleanup INT TERM EXIT
-(cd "$ROOT/vision" && RIDE_BRIDGE_URL="http://127.0.0.1:${BRIDGE_PORT}" BRIDGE_TOKEN="${BRIDGE_TOKEN:-}" bash start_bridge.sh "$SRC" $WINDOW_FLAG --snapshots "$ROOT/vision/trigger_snapshots") &
+(cd "$ROOT/vision" && RIDE_BRIDGE_URL="http://127.0.0.1:${BRIDGE_PORT}" BRIDGE_TOKEN="${BRIDGE_TOKEN:-}" bash start_bridge.sh "$SRC" $WINDOW_FLAG --snapshots "$ROOT/vision/trigger_snapshots" $RECORD_FLAG) &
 sleep 1
 (cd "$ROOT/dashboard" && node scripts/dev-integrated.mjs) &
 wait

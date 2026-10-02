@@ -131,6 +131,7 @@ def parse_args():
     p.add_argument('--no-window', action='store_true', help='No local OpenCV window (server/headless use)')
     p.add_argument('--max-frames', type=int, default=0, help='0 means run until stopped')
     p.add_argument('--events', type=Path, help='Optional JSONL log of trigger transitions and hub posts')
+    p.add_argument('--record', type=Path, help='Also save the raw frames that were processed to this MP4, for replaying the session later')
     p.add_argument('--snapshots', type=Path, help='Folder for an annotated JPEG at every trigger, label change and clear (plus events.jsonl), for review afterwards')
     return p.parse_args()
 
@@ -275,6 +276,7 @@ def main():
     fps_src = cap.get(cv2.CAP_PROP_FPS)
     fps_src = fps_src if np.isfinite(fps_src) and 0 < fps_src <= 240 else 30
     processed = position = 0
+    writer = None
     last_heartbeat = 0.0
     tick_fps = time.monotonic(); fps_count = 0
     window = 'Bustech | Sense bridge'
@@ -296,6 +298,11 @@ def main():
             if frame.shape[1] > args.width:
                 frame = cv2.resize(frame, (args.width, round(frame.shape[0] * args.width / frame.shape[1])))
             height, width = frame.shape[:2]
+            if args.record:
+                if writer is None:
+                    args.record.parent.mkdir(parents=True, exist_ok=True)
+                    writer = cv2.VideoWriter(str(args.record), cv2.VideoWriter_fourcc(*'mp4v'), 15, (width, height))
+                writer.write(frame)
             view = frame.copy()
             if region_mask is None or region_mask.shape != (height, width):
                 region_mask = np.zeros((height, width), np.uint8)
@@ -382,6 +389,8 @@ def main():
                 time.sleep(max(0.0, 1 / fps_src - (time.monotonic() - tick)))
     finally:
         cap.release(); server.shutdown()
+        if writer is not None:
+            writer.release()
         if log:
             log.close()
         if not args.no_window:
