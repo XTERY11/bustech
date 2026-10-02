@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Context, Result } from '../live-types';
+import type { Context, Journey, Result } from '../live-types';
 import { actionLabel } from '../lib/actionLabels';
-import { actionsToScenario, boardingScenario, playScenario, IDLE_FRAME, type ScenarioStep } from '../lib/twinScenario';
+import { actionsToScenario, boardingScenario, playScenario, waitingScenario, IDLE_FRAME, type ScenarioStep } from '../lib/twinScenario';
 
 /**
  * Embedded bus digital twin. The twin runs in an iframe (public/twin/index.html,
@@ -14,11 +14,13 @@ type TwinPanelProps = {
   result: Result | null;
   context: Context;
   running: boolean;
+  /** Passenger journey for live App + camera input; null for demo presets, which play their plan directly. */
+  journey?: Journey | null;
   basePath?: string;
   onStatusChange?: (ready: boolean) => void;
 };
 
-export function TwinPanel({ result, context, running, basePath = '', onStatusChange }: TwinPanelProps) {
+export function TwinPanel({ result, context, running, journey = null, basePath = '', onStatusChange }: TwinPanelProps) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false);
   const [step, setStep] = useState<ScenarioStep | null>(null);
@@ -33,30 +35,19 @@ export function TwinPanel({ result, context, running, basePath = '', onStatusCha
     route: context.request?.route_id ?? context.vehicle_context?.route_id ?? '',
     running,
   });
-  // Second trigger: the camera bridge reports what happens at the stop in perception.zone. A passenger who
-  // leaves the region after a READY plan is taken to have boarded, and the twin plays the boarding half.
-  const zone = context.perception?.zone as { triggered?: boolean; event?: string; left?: string[] } | undefined;
-  const armed = useRef(false);  // a READY plan was shown while the passenger was at the stop
-  const [boarded, setBoarded] = useState<string[] | null>(null);
-  const atStop = zone?.triggered === true, leftStop = zone?.event === 'exit';
-  const leftKey = (zone?.left ?? []).join(',');
-  useEffect(() => {
-    if (atStop) {
-      if (result?.plan_status === 'READY') armed.current = true;
-      const clear = window.setTimeout(() => setBoarded(null), 0);  // someone new is at the stop
-      return () => window.clearTimeout(clear);
-    }
-    if (leftStop && armed.current) {
-      armed.current = false;
-      const start = window.setTimeout(() => setBoarded(leftKey ? leftKey.split(',') : []), 0);
-      return () => window.clearTimeout(start);
-    }
-  }, [atStop, leftStop, leftKey, result?.plan_status]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- key captures every input that changes the timeline
-  const arrival = useMemo(() => actionsToScenario(result, context, running), [key]);
-  // While the boarding half plays (and after it), a re-plan must not restart the arrival half.
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- the plan in force when the passenger left is the one to finish
-  const steps = useMemo(() => boarded ? boardingScenario(result, boarded) : arrival, [boarded, arrival]);
+  // The hub's journey decides which half of the story the twin shows (see backend/journey.mjs):
+  // BOOKED: the plan exists but the passenger is not at the stop, so the bus waits;
+  // AT_STOP: the camera has matched the passenger, so the plan is carried out;
+  // ON_BOARD: they left the stop after READY, so the boarding half plays from the READY pose.
+  const stage = journey?.stage ?? null;
+  const boarded = stage === 'ON_BOARD';
+  const journeyKey = JSON.stringify([stage, journey?.matched, journey?.seat, journey?.labels, journey?.guidance.display_text]);
+  const steps = useMemo(() => {
+    if (boarded) return boardingScenario(result, journey?.labels ?? [], journey?.seat ?? null, journey?.guidance.display_text);
+    if (stage === 'BOOKED' && result?.plan_status === 'READY' && !running) return waitingScenario(journey?.guidance.display_text);
+    return actionsToScenario(result, context, running);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the keys capture every input that changes the timeline
+  }, [key, journeyKey]);
   const route = String(context.request?.route_id ?? context.vehicle_context?.route_id ?? 'DEMO_ROUTE');
 
   useEffect(() => {
@@ -89,7 +80,9 @@ export function TwinPanel({ result, context, running, basePath = '', onStatusCha
   }, [ready, steps, playbackNonce, iframeEpoch, boarded]);
 
   const done = step ? steps.indexOf(step) + 1 : 0;
-  const passengerMessage = result?.passenger_communication.display_text
+  // Before the passenger is at the stop, and once they are on board, the journey's guidance is what applies.
+  const passengerMessage = (stage === 'BOOKED' || stage === 'ON_BOARD') && journey ? journey.guidance.display_text
+    : result?.passenger_communication.display_text
     ?? result?.passenger_communication.audio_text
     ?? (result?.plan_status === 'CANNOT_EXECUTE'
       ? 'Boarding assistance is paused. Please wait for the safety operator.'
@@ -100,7 +93,8 @@ export function TwinPanel({ result, context, running, basePath = '', onStatusCha
   const visibleActions = activeAction && !firstActions.some(item => item.step === activeAction.step)
     ? [...firstActions.slice(0, 3), activeAction]
     : firstActions;
-  const statusLabel = boarded ? (step ? step.label : 'Passenger left the stop')
+  const statusLabel = boarded ? (step ? step.label : 'Passenger boarding')
+    : stage === 'BOOKED' && result?.plan_status === 'READY' ? 'Plan ready · waiting for the passenger at the stop'
     : result?.plan_status === 'NEEDS_CONFIRMATION'
     ? 'Safety hold · bus remains stationary'
     : result?.plan_status === 'CANNOT_EXECUTE'

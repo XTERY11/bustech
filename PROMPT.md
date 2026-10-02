@@ -152,6 +152,32 @@ type Result = {
 `action` 只能取这 17 个（`dashboard/backend/planner/contracts.mjs` 的 `ACTIONS`）：
 `ABORT_ASSISTANCE_SEQUENCE` `HOLD_AT_STOP` `REQUEST_ONBOARD_SAFETY_OPERATOR` `CHECK_SINGLE_ENTRANCE_CLEARANCE` `KEEP_SINGLE_ENTRANCE_CLEAR` `PREPARE_WHEELCHAIR_AREA` `EXTEND_DWELL_TIME` `KEEP_RAMPS_STOWED` `OPEN_SINGLE_ENTRANCE` `DEPLOY_AUTOMATIC_SHORT_RAMP` `REQUEST_MANUAL_RAMP_DEPLOYMENT` `ACTIVATE_EXTERNAL_SPEAKER` `CONFIRM_ROUTE_IDENTITY` `PLAY_ENTRANCE_AUDIO_BEACON` `SHOW_EXTERNAL_DISPLAY` `WAIT_FOR_BOARDING_CONFIRMATION` `WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION`
 
+### 2.5b 乘客旅程：给 App 和 dashboard 共用的阶段（`snapshot.journey`）
+
+`GET /api/state` 和每个 `signal` / `snapshot` 事件里的快照都带 `journey`（预设场景时为 `null`）。App 不需要自己推断流程，只要按 `stage` 切换画面，并显示或朗读 `guidance`。
+
+```ts
+journey: {
+  stage: 'IDLE' | 'BOOKED' | 'AT_STOP' | 'ON_BOARD';
+  matched: boolean;        // 到站的辅具类别与预约的需求是否一致（系统内部的“握手”，乘客不用操作）
+  need: string | null;     // 预约的 accessibility_need
+  labels: string[];        // 摄像头在站台区域看到的辅具类别
+  seat: string | null;     // 上车后分配的位置：'WHEELCHAIR_BAY' 或优先座编号（如 'S02'）
+  guidance: { title: string; display_text: string; audio_text: string };  // 这一阶段该告诉乘客什么
+}
+```
+
+| `stage` | 进入条件 | 大模型 | 公交孪生 | 给乘客的指引（`guidance`） |
+|---|---|---|---|---|
+| `IDLE` | 没有有效预约 | — | 待命 | 提示先预约 |
+| `BOOKED` | App 发来预约（`POST /api/booking`） | **在这里推理一次**，方案此时就定好 | 显示“已收到请求”，车不动、不放坡道 | 已收到预约，请前往站台上车点 |
+| `AT_STOP` | 摄像头看到带辅具的人进入站台区域（`zone.triggered`） | 不再调用；本地规则核对方案是否仍成立，成立就立即执行 | `matched` 且 `READY`：下蹲、开门、按方案伸坡道 | `READY` 时为上车指引；类别不一致或无预约时请等待安全员 |
+| `ON_BOARD` | `READY` 且 `matched` 的乘客离开站台区域（`zone.event = exit`） | — | 上车 → 剖面视角显示座位或轮椅位 → 收坡道 → 关门 → 完成 | 车内指引：轮椅位，或分配的优先座 |
+
+- 没有可见辅具的需求（如听障）无法由摄像头确认类别，站台上出现任何辅具都算一致；这类乘客目前没有“到站”的视觉信号，是已知缺口。
+- 到站前方案已经是 `READY`，这表示“方案已备好”，是否执行由 `stage` 决定。
+- 逻辑在 `dashboard/backend/journey.mjs`，测试在 `dashboard/tests/journey.test.mjs`。
+
 ### 2.6 控制（dashboard → 中枢）
 
 | 接口 | 请求体 | 作用 |
@@ -193,7 +219,7 @@ type Result = {
 ## 3. 全员规则
 
 1. **只改自己模块“可以改”的文件**。跨模块的需求走第 5 节。
-2. **全员不得修改**：`vision/monitor_zone.py`、`dashboard/backend/hub.mjs`。`twin/` 下的 3D 组件只有模块 D 可以改。
+2. **全员不得修改**：`vision/monitor_zone.py`。`dashboard/backend/hub.mjs` 只由模块 C 负责人改，改动必须带测试。`twin/` 下的 3D 组件只有模块 D 可以改。
 3. 页面与乘客提示文案保持英文（评委界面）；代码风格跟随所在文件。
 4. 密钥（`DEEPSEEK_API_KEY`、`BRIDGE_TOKEN`）只通过环境变量传入，不写进文件、不提交。
 5. 每个模块在自己的分支开发：`mod-a-vision`、`mod-b-app`、`mod-c-dashboard`、`mod-d-twin`；合并前必须通过自己模块的验收命令和 `cd dashboard && npm test`（42 项全过）。

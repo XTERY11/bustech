@@ -83,7 +83,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visi
 .intelligenceRow .primaryThinking { max-width:none; margin:0; }
 .intelligenceRow .communicationStrip { max-width:none; margin:0; padding:0; display:flex; flex-direction:row; }
 .intelligenceRow .communicationTitle { min-width:128px; min-height:44px; flex:0 0 auto; }
-.intelligenceRow .communicationItems { flex:1; grid-template-columns:repeat(6,minmax(0,1fr)); }
+.intelligenceRow .communicationItems { flex:1; grid-template-columns:repeat(7,minmax(0,1fr)); }
 .intelligenceRow .communicationItem { min-height:48px; }
 
 .stageRow { margin-top:14px; align-items:start; }

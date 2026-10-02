@@ -1,7 +1,8 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
-import { plan, MODES } from './planner/agent.mjs';
+import { plan, MODES, revalidateForSimulation } from './planner/agent.mjs';
+import { advance, guidance } from './journey.mjs';
 import { normalizeInput, buildPolicy } from './planner/policy.mjs';
 
 const KEYS = { booking: 'request', perception: 'perception' };
@@ -16,6 +17,7 @@ export class SignalHub extends EventEmitter {
     this.mode = 'single'; this.source = 'external'; this.channels = {}; this.demoContext = null; this.sequence = 0;
     this.revision = 0; this.active = null; this.result = null; this.summary = null;
     this.seen = new Map(); this.lastKey = null; this.pendingCalls = 0; this.timer = null;
+    this.journey = { stage: 'IDLE' }; this.localNext = false;
   }
   context() {
     if (this.source === 'demo') return structuredClone(this.demoContext);
@@ -31,7 +33,10 @@ export class SignalHub extends EventEmitter {
     return context;
   }
   snapshot() {
-    return { source: this.source, mode: this.mode, presentation_mode: 'WEB_DEMO', simulated_vehicle: true, context: this.context(), channels: Object.fromEntries(Object.entries(this.channels).map(([k, e]) => [k, { received_at: e.receivedAt, observed_at: e.observedAt, event_id: e.eventId }])), running: this.active, summary: this.summary, result: this.result };
+    // The journey belongs to live App + camera input; demo presets show their plan directly.
+    const context = this.context();
+    const journey = this.source === 'external' ? { ...this.journey, guidance: guidance(this.journey, context, this.result) } : null;
+    return { journey, source: this.source, mode: this.mode, presentation_mode: 'WEB_DEMO', simulated_vehicle: true, context, channels: Object.fromEntries(Object.entries(this.channels).map(([k, e]) => [k, { received_at: e.receivedAt, observed_at: e.observedAt, event_id: e.eventId }])), running: this.active, summary: this.summary, result: this.result };
   }
   publish(type, data) { const event = { id: ++this.sequence, type, at: this.now(), data }; this.emit('event', event); return event; }
   decisionKey() {
@@ -66,7 +71,17 @@ export class SignalHub extends EventEmitter {
     if (this.source === 'demo') { this.channels = {}; this.demoContext = null; this.lastKey = null; }
     this.source = 'external';
     this.channels[channel] = { payload: normalized[KEYS[channel]], observedAt, receivedAt: this.now(), eventId };
-    const changed = before !== this.decisionKey();
+    this.journey = advance(this.journey, channel, normalized[KEYS[channel]], this.result?.plan_status);
+    let changed = before !== this.decisionKey();
+    if (changed && channel === 'perception') {
+      // The plan is made when the booking arrives. What the camera sees afterwards is only checked
+      // against it by the local rules: if the plan still holds it stays (nothing to wait for when the
+      // passenger reaches the stop); if not, the rules replan at once, without a model call.
+      const context = this.context();
+      if (this.result && !this.active && revalidateForSimulation(this.result, { ...context, request_id: this.result.request_id }).valid) {
+        this.lastKey = `${this.mode}:${this.decisionKey()}`; changed = false;
+      } else this.localNext = true;
+    }
     if (changed) this.invalidate();
     this.publish('signal', { channel, event_id: eventId, changed, snapshot: this.snapshot() });
     if (this.autoRun && changed) this.schedule();
@@ -85,7 +100,7 @@ export class SignalHub extends EventEmitter {
   loadDemo(raw, mode) {
     const c = normalizeInput({ ...raw, presentation_mode: 'WEB_DEMO' });
     this.setMode(mode); clearTimeout(this.timer); this.invalidate();
-    this.source = 'demo'; this.demoContext = c; this.channels = {}; this.lastKey = null;
+    this.source = 'demo'; this.demoContext = c; this.channels = {}; this.lastKey = null; this.journey = { stage: 'IDLE' };
     for (const [name, key] of Object.entries(KEYS)) if (c[key]) this.channels[name] = { payload: c[key], observedAt: this.now(), receivedAt: this.now(), eventId: c.request_id };
     this.publish('snapshot', this.snapshot());
     return this.run({ force: true });
@@ -95,14 +110,15 @@ export class SignalHub extends EventEmitter {
     const c = this.context(), policy = buildPolicy(c), key = `${this.mode}:${this.decisionKey()}`;
     if (!force && key === this.lastKey) return { skipped: true };
     if (this.active) throw new Error('RUN_IN_PROGRESS');
-    const localOnly = this.mode === 'rules' || ['emergency', 'wait'].includes(policy.scenario);
+    const mode = this.localNext ? 'rules' : this.mode; this.localNext = false;
+    const localOnly = mode === 'rules' || ['emergency', 'wait'].includes(policy.scenario);
     if (!localOnly && this.pendingCalls >= 2) throw new Error('PLANNER_BUSY');
     const runId = `run-${randomUUID()}`, revision = this.revision;
     c.request_id = runId; this.active = runId; this.summary = null; this.result = null; this.lastKey = key;
-    this.publish('planning', { run_id: runId, mode: this.mode, source: this.source, context: c });
+    this.publish('planning', { run_id: runId, mode, source: this.source, context: c });
     this.pendingCalls++;
     try {
-      const result = await this.planner(c, { mode: this.mode, onSummary: summary => {
+      const result = await this.planner(c, { mode, onSummary: summary => {
         if (this.active !== runId || revision !== this.revision) return;
         this.summary = summary; this.publish('summary', { run_id: runId, summary });
       } });

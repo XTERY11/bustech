@@ -81,23 +81,28 @@ export function actionsToScenario(result: Result | null, context: Context, runni
   return steps;
 }
 
+/** The plan is ready but the passenger has not reached the stop: the bus prepares and waits. */
+export function waitingScenario(guidance?: string): ScenarioStep[] {
+  return [{ at: 0, label: 'Waiting for the passenger at the stop', frame: { ...IDLE_FRAME, boardingStatus: 'request_received', passengerInfo: { title: 'Booking received', message: guidance ?? 'Assistance is prepared. Waiting for the passenger at the stop.' } } }];
+}
+
 /**
  * Second half of the story: the passenger has left the stop region after a READY plan, so they
  * are taken to have boarded. Continues from the READY pose (door open, ramp out if it was
  * deployed) and never resets it: board, stow the ramp, close the door, done.
- * `left` are the aid labels the camera bridge saw leave (perception.zone.left).
+ * `left` are the aid labels seen at the stop; `seat` and `guidance` come from the hub's journey.
  */
-export function boardingScenario(result: Result | null, left: string[]): ScenarioStep[] {
+export function boardingScenario(result: Result | null, left: string[], seat: string | null = null, guidance?: string): ScenarioStep[] {
   const actions = result?.action_plan.map(a => a.action) ?? [];
   const ramp = has(actions, 'DEPLOY_AUTOMATIC_SHORT_RAMP');
   const who = left.includes('WHEELCHAIR') ? 'Wheelchair user' : left.includes('STROLLER') ? 'Passenger with stroller' : left.includes('CANE') ? 'Passenger with cane' : 'Passenger';
-  // The wheelchair bay has no occupancy model in the twin yet; a walking passenger takes a free priority seat.
-  const seat = left.includes('WHEELCHAIR') ? null : 'S02';
+  // The wheelchair space has no occupancy model in the twin yet; a walking passenger's seat is marked occupied.
+  if (seat === 'WHEELCHAIR_BAY') seat = null;
   const steps: ScenarioStep[] = [];
   let t = 0;
   steps.push({ at: t, label: 'Passenger boarding', camera: ramp ? 'ramp' : 'entrance', frame: { boardingStatus: 'boarding', announcement: { active: false, text: '' }, passengerInfo: { title: 'Boarding', message: `${who} boarding · doors held open` } } });
   t += 3000;
-  steps.push({ at: t, label: seat ? 'Passenger seated' : 'Wheelchair space occupied', camera: 'cutaway', frame: { ...(seat ? { seatOccupancy: { [seat]: true } } : {}), passengerInfo: { title: 'On board', message: seat ? `${who} seated in a priority seat` : 'Wheelchair secured in the wheelchair space' } } });
+  steps.push({ at: t, label: seat ? 'Passenger seated' : 'Wheelchair space occupied', camera: 'cutaway', frame: { ...(seat ? { seatOccupancy: { [seat]: true } } : {}), passengerInfo: { title: seat ? `Priority seat ${seat}` : 'Wheelchair space', message: guidance ?? (seat ? `${who} seated in a priority seat` : 'Wheelchair secured in the wheelchair space') } } });
   t += 2500;
   if (ramp) {
     steps.push({ at: t, label: 'Ramp retracting', camera: 'ramp', frame: { ramp: 'retracting' } });

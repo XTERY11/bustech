@@ -9,11 +9,11 @@
     "dev": "vinext dev",
     "dev:integrated": "node scripts/dev-integrated.mjs",
     "bridge": "node backend/server.mjs",
-    "test:planner": "node --test tests/planner.test.mjs tests/bridge.test.mjs",
+    "test:planner": "node --test tests/planner.test.mjs tests/bridge.test.mjs tests/journey.test.mjs",
     "build": "vinext build",
     "build:pages": "next build",
     "start": "vinext start",
-    "test": "node --test tests/planner.test.mjs tests/bridge.test.mjs",
+    "test": "node --test tests/planner.test.mjs tests/bridge.test.mjs tests/journey.test.mjs",
     "test:render": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"

@@ -8,7 +8,7 @@ import { VideoPanel } from './components/VideoPanel';
 import { WordReveal } from './components/WordReveal';
 import { ACTION_LABELS } from './lib/actionLabels';
 import { postSignal, watchEvents } from './live-client';
-import type { Context, HubEvent, Mode, Result, Snapshot, Summary } from './live-types';
+import type { Context, HubEvent, Journey, Mode, Result, Snapshot, Summary } from './live-types';
 import { offlinePlan } from './offline';
 
 const choices = [
@@ -78,6 +78,7 @@ export default function Dashboard() {
   const [showDetails, setShowDetails] = useState(false);
   const [visionStatus, setVisionStatus] = useState({ online: false, triggered: false, fps: 0 });
   const [twinReady, setTwinReady] = useState(false);
+  const [journey, setJourney] = useState<Journey | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
 
@@ -85,6 +86,7 @@ export default function Dashboard() {
     const abort = new AbortController();
     const applySnapshot = (next: Snapshot) => {
       setSnapshot(next);
+      setJourney(next.journey ?? null);
       setRunning(Boolean(next.running));
       setSummary(next.summary);
       setResult(next.result);
@@ -236,6 +238,7 @@ export default function Dashboard() {
     { label: 'Camera bridge', value: visionStatus.online ? `${Math.round(visionStatus.fps)} fps` : 'Offline', tone: visionStatus.triggered ? 'active' : visionStatus.online ? 'online' : 'offline' },
     { label: 'App booking', value: bookingActive ? String(request.accessibility_need ?? 'Received').replaceAll('_', ' ') : 'Waiting', tone: bookingActive ? 'online' : 'waiting' },
     { label: 'YOLO channel', value: detectionActive ? `${detection?.label} ${Math.round((detection?.confidence ?? 0) * 100)}%` : 'Waiting', tone: detectionActive ? 'active' : 'waiting' },
+    { label: 'Journey', value: journey && inputSource === 'external' ? ({ IDLE: 'Waiting', BOOKED: 'Booked · on the way', AT_STOP: journey.matched ? 'At the stop' : 'At the stop · unmatched', ON_BOARD: 'On board' })[journey.stage] : 'Demo preset', tone: journey?.stage === 'AT_STOP' ? 'active' : journey && journey.stage !== 'IDLE' ? 'online' : 'waiting' },
     { label: 'Digital twin', value: twinReady ? 'Ready' : 'Loading', tone: twinReady ? 'online' : 'waiting' },
     { label: 'Decision', value: running ? 'Generating' : result?.plan_status ?? 'Standby', tone: running ? 'active' : result?.plan_status === 'READY' ? 'online' : result?.plan_status === 'CANNOT_EXECUTE' ? 'offline' : 'waiting' },
   ];
@@ -303,6 +306,7 @@ export default function Dashboard() {
         result={result}
         context={context}
         running={running}
+        journey={inputSource === 'external' ? journey : null}
         basePath={basePath}
         onStatusChange={setTwinReady}
       />
