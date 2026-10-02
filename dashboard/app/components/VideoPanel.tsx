@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 type Health = { ok: boolean; fps?: number; triggered?: boolean; inside?: number; detections?: { label: string; confidence: number; model_class?: string }[]; device?: string; source?: string; frames?: number };
 const KEY = 'accessride.videoBase';
@@ -38,6 +38,17 @@ export function VideoPanel({ onStatusChange }: { onStatusChange?: (status: { onl
   useEffect(() => { if (!broken) return; const t = window.setTimeout(() => { setBroken(false); setEpoch(e => e + 1); }, 3000); return () => window.clearTimeout(t); }, [broken]);
 
   const online = Boolean(health?.ok);
+  // A bridge that was restarted (or came up after this page) leaves the old <img> stream frozen without
+  // an error event, so reconnect when the bridge comes online or its frame counter starts over.
+  const seen = useRef({ online: false, frames: 0 });
+  const frames = health?.frames ?? 0;
+  useEffect(() => {
+    const restarted = online && (!seen.current.online || frames < seen.current.frames);
+    seen.current = { online, frames };
+    if (!restarted) return;
+    const t = window.setTimeout(() => { setBroken(false); setEpoch(e => e + 1); }, 0);
+    return () => window.clearTimeout(t);
+  }, [online, frames]);
   useEffect(() => {
     onStatusChange?.({ online, triggered: Boolean(health?.triggered), fps: health?.fps ?? 0 });
   }, [health?.fps, health?.triggered, online, onStatusChange]);
