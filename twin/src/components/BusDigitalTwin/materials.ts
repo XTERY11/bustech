@@ -30,6 +30,7 @@ function build() {
 
   const glass = new THREE.MeshPhysicalMaterial({
     name: 'TintedGlass',
+    transparent: true, opacity: 0.24, depthWrite: false, side: THREE.DoubleSide,
     color: '#1b2530',
     roughness: 0.04,
     metalness: 0.2,

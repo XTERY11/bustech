@@ -300,3 +300,18 @@
 @media (prefers-reduced-motion: reduce) {
   .twin-wave i, .twin-dot, .twin-seq .mark { animation: none !important; }
 }
+
+.twin-cabin-summary {
+  position: absolute; left: 18px; bottom: 18px; z-index: 20;
+  display: flex; flex-direction: column; gap: 6px; padding: 13px 16px;
+  border-radius: 12px; pointer-events: none; font-size: 12px;
+}
+.twin-cabin-summary strong { font-size: 20px; font-weight: 600; }
+.twin-cabin-summary strong span { font-size: 12px; font-weight: 400; color: var(--tw-muted); }
+.twin-cabin-summary small { color: var(--tw-muted); }
+.twin-cabin-eyebrow { font-size: 9px; letter-spacing: 0.10em; color: var(--tw-muted); }
+.twin-presets { max-width: calc(100% - 24px); flex-wrap: wrap; }
+.twin-presets button:focus-visible { outline: 2px solid var(--tw-neutral); outline-offset: 2px; }
+.twin-root.compact .twin-presets button { padding: 6px 7px; font-size: 11px; }
+.twin-root.compact .twin-cabin-summary { left: 10px; bottom: 10px; padding: 9px 12px; }
+.twin-root.compact .twin-hud-tl { top: 86px; }

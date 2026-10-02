@@ -1,3 +1,4 @@
+import { getCabinSnapshot } from '../../data/cabinLayout';
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
@@ -48,6 +49,7 @@ export function BusDigitalTwin({
   const presentation = useMemo(() => derivePresentation(state), [state]);
 
   // Stable per-frame context (refs mutated in place, no re-renders).
+  const [selectedSeatId, setSelectedSeatId] = useState<string>();
   const onActionRef = useRef(onAction);
   onActionRef.current = onAction;
   const ctx = useMemo<TwinFrameContext>(
@@ -57,7 +59,10 @@ export function BusDigitalTwin({
       presentation: { current: presentation },
       time: { current: 0 },
       destinationChangedAt: { current: -1e9 },
-      emit: (a) => onActionRef.current?.(a),
+      emit: (a) => {
+        if (a.type === 'seatClicked') setSelectedSeatId(a.seatId);
+        onActionRef.current?.(a);
+      },
     }),
     [], // eslint-disable-line react-hooks/exhaustive-deps
   );
@@ -82,6 +87,9 @@ export function BusDigitalTwin({
   const [internalPreset, setInternalPreset] = useState<CameraPreset>('overview');
   const [presetNonce, setPresetNonce] = useState(0);
   const preset = cameraPreset ?? internalPreset;
+  const cabinView = preset === 'interior' || preset === 'cutaway';
+  const cabin = getCabinSnapshot(state);
+  const selectedSeat = cabin.seats.find((s) => s.id === selectedSeatId);
   const choosePreset = (p: CameraPreset) => {
     setInternalPreset(p);
     setPresetNonce((n) => n + 1);
@@ -116,22 +124,32 @@ export function BusDigitalTwin({
           <AnimationDriver state={state} presentation={presentation} onAnimationUpdate={onAnimationUpdate} />
           <Stage theme={theme} />
           <BusModel
+            cutaway={preset === 'cutaway'}
+            occupancy={state.seatOccupancy}
+            selectedSeatId={selectedSeatId}
             destination={state.destination}
             announcementActive={!!state.announcement?.active}
-            primaryCallout={presentation.callout}
-            destinationCallout={destCallout}
+            primaryCallout={cabinView ? null : presentation.callout}
+            destinationCallout={cabinView ? null : destCallout}
           />
           <CameraRig preset={preset} presetNonce={presetNonce} />
         </TwinContext.Provider>
       </Canvas>
 
-      {showHud && <TwinHud state={state} presentation={presentation} />}
+      {showHud && !cabinView && <TwinHud state={state} presentation={presentation} />}
+
+      {showHud && cabinView && <div className="twin-cabin-summary glass" aria-live="polite">
+        <span className="twin-cabin-eyebrow">B70A02 · SIMULATED CABIN</span>
+        <strong>{cabin.occupiedFixedSeats} occupied <span> / 16 fixed seats</span></strong>
+        <span>{cabin.availableFixedSeats} available · Fold-up seat {state.seatOccupancy?.F01 ? 'occupied' : 'stowed'}</span>
+        <small>{selectedSeat ? `${selectedSeat.id} · ${selectedSeat.kind} · ${selectedSeat.occupied ? 'Occupied' : 'Empty'}` : 'Select a seat in the model to inspect it.'}</small>
+      </div>}
 
       {showCameraPresets && (
         <div className="twin-presets" role="group" aria-label="Camera view">
-          {(['overview', 'entrance', 'ramp'] as const).map((p) => (
-            <button key={p} className={p === preset ? 'on' : ''} onClick={() => choosePreset(p)}>
-              {p === 'overview' ? 'Overview' : p === 'entrance' ? 'Entrance' : 'Ramp'}
+          {(['overview', 'entrance', 'ramp', 'cutaway', 'interior'] as const).map((p) => (
+            <button key={p} aria-pressed={p === preset} className={p === preset ? 'on' : ''} onClick={() => choosePreset(p)}>
+              {{ overview: 'Overview', entrance: 'Entrance', ramp: 'Ramp', cutaway: 'Cutaway', interior: 'Interior' }[p]}
             </button>
           ))}
         </div>

@@ -1,3 +1,4 @@
+import { CabinControls } from './CabinControls';
 import { useEffect, useRef, useState } from 'react';
 import type { AnimationValues, VehicleState } from '../../types/vehicle';
 import type { BusEvent, MockBusSimulator, ScenarioStep } from '../../simulation/mockBus';
@@ -42,6 +43,7 @@ export function DemoControls(p: Props) {
 
   return (
     <aside className="dc">
+      <CabinControls bus={bus} state={state} />
       {/* Scenario */}
       <section className="dc-card dc-hero">
         <div className="dc-row between">

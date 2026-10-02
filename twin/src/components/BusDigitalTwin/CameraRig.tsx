@@ -17,6 +17,8 @@ interface PresetDef {
 }
 
 export const CAMERA_PRESETS: Record<CameraPreset, PresetDef> = {
+  cutaway: { pos: [-7.8, 8.6, 10.8], target: [0, 0.95, 0] },
+  interior: { pos: [-2.02, 1.89, 0.31], target: [2.75, 1.48, 0.12] },
   overview: { pos: [-8.2, 3.4, 11.2], target: [1.15, 1.0, 0.2] },
   entrance: { pos: [-5.0, 2.45, 8.8], target: [-1.1, 1.2, 1.0] },
   ramp: { pos: [-6.3, 2.7, 9.4], target: [-0.95, 0.8, 1.5] },
@@ -24,6 +26,7 @@ export const CAMERA_PRESETS: Record<CameraPreset, PresetDef> = {
 
 function framed(preset: CameraPreset, aspect: number): PresetDef {
   const p = CAMERA_PRESETS[preset];
+  if (preset === 'interior') return p;
   // Pull back on narrow/portrait viewports so the subject still fits.
   const k = THREE.MathUtils.clamp(1.5 / aspect, 1, 2.6);
   const pos = p.pos.map((v, i) => p.target[i] + (v - p.target[i]) * k) as [number, number, number];
@@ -35,6 +38,7 @@ export const CameraRig = memo(function CameraRig({ preset, presetNonce }: { pres
   const size = useThree((s) => s.size);
   const invalidate = useThree((s) => s.invalidate);
   const gl = useThree((s) => s.gl);
+  const camera = useThree((s) => s.camera);
   const first = useRef(true);
 
   useEffect(() => {
@@ -48,6 +52,11 @@ export const CameraRig = memo(function CameraRig({ preset, presetNonce }: { pres
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
+    if (camera instanceof THREE.PerspectiveCamera) {
+      camera.fov = preset === 'interior' ? 72 : 30;
+      camera.near = preset === 'interior' ? 0.035 : 0.1;
+      camera.updateProjectionMatrix();
+    }
     const f = framed(preset, size.width / Math.max(1, size.height));
     const animate = !first.current;
     first.current = false;
@@ -60,10 +69,10 @@ export const CameraRig = memo(function CameraRig({ preset, presetNonce }: { pres
     <CameraControls
       ref={ref}
       makeDefault
-      minDistance={3.2}
+      minDistance={preset === 'interior' ? 0.25 : 3.2}
       maxDistance={19}
       minPolarAngle={0.2}
-      maxPolarAngle={Math.PI / 2 - 0.05}
+      maxPolarAngle={preset === 'interior' ? Math.PI - 0.1 : Math.PI / 2 - 0.05}
       smoothTime={0.55}
       draggingSmoothTime={0.14}
       dollySpeed={0.6}

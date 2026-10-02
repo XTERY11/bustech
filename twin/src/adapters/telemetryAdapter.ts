@@ -1,3 +1,4 @@
+import { normalizeSeatOccupancy } from '../data/cabinLayout';
 import type {
   BoardingStatus,
   DoorState,
@@ -62,6 +63,7 @@ export function normalizeTelemetry(msg: TelemetryMessage): VehicleStatePatch {
   }
   if (msg.passengerInfo === null) patch.passengerInfo = undefined;
   else if (msg.passengerInfo) patch.passengerInfo = { ...msg.passengerInfo };
+  if (msg.seatOccupancy !== undefined) patch.seatOccupancy = normalizeSeatOccupancy(msg.seatOccupancy);
   return patch;
 }
 
