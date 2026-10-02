@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 PY=".venv/bin/python"; [ -x "$PY" ] || PY="python3"
-SRC="${1:-demos/clips/wheelchair-003.mp4}"; shift || true
+SRC="${1:-demos/clips/wheelchair_2.mp4}"; shift || true
 ROI="${BUSTECH_ROI:-monitor_roi.json}"
 EXTRA=()
 case "$SRC" in demos/*) ROI="monitor_example_roi.json"; EXTRA+=(--loop);; esac

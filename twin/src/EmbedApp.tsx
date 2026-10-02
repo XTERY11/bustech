@@ -42,8 +42,14 @@ export function EmbedApp() {
         reset,
       },
     });
+    // The host can also choose the view, e.g. the cutaway while a passenger boards.
+    const onCamera = (ev: MessageEvent) => {
+      const preset = ev.data?.type === 'twin:camera' ? ev.data.preset : null;
+      if (['overview', 'entrance', 'ramp', 'cutaway', 'interior'].includes(preset)) setCamera(preset as CameraPreset);
+    };
+    window.addEventListener('message', onCamera);
     ready();
-    return disconnect;
+    return () => { window.removeEventListener('message', onCamera); disconnect(); };
   }, [store, vehicleId]);
 
   const onAction = useCallback((action: TwinAction) => {

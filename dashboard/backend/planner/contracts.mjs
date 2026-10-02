@@ -35,7 +35,10 @@ export const INPUT_SCHEMA = {
         confidence: num(1), track_id: text(80),
       }, ['label', 'confidence']) },
       // Optional region-trigger metadata from the camera bridge (vision/yolo_bridge.py); informational only.
-      zone: obj({ triggered: bool, roi_id: text(80) }),
+      // event: what happened at the stop region (heartbeats are 'present'); left: aid labels that were
+      // there when it emptied. The dashboard uses an exit after a READY plan as "passenger has boarded".
+      zone: obj({ triggered: bool, roi_id: text(80), event: en(['enter', 'present', 'exit']),
+        left: { type: 'array', maxItems: 8, items: en(['WHEELCHAIR', 'CRUTCH', 'CANE', 'WALKER', 'STROLLER']) } }),
       geometry: obj({
         geometry_valid: bool, confidence: num(1), measured_gap_cm: num(1000), measured_slope_deg: num(90),
       }),

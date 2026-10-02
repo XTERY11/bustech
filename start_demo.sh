@@ -12,7 +12,7 @@
 # Override DASHBOARD_PORT, BRIDGE_PORT or VISION_PORT when a default port is busy.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-SRC="${1:-demos/clips/wheelchair-003.mp4}"
+SRC="${1:-demos/clips/wheelchair_2.mp4}"
 command -v node >/dev/null || { echo "Node.js 22.13+ is required (brew install node)"; exit 1; }
 [ -d "$ROOT/dashboard/node_modules" ] || (cd "$ROOT/dashboard" && npm ci --no-audit --no-fund)
 [ -f "$ROOT/dashboard/public/twin/index.html" ] || bash "$ROOT/twin/sync_to_dashboard.sh"

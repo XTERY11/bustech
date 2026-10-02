@@ -75,16 +75,19 @@ def _same(a, b):
 
 
 def _both(scores):
-    """Two sightings combined (noisy-OR)."""
-    top = sorted(scores, reverse=True)[:2]
-    return 1 - (1 - top[0]) * (1 - (top[1] if len(top) > 1 else 0.0)) if top else 0.0
+    """Repeated sightings combined (noisy-OR), so an aid seen several times at a modest score
+    is reported with the confidence that repetition deserves."""
+    miss = 1.0
+    for score in scores:
+        miss *= 1 - score
+    return min(1 - miss, 0.99)
 
 
 class Scene:
     """Tracks devices and people over successive detections (no model inside). One `update` is
     one step; with detection on every other frame that is roughly 7-10 steps a second."""
 
-    def __init__(self, conf=0.15, person_conf=0.35, stick_conf=0.3, sticks=True, min_seen=4, moved=0.3,
+    def __init__(self, conf=0.15, person_conf=0.35, stick_conf=0.3, sticks=True, min_seen=4, moved=0.5,
                  release=10, max_misses=6, cane_hits=2, cane_window=8, forget=0.97):
         self.conf, self.person_conf, self.stick_conf, self.sticks = conf, person_conf, stick_conf, sticks
         self.min_seen = min_seen      # sightings before a new device is believed
@@ -111,7 +114,10 @@ class Scene:
         parked device does not count; it has to be away on two sightings in a row."""
         _, x, y = track['trail'][-1]
         hx, hy = track['home']
-        away = ((x - hx) ** 2 + (y - hy) ** 2) ** 0.5 >= self.moved * (track['box'][2] - track['box'][0])
+        wide, tall = track['box'][2] - track['box'][0], track['box'][3] - track['box'][1]
+        # A box that changed size a lot is a partly hidden device, not one that moved.
+        whole = 0.7 <= wide / track['size'][0] <= 1.4 and 0.7 <= tall / track['size'][1] <= 1.4
+        away = whole and ((x - hx) ** 2 + (y - hy) ** 2) ** 0.5 >= self.moved * wide
         track['away'] = track['away'] + 1 if away else 0
         return track['away'] >= 2
 
@@ -144,7 +150,8 @@ class Scene:
             else:
                 track = {'votes': Counter(), 'trail': deque(maxlen=40), 'scores': deque(maxlen=5), 'seen': 0,
                          'attended': False, 'alone': 0, 'sitting': 0, 'label': None, 'away': 0,
-                         'home': ((det['box'][0] + det['box'][2]) / 2, det['box'][3])}
+                         'home': ((det['box'][0] + det['box'][2]) / 2, det['box'][3]),
+                         'size': (det['box'][2] - det['box'][0], det['box'][3] - det['box'][1])}
             box = track['box'] = det['box']
             track['misses'] = 0
             track['seen'] += 1
@@ -170,6 +177,7 @@ class Scene:
             if not owners and not track['attended']:  # standing free: this is its resting place (smoothed)
                 x, y = track['trail'][-1][1:]
                 track['home'] = (0.8 * track['home'][0] + 0.2 * x, 0.8 * track['home'][1] + 0.2 * y)
+                track['size'] = (0.8 * track['size'][0] + 0.2 * (box[2] - box[0]), 0.8 * track['size'][1] + 0.2 * (box[3] - box[1]))
                 track['away'] = 0
             if track['sitting'] or (owners and self._taken(track)):
                 track['attended'], track['alone'] = True, 0
@@ -180,6 +188,7 @@ class Scene:
                 if track['alone'] > self.release:  # left behind: it rests here now
                     track['attended'], track['away'] = False, 0
                     track['home'] = track['trail'][-1][1:]
+                    track['size'] = (box[2] - box[0], box[3] - box[1])
             alive.append(track)
         for track in free:  # not detected this step: keep briefly so one missed frame does not break the track
             track['misses'] += 1

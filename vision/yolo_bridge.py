@@ -255,15 +255,19 @@ def main():
         if log:
             log.write(json.dumps(event) + '\n'); log.flush()
 
-    def post(detections, reason):
+    def post(detections, reason, left=None):
         if client is None:
             return
         try:
             # Same envelope as integrations/ride_signal_client.py; zone is informational for the dashboard.
             # target_match_confirmed: a verified aid is standing in the drawn boarding region. The hub ignores
             # camera detections without it; it still never authorises a ramp without a booking.
-            client.signal('perception', {'yolo_detections': detections[:20], 'target_match_confirmed': bool(detections),
-                                         'zone': {'triggered': bool(detections), 'roi_id': roi_id}},
+            # zone.event tells the dashboard what happened at the stop: 'enter', 'present' (heartbeat) or
+            # 'exit'. On exit, zone.left names what was there, so the twin can show that passenger boarding.
+            zone = {'triggered': bool(detections), 'roi_id': roi_id, 'event': {'heartbeat': 'present'}.get(reason, reason)}
+            if left:
+                zone['left'] = left
+            client.signal('perception', {'yolo_detections': detections[:20], 'target_match_confirmed': bool(detections), 'zone': zone},
                           observed_at=datetime.now(timezone.utc).isoformat())
             shared.status['last_signal'] = {'at': time.time(), 'reason': reason, 'labels': [d['label'] for d in detections]}
             record({'event': 'SIGNAL', 'reason': reason, 'detections': detections})
@@ -358,7 +362,7 @@ def main():
                 post(held, 'heartbeat'); last_heartbeat = time.monotonic()
             elif was_active and not active:  # exit transition
                 record({'event': 'CLEAR', 'frame': processed})
-                post([], 'exit'); held = []
+                post([], 'exit', sorted({d['label'] for d in held})); held = []
             # overlay: region, state bar
             contour = np.round(np.asarray(points) * [width - 1, height - 1]).astype(np.int32)
             color = (0, 0, 255) if active else (60, 210, 60)

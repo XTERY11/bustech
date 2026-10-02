@@ -84,9 +84,10 @@
 { "event_id": "perception-1042", "observed_at": "2026-10-01T10:00:00Z",
   "payload": { "yolo_detections": [{ "label": "WHEELCHAIR", "confidence": 0.96 }],
                "target_match_confirmed": true,
-               "zone": { "triggered": true, "roi_id": "monitor_roi" } } }
+               "zone": { "triggered": true, "roi_id": "monitor_roi", "event": "enter" } } }
 ```
 
+- `zone.event`：站台区域发生了什么。`enter`（进入时发一次）、`present`（占用期间的心跳）、`exit`（区域空了，此时 `yolo_detections` 为空，`zone.left` 列出刚才在场的辅具类别）。这是系统的**两个触发**：`enter` 是“到站”，驱动决策和给乘客的反馈；READY 之后的 `exit` 被视为“已上车”，驱动孪生播放上车的后半段。
 - `target_match_confirmed`：`true` 表示“经过二次确认的辅具正处在画好的上车区域内”。**中枢只采信带 `true` 的检测**；为 `false` 时检测只会产生一个 `YOLO_TARGET_UNMATCHED` 标记，不影响决策。即使为 `true`，没有预约时结果仍是 `NEEDS_CONFIRMATION`（感知不能单独授权坡道）。
 
 - `label` 取值：`WHEELCHAIR` `CRUTCH` `CANE` `WALKER` `STROLLER` `PERSON` `NONE` `UNKNOWN`。
@@ -183,7 +184,9 @@ type Result = {
                 stage: 'hidden'|'waiting'|'boarding'|'onboard' } | null }
 ```
 
-- 动作 → 帧的时间线在 `dashboard/app/lib/twinScenario.ts`。孪生只显示，不回写任何状态。
+- 帧里还可以带 `seatOccupancy`（座位号 → 是否有人，见 `twin/src/data/cabinLayout.ts`）。
+- 切换视角：`{type:'twin:camera', preset}`，`preset` 为 `overview` / `entrance` / `ramp` / `cutaway` / `interior`。
+- 时间线在 `dashboard/app/lib/twinScenario.ts`，分两半：`actionsToScenario` 是到站（下蹲、开门、伸坡道、Ready to board）；`boardingScenario` 是上车（乘客上车 → 剖面视角显示入座或轮椅位 → 收坡道 → 关门 → Boarding complete），由 READY 之后的 `zone.event = exit` 触发，从 READY 的姿态接着播，不复位。孪生只显示，不回写任何状态。
 
 ---
 
@@ -221,7 +224,7 @@ A 和 B 只通过第 2 节的 HTTP 接口与 C 通信，D 只通过 2.8 的消�
 
   ```bash
   cd vision && python3 setup_environment.py
-  .venv/bin/python yolo_bridge.py --source demos/clips/wheelchair-003.mp4 --roi monitor_example_roi.json --no-window --no-signal --max-frames 120
+  .venv/bin/python yolo_bridge.py --source demos/clips/wheelchair_2.mp4 --roi monitor_example_roi.json --no-window --no-signal --max-frames 120
   ```
 
   控制台应出现 `TRIGGER … → CLEAR …` 和 `{"processed_frames":120,…}`。真实摄像头先画区域：`.venv/bin/python monitor_zone.py --source 0`（回车保存 `monitor_roi.json`）。
