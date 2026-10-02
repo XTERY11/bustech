@@ -1,3 +1,4 @@
+import { createSeatOccupancy, SEATS, type SeatOccupancy, type OccupancyPreset } from '../data/cabinLayout';
 import type { TelemetryMessage, TelemetrySource } from '../adapters/telemetryAdapter';
 import type { BoardingStatus, DoorState, RampState } from '../types/vehicle';
 
@@ -17,6 +18,7 @@ import type { BoardingStatus, DoorState, RampState } from '../types/vehicle';
 export const MECHANICAL_MS = { door: 1200, ramp: 2000 };
 
 interface BusSnapshot {
+  seatOccupancy: SeatOccupancy;
   door: DoorState;
   ramp: RampState;
   kneeling: boolean;
@@ -79,6 +81,7 @@ export class MockBusSimulator implements TelemetrySource {
       destination,
       announcement: { active: false, text: '' },
       passengerInfo: null,
+      seatOccupancy: createSeatOccupancy(),
     };
   }
 
@@ -188,6 +191,17 @@ export class MockBusSimulator implements TelemetrySource {
     this.update({ destination: dest });
   }
 
+  setSeatOccupied(seatId: string, occupied: boolean) {
+    if (!SEATS.some((s) => s.id === seatId) || typeof occupied !== 'boolean') return;
+    this.log('command', `${seatId} → ${occupied ? 'occupied' : 'empty'}`);
+    this.update({ seatOccupancy: { ...this.s.seatOccupancy, [seatId]: occupied } });
+  }
+
+  setOccupancyPreset(preset: OccupancyPreset) {
+    this.log('command', `Passenger scene → ${preset}`);
+    this.update({ seatOccupancy: createSeatOccupancy(preset) });
+  }
+
   reset() {
     this.stopScenario(false);
     this.sched.cancel();
@@ -199,6 +213,7 @@ export class MockBusSimulator implements TelemetrySource {
       boardingStatus: 'idle',
       announcement: { active: false, text: '' },
       passengerInfo: null,
+      seatOccupancy: createSeatOccupancy(),
     });
   }
 

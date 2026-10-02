@@ -11,7 +11,7 @@ import { getMaterials } from '../materials';
  * carved out by CSG (computed once). The cut faces get their own materials,
  * so the doorway reads as a real opening with an interior behind it.
  */
-function buildShell() {
+function buildShell(cutaway: boolean) {
   const m = getMaterials();
   const ev = new Evaluator();
   ev.useGroups = true;
@@ -23,14 +23,36 @@ function buildShell() {
   body.position.set(0, (BUS.bottom + BUS.top) / 2, 0);
   body.updateMatrixWorld();
 
-  // Door vestibule pocket.
+  // Hollow the entire cabin; the original model only had a shallow door pocket.
+  const cabin = new Brush(new THREE.BoxGeometry(BUS.length - 0.24, BUS.top - BUS.floorY - 0.12, BUS.width - 0.22), m.interior);
+  cabin.position.set(0, (BUS.floorY + BUS.top - 0.12) / 2, 0);
+  cabin.updateMatrixWorld();
+  let result = ev.evaluate(body, cabin, SUBTRACTION);
+
+  const subtractBox = (size: [number, number, number], position: [number, number, number]) => {
+    const cutter = new Brush(new THREE.BoxGeometry(...size), m.interior);
+    cutter.position.set(...position);
+    cutter.updateMatrixWorld();
+    result = ev.evaluate(result, cutter, SUBTRACTION);
+    cutter.geometry.dispose();
+  };
+  // Actual openings behind the glazing, including the front and rear windows.
+  subtractBox([BUS.length - 0.4, BUS.windows.y1 - BUS.windows.y0, BUS.width + 0.4], [0, (BUS.windows.y1 + BUS.windows.y0) / 2, 0]);
+  subtractBox([0.5, 1.18, 1.9], [BUS.frontX, 1.79, 0]);
+  subtractBox([0.5, 0.82, 1.6], [BUS.rearX, 2.03, 0]);
+  if (cutaway) {
+    subtractBox([BUS.length + 1, 3, BUS.width + 1], [0, 2.73, 0]);
+    subtractBox([BUS.length + 1, 3, BUS.width / 2], [0, 1.9, BUS.sideZ]);
+  }
+
+  // Through-door opening.
   const pocketDepth = BUS.door.pocketDepth;
   const pocketH = BUS.door.y1 - BUS.floorY;
   const pocket = new Brush(new THREE.BoxGeometry(DOOR_WIDTH, pocketH, pocketDepth + 0.2), m.interior);
   pocket.position.set(DOOR_CENTER_X, BUS.floorY + pocketH / 2, BUS.sideZ - pocketDepth / 2 + 0.1);
   pocket.updateMatrixWorld();
 
-  let result = ev.evaluate(body, pocket, SUBTRACTION);
+  result = ev.evaluate(result, pocket, SUBTRACTION);
 
   // Wheel wells, both sides.
   const { wheel } = BUS;
@@ -49,8 +71,9 @@ function buildShell() {
   return result;
 }
 
-export const Body = memo(function Body() {
-  const shell = useMemo(buildShell, []);
+export const Body = memo(function Body({ cutaway = false }: { cutaway?: boolean }) {
+  const shells = useMemo(() => [buildShell(false), buildShell(true)], []);
+  const shell = shells[cutaway ? 1 : 0];
   const m = getMaterials();
   const pod = BUS.roofPod;
 
@@ -58,6 +81,7 @@ export const Body = memo(function Body() {
     <group name="Body">
       <primitive object={shell} />
 
+      <group visible={!cutaway}>
       {/* Roof battery / HVAC pod */}
       <RoundedBox position={[pod.x, BUS.top + pod.height / 2 - 0.06, 0]} material={m.paint} args={[pod.length, pod.height, pod.width]} smoothness={4} radius={0.09} />
       {/* Front sensor domes */}
@@ -70,25 +94,26 @@ export const Body = memo(function Body() {
       <mesh position={[BUS.frontX + 1.05, BUS.top + 0.06, 0]} material={m.darkPlastic}>
         <cylinderGeometry args={[0.1, 0.11, 0.12, 28]} />
       </mesh>
+      </group>
       {/* Bumpers */}
       <RoundedBox position={[BUS.frontX + 0.05, 0.36, 0]} material={m.darkPlastic} args={[0.22, 0.2, BUS.width - 0.06]} smoothness={3} radius={0.06} />
       <RoundedBox position={[BUS.rearX - 0.05, 0.36, 0]} material={m.darkPlastic} args={[0.22, 0.2, BUS.width - 0.06]} smoothness={3} radius={0.06} />
 
       {/* Side battery vents (rear, both sides) */}
       {[1, -1].map((s) => (
-        <mesh key={s} position={[2.75, 0.72, s * (BUS.sideZ + 0.004)]} rotation={[0, s > 0 ? 0 : Math.PI, 0]}>
+        <mesh key={s} visible={!cutaway || s === -1} position={[2.75, 0.72, s * (BUS.sideZ + 0.004)]} rotation={[0, s > 0 ? 0 : Math.PI, 0]}>
           <planeGeometry args={[0.95, 0.42]} />
           <meshStandardMaterial color="#6fb81a" roughness={0.65} />
         </mesh>
       ))}
 
-      <DoorVestibule />
+      <DoorVestibule cutaway={cutaway} />
     </group>
   );
 });
 
 /** Interior details visible through the open door. */
-function DoorVestibule() {
+function DoorVestibule({ cutaway }: { cutaway: boolean }) {
   const m = getMaterials();
   const d = BUS.door;
   const zIn = BUS.sideZ - d.pocketDepth;
@@ -99,11 +124,11 @@ function DoorVestibule() {
         <planeGeometry args={[DOOR_WIDTH - 0.01, d.pocketDepth - 0.01]} />
       </mesh>
       {/* Yellow threshold edge */}
-      <mesh position={[DOOR_CENTER_X, BUS.floorY + 0.006, BUS.sideZ - 0.035]} rotation={[-Math.PI / 2, 0, 0]} material={m.safetyYellow}>
+      <mesh position={[DOOR_CENTER_X, BUS.floorY + 0.015, BUS.sideZ - 0.035]} rotation={[-Math.PI / 2, 0, 0]} material={m.safetyYellow}>
         <planeGeometry args={[DOOR_WIDTH - 0.01, 0.06]} />
       </mesh>
       {/* Ceiling light */}
-      <mesh position={[DOOR_CENTER_X, d.y1 - 0.004, BUS.sideZ - d.pocketDepth / 2]} rotation={[Math.PI / 2, 0, 0]} material={m.interiorLight}>
+      <mesh visible={!cutaway} position={[DOOR_CENTER_X, d.y1 - 0.004, BUS.sideZ - d.pocketDepth / 2]} rotation={[Math.PI / 2, 0, 0]} material={m.interiorLight}>
         <planeGeometry args={[DOOR_WIDTH - 0.3, 0.1]} />
       </mesh>
       {/* Grab poles */}

@@ -1,3 +1,4 @@
+import { normalizeSeatOccupancy } from '../data/cabinLayout';
 import { useSyncExternalStore } from 'react';
 import {
   DEFAULT_VEHICLE_STATE,
@@ -27,6 +28,9 @@ export function applyPatch(state: VehicleState, patch: VehicleStatePatch): Vehic
   }
   if ('passengerInfo' in patch) {
     next.passengerInfo = patch.passengerInfo ? { ...patch.passengerInfo } : undefined;
+  }
+  if (patch.seatOccupancy) {
+    next.seatOccupancy = { ...state.seatOccupancy, ...normalizeSeatOccupancy(patch.seatOccupancy) };
   }
   return next;
 }

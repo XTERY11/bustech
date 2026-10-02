@@ -1,3 +1,4 @@
+import { getCabinSnapshot } from './data/cabinLayout';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BusDigitalTwin } from './components/BusDigitalTwin';
 import { DemoControls, type ViewerSize } from './components/DemoControls/DemoControls';
@@ -39,6 +40,7 @@ export function App() {
       twin: {
         store,
         bus,
+        getCabinSnapshot: () => getCabinSnapshot(store.getState()),
         setVehicleState: (p: VehicleStatePatch) => store.setVehicleState(p),
         telemetry: (m: TelemetryMessage) => store.setVehicleState(normalizeTelemetry(m)),
       },
@@ -80,7 +82,7 @@ export function App() {
           <span className="brand-dot" />
           <div>
             <h1>Bus Digital Twin</h1>
-            <p>Electric city bus · accessible boarding visualisation</p>
+            <p>BYD B70A02 · cabin & accessible boarding simulation</p>
           </div>
         </div>
         <div className="head-meta">

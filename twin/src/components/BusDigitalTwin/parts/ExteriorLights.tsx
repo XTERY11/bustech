@@ -11,7 +11,7 @@ import { useTwin } from '../twinContext';
  * Side markers flash while the suspension or ramp is moving — the same cue a
  * real bus gives bystanders.
  */
-export const ExteriorLights = memo(function ExteriorLights() {
+export const ExteriorLights = memo(function ExteriorLights({ cutaway = false }: { cutaway?: boolean }) {
   const ctx = useTwin();
   const m = getMaterials();
   const drl = useMemo(
@@ -46,7 +46,7 @@ export const ExteriorLights = memo(function ExteriorLights() {
             <planeGeometry args={[0.06, 0.1]} />
           </mesh>
           {/* tail lamps */}
-          <RoundedBox args={[0.04, 0.55, 0.12]} radius={0.015} smoothness={2} position={[rx + 0.005, 0.95, s * 0.93]} material={m.tailLight} />
+          <RoundedBox visible={!cutaway} args={[0.04, 0.55, 0.12]} radius={0.015} smoothness={2} position={[rx + 0.005, 0.95, s * 0.93]} material={m.tailLight} />
         </group>
       ))}
       {/* front lower grille + plate */}
@@ -68,7 +68,7 @@ export const ExteriorLights = memo(function ExteriorLights() {
 
       {/* camera-mirror pods on stalks (front top corners) */}
       {[-1, 1].map((s) => (
-        <group key={`c${s}`} position={[fx + 0.12, 2.64, s * (BUS.sideZ + 0.02)]}>
+        <group key={`c${s}`} visible={!cutaway} position={[fx + 0.12, 2.64, s * (BUS.sideZ + 0.02)]}>
           <mesh position={[0, 0, s * 0.06]} rotation={[Math.PI / 2, 0, 0]} material={m.darkPlastic}>
             <cylinderGeometry args={[0.018, 0.018, 0.14, 10]} />
           </mesh>

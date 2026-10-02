@@ -184,3 +184,17 @@
 .dc-log time { color: var(--dc-muted); font-variant-numeric: tabular-nums; flex: none; }
 .dc-log .k-interlock span { color: var(--dc-amber); }
 .dc-log .k-scenario span { color: var(--dc-blue); }
+
+.cabin-presets { display: flex; gap: 6px; }
+.cabin-plan { position: relative; height: 308px; max-width: 265px; margin: 12px auto 9px; background: var(--dc-soft); border: 1px solid var(--dc-border); border-radius: 28px 28px 12px 12px; }
+.cabin-front, .cabin-rear { position: absolute; width: 100%; text-align: center; font-size: 9px; letter-spacing: 0.08em; color: var(--dc-muted); }
+.cabin-front { top: 10px; } .cabin-rear { bottom: 9px; }
+.cabin-seat { position: absolute; transform: translateX(-50%); width: 47px; height: 27px; padding: 0; border: 1px solid #608f88; border-bottom-width: 3px; border-radius: 6px; background: var(--dc-bg); color: var(--dc-text); font: 10px ui-monospace, monospace; cursor: pointer; }
+.cabin-seat.occupied { background: #6e4526; color: #fff4e5; border-color: #9d6736; }
+.cabin-seat.priority { border-top: 3px solid #be4558; }
+.cabin-seat:focus-visible, .cabin-controls button:focus-visible { outline: 2px solid var(--dc-blue); outline-offset: 3px; }
+.cabin-wheelchair { position: absolute; top: 67px; left: 10px; font-size: 9px; color: var(--dc-muted); }
+.cabin-entry { position: absolute; top: 58px; right: 8px; font-size: 10px; color: var(--dc-muted); }
+.cabin-stairs { position: absolute; right: 10%; left: 8%; border-block: 1px dashed var(--dc-border); padding: 6px; text-align: center; font-size: 10px; color: var(--dc-muted); }
+.cabin-legend { display: flex; gap: 14px; justify-content: center; font-size: 10px; color: var(--dc-muted); }
+.priority-key { border-top: 3px solid #be4558; padding-top: 1px; }

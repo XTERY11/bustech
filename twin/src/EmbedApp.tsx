@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { getCabinSnapshot } from './data/cabinLayout';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BusDigitalTwin } from './components/BusDigitalTwin';
 import { createVehicleStore, useVehicleState } from './state/vehicleState';
 import { connectTelemetry, normalizeTelemetry, type TelemetryMessage } from './adapters/telemetryAdapter';
@@ -24,7 +25,8 @@ export function EmbedApp() {
   const state = useVehicleState(store);
   const theme = params.get('theme') === 'dark' ? 'dark' : 'light';
   const showHud = params.get('hud') !== '0';
-  const camera = (params.get('camera') as CameraPreset | null) ?? undefined;
+  const cameraParam = params.get('camera');
+  const [camera, setCamera] = useState<CameraPreset>(['overview', 'entrance', 'ramp', 'cutaway', 'interior'].includes(cameraParam ?? '') ? cameraParam as CameraPreset : 'overview');
 
   useEffect(() => {
     const reset = () => store.replaceState({ ...DEFAULT_VEHICLE_STATE, vehicleId, destination: store.getState().destination, updatedAt: Date.now() });
@@ -34,6 +36,7 @@ export function EmbedApp() {
     Object.assign(window, {
       twin: {
         store,
+        getCabinSnapshot: () => getCabinSnapshot(store.getState()),
         setVehicleState: (p: VehicleStatePatch) => store.setVehicleState(p),
         telemetry: (m: TelemetryMessage) => store.setVehicleState(normalizeTelemetry(m)),
         reset,
@@ -43,7 +46,10 @@ export function EmbedApp() {
     return disconnect;
   }, [store, vehicleId]);
 
-  const onAction = useCallback((action: TwinAction) => postToHost({ type: TWIN_MESSAGE.action, action }), []);
+  const onAction = useCallback((action: TwinAction) => {
+    if (action.type === 'cameraPresetChanged') setCamera(action.preset);
+    postToHost({ type: TWIN_MESSAGE.action, action });
+  }, []);
 
   return (
     <div className="app embed" data-theme={theme} style={{ width: '100%', height: '100%' }}>

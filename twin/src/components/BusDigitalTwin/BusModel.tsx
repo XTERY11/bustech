@@ -1,3 +1,5 @@
+import type { SeatOccupancy } from '../../data/cabinLayout';
+import { Interior } from './parts/Interior';
 import { memo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
@@ -34,13 +36,16 @@ import { AnnouncementIndicator, VehicleCallouts } from './VehicleCallouts';
  */
 
 interface Props {
+  cutaway: boolean;
+  occupancy?: SeatOccupancy;
+  selectedSeatId?: string;
   destination?: string;
   announcementActive: boolean;
   primaryCallout: Callout | null;
   destinationCallout: Callout | null;
 }
 
-export const BusModel = memo(function BusModel({ destination, announcementActive, primaryCallout, destinationCallout }: Props) {
+export const BusModel = memo(function BusModel({ destination, announcementActive, primaryCallout, destinationCallout, cutaway, occupancy, selectedSeatId }: Props) {
   const ctx = useTwin();
   const sprung = useRef<THREE.Group>(null!);
 
@@ -55,12 +60,13 @@ export const BusModel = memo(function BusModel({ destination, announcementActive
       <Wheels />
       <GroundCues />
       <group ref={sprung} name="SprungBody">
-        <Body />
-        <Windows />
-        <ExteriorLights />
-        <FrontDoor />
+        <Body cutaway={cutaway} />
+        <group visible={!cutaway}><Windows /></group>
+        <Interior destination={destination} occupancy={occupancy} cutaway={cutaway} selectedSeatId={selectedSeatId} />
+        <ExteriorLights cutaway={cutaway} />
+        {!cutaway && <FrontDoor />}
         <RampAssembly />
-        <DestinationDisplay destination={destination} />
+        {!cutaway && <DestinationDisplay destination={destination} />}
         <group name="StatusIndicators">
           <AccessibilityIndicator />
         </group>
