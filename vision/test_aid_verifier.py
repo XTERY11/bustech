@@ -65,6 +65,13 @@ class ConfirmedTracksTest(unittest.TestCase):
         self.assertEqual(len(calls), 2)  # once to confirm, once on refresh
         self.assertEqual(max(tracks.votes[0], key=tracks.votes[0].get), 'WHEELCHAIR')
 
+    def test_failing_box_is_checked_less_often(self):
+        tracks = ConfirmedTracks(hits=2, interval=1)
+        calls = []
+        for _ in range(23):
+            tracks.step([BOX], lambda b: calls.append(1) and None)
+        self.assertEqual(len(calls), 9)  # frames 1-6 every frame, then every fifth
+
     def test_interval_skips_checks_between_frames(self):
         tracks = ConfirmedTracks(hits=2, interval=3)
         calls = []

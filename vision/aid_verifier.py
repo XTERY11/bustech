@@ -102,9 +102,12 @@ class ConfirmedTracks:
                 track['votes'].update(votes[index])
             if confidences:
                 track['peak'] = max(track['peak'], confidences[index])
-            if not track['confirmed'] and (track['seen'] - 1) % self.interval == 0:
+            if not track['confirmed'] and track['seen'] >= track.get('due', 0):
                 found = check(box) or None
                 track['checks'].append(found)
+                # A box that keeps failing (a bare person, a parked device) is checked five times less often after six misses in a row.
+                track['fails'] = 0 if found else track.get('fails', 0) + 1
+                track['due'] = track['seen'] + self.interval * (5 if track['fails'] >= 6 else 1)
                 if isinstance(found, tuple) and len(found) > 3:
                     track['votes'].update(found[3])  # the checker's own opinion on the label
                     track['since'] = track['seen']
