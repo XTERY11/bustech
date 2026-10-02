@@ -28,7 +28,6 @@ export function App() {
   const [scenario, setScenario] = useState({ running: false, step: -1 });
   const [viewerSize, setViewerSize] = useState<ViewerSize>('fill');
   const [theme, setTheme] = useState<'light' | 'dark'>(initialTheme);
-  const [speak, setSpeak] = useState(false);
 
   // Data path: mock vehicle → adapter → store.
   useEffect(() => {
@@ -51,15 +50,6 @@ export function App() {
       offSc();
     };
   }, [store, bus]);
-
-  // Optional text-to-speech for announcements (demo layer only).
-  useEffect(() => {
-    if (!speak || !state.announcement?.active || !('speechSynthesis' in window)) return;
-    const u = new SpeechSynthesisUtterance(state.announcement.text);
-    u.lang = 'en-SG';
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(u);
-  }, [speak, state.announcement?.active, state.announcement?.text]);
 
   const onAction = useCallback(
     (a: TwinAction) => {
@@ -112,8 +102,6 @@ export function App() {
             onViewerSize={setViewerSize}
             theme={theme}
             onTheme={setTheme}
-            speak={speak}
-            onSpeak={setSpeak}
           />
         </div>
       </main>

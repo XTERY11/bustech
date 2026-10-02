@@ -158,10 +158,11 @@ export function parametersFor(action, context) {
 export function passengerCommunication(context, policy, actions) {
   // Templates avoid broadcasting an unvalidated model summary or claiming a proposal succeeded.
   const route = context.vehicle_context?.route_id;
-  const identity = actions.includes('CONFIRM_ROUTE_IDENTITY') && route ? `Route ${route}. ` : '';
+  const passengerRoute = route === 'DEMO_ROUTE' ? '400' : route?.replaceAll('_', ' ');
+  const identity = actions.includes('CONFIRM_ROUTE_IDENTITY') && passengerRoute ? `Route ${passengerRoute}. ` : '';
   const message = identity + (policy.scenario === 'emergency'
     ? 'Please wait for the safety operator. Boarding assistance is paused.'
-    : 'Please wait clear of the entrance. Board only when the safety operator signals.');
+    : 'Please keep clear of the entrance. Board only when the safety operator gives the signal.');
   const audio = actions.includes('ACTIVATE_EXTERNAL_SPEAKER');
   const display = actions.includes('SHOW_EXTERNAL_DISPLAY');
   return { channel: audio && display ? 'BOTH' : audio ? 'EXTERNAL_AUDIO' : display ? 'EXTERNAL_DISPLAY' : 'NONE', language: 'en-SG', audio_text: audio ? message : null, display_text: display ? message : null };

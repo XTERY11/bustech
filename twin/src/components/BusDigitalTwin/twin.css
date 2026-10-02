@@ -180,6 +180,7 @@
   z-index: 30;
 }
 .twin-bar.show { opacity: 1; transform: translate(-50%, 0); }
+.twin-bar--announcement { bottom: 66px; }
 .twin-bar-icon {
   flex: none;
   display: grid;

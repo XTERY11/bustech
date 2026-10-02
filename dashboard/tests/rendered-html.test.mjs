@@ -6,7 +6,7 @@ test('server renders the actual AccessRide signal dashboard', async () => {
   const response = await worker.fetch(new Request('http://localhost/', { headers: { accept: 'text/html' } }), { ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } }, { waitUntil() {}, passThroughOnException() {} });
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /AccessRide Prompt Lab/);
+  assert.match(html, /Live channels/);
   assert.match(html, /Thinking/);
   assert.match(html, /Action/);
   assert.match(html, /YOLO/);

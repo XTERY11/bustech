@@ -22,6 +22,26 @@ for (const c of cases) test(`scenario: ${c.name}`, async () => {
   assert.equal(result.meta.api_calls, 0);
 });
 
+test('passenger audio uses the public demo route and natural boarding guidance', async () => {
+  const input = structuredClone(cases.find(c => c.name === 'visual').input);
+  const result = await plan(input, { mode: 'rules' });
+  assert.equal(result.passenger_communication.channel, 'EXTERNAL_AUDIO');
+  assert.equal(
+    result.passenger_communication.audio_text,
+    'Route 400. Please keep clear of the entrance. Board only when the safety operator gives the signal.',
+  );
+  assert.equal(result.passenger_communication.display_text, null);
+});
+
+test('passenger route names replace underscores with spaces', async () => {
+  const input = structuredClone(cases.find(c => c.name === 'visual').input);
+  input.request.route_id = 'BLUE_LINE_2';
+  input.vehicle_context.route_id = 'BLUE_LINE_2';
+  const result = await plan(input, { mode: 'rules' });
+  assert.match(result.passenger_communication.audio_text, /^Route BLUE LINE 2\./);
+  assert.doesNotMatch(result.passenger_communication.audio_text, /_/);
+});
+
 test('every automatic-ramp interlock fails closed individually', async () => {
   const mutations = [
     x => delete x.vehicle_context.emergency_stop_active,

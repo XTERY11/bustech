@@ -18,7 +18,7 @@ export type TwinFrame = {
   announcement?: { active: boolean; text: string };
   passengerInfo?: { title?: string; message?: string } | null;
 };
-export type ScenarioStep = { at: number; label: string; frame: TwinFrame };
+export type ScenarioStep = { at: number; label: string; action?: string; frame: TwinFrame };
 
 const DOOR_MS = 1200, RAMP_MS = 2000, KNEEL_MS = 1600;
 export const IDLE_FRAME: TwinFrame = { door: 'closed', ramp: 'retracted', kneeling: false, boardingStatus: 'idle', announcement: { active: false, text: '' }, passengerInfo: null };
@@ -33,38 +33,49 @@ export function actionsToScenario(result: Result | null, context: Context, runni
     return running ? [{ at: 0, label: 'Request received', frame: { ...IDLE_FRAME, boardingStatus: 'request_received' } }] : [];
   }
   const actions = result.action_plan.map(a => a.action);
+  const action = (...names: string[]) => names.find(name => actions.includes(name));
   const audio = result.passenger_communication.audio_text, display = result.passenger_communication.display_text;
   const message = audio ?? display ?? 'Please wait for the safety operator.';
 
   if (result.plan_status === 'CANNOT_EXECUTE' || has(actions, 'ABORT_ASSISTANCE_SEQUENCE')) {
-    return [{ at: 0, label: 'Assistance paused', frame: { ...IDLE_FRAME, announcement: { active: true, text: 'Boarding assistance is paused. Please wait for the safety operator.' } } }];
+    return [{ at: 0, label: 'Assistance paused', action: action('ABORT_ASSISTANCE_SEQUENCE'), frame: { ...IDLE_FRAME, announcement: { active: true, text: 'Boarding assistance is paused. Please wait for the safety operator.' } } }];
   }
   if (result.plan_status !== 'READY') {
-    return [{ at: 0, label: 'Awaiting operator confirmation', frame: { ...IDLE_FRAME, boardingStatus: 'request_received', announcement: { active: true, text: message } } }];
+    const hold = action('HOLD_AT_STOP');
+    const requestOperator = action('REQUEST_ONBOARD_SAFETY_OPERATOR');
+    const frame = { ...IDLE_FRAME, boardingStatus: 'request_received' as const, announcement: { active: true, text: message } };
+    return [
+      { at: 0, label: 'Safety hold active', action: hold, frame },
+      ...(requestOperator ? [{ at: 900, label: 'Requesting safety operator', action: requestOperator, frame }] : []),
+    ];
   }
 
   let t = 0;
-  steps.push({ at: t, label: 'Preparing', frame: { ...IDLE_FRAME, boardingStatus: 'preparing' } });
+  const prepareAction = action('HOLD_AT_STOP', 'CHECK_SINGLE_ENTRANCE_CLEARANCE', 'KEEP_SINGLE_ENTRANCE_CLEAR', 'PREPARE_WHEELCHAIR_AREA');
+  steps.push({ at: t, label: 'Preparing', action: prepareAction, frame: { ...IDLE_FRAME, boardingStatus: 'preparing' } });
   const deployRamp = has(actions, 'DEPLOY_AUTOMATIC_SHORT_RAMP');
   const openDoor = has(actions, 'OPEN_SINGLE_ENTRANCE') || context.vehicle_context?.single_entrance_state === 'OPEN' || deployRamp;
-  if (deployRamp) { t += 300; steps.push({ at: t, label: 'Kneeling', frame: { kneeling: true } }); }
+  const rampAction = action('DEPLOY_AUTOMATIC_SHORT_RAMP');
+  const doorAction = action('OPEN_SINGLE_ENTRANCE') ?? rampAction;
+  if (deployRamp) { t += 300; steps.push({ at: t, label: 'Kneeling', action: rampAction, frame: { kneeling: true } }); }
   if (openDoor) {
-    t += 300; steps.push({ at: t, label: 'Door opening', frame: { door: 'opening' } });
-    t += DOOR_MS; steps.push({ at: t, label: 'Door open', frame: { door: 'open' } });
+    t += 300; steps.push({ at: t, label: 'Door opening', action: doorAction, frame: { door: 'opening' } });
+    t += DOOR_MS; steps.push({ at: t, label: 'Door open', action: doorAction, frame: { door: 'open' } });
   }
   if (deployRamp) {
     t = Math.max(t, 300 + KNEEL_MS); t += 200;
-    steps.push({ at: t, label: 'Ramp extending', frame: { ramp: 'extending' } });
-    t += RAMP_MS; steps.push({ at: t, label: 'Ramp extended', frame: { ramp: 'extended' } });
+    steps.push({ at: t, label: 'Ramp extending', action: rampAction, frame: { ramp: 'extending' } });
+    t += RAMP_MS; steps.push({ at: t, label: 'Ramp extended', action: rampAction, frame: { ramp: 'extended' } });
   } else if (has(actions, 'KEEP_RAMPS_STOWED')) {
-    steps.push({ at: t, label: 'Ramp kept stowed', frame: { ramp: 'retracted' } });
+    steps.push({ at: t, label: 'Ramp kept stowed', action: action('KEEP_RAMPS_STOWED'), frame: { ramp: 'retracted' } });
   }
   t += 300;
   const ready: TwinFrame = { boardingStatus: 'ready' };
   if (has(actions, 'ACTIVATE_EXTERNAL_SPEAKER', 'CONFIRM_ROUTE_IDENTITY', 'PLAY_ENTRANCE_AUDIO_BEACON') && audio) ready.announcement = { active: true, text: audio };
   if (has(actions, 'SHOW_EXTERNAL_DISPLAY') && display) ready.passengerInfo = { title: route ? `Route ${route}` : 'Boarding', message: display };
   else if (has(actions, 'EXTEND_DWELL_TIME')) ready.passengerInfo = { title: 'Extended boarding time', message: '+60 s dwell time · Board when the operator signals' };
-  steps.push({ at: t, label: 'Ready to board', frame: ready });
+  const readyAction = action('ACTIVATE_EXTERNAL_SPEAKER', 'CONFIRM_ROUTE_IDENTITY', 'PLAY_ENTRANCE_AUDIO_BEACON', 'SHOW_EXTERNAL_DISPLAY', 'WAIT_FOR_BOARDING_CONFIRMATION', 'EXTEND_DWELL_TIME');
+  steps.push({ at: t, label: 'Ready to board', action: readyAction, frame: ready });
   return steps;
 }
 

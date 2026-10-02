@@ -2,7 +2,7 @@
 
 This integrates the existing RideAssistant_demo website with a signal server. App bookings and Python YOLO detections trigger DeepSeek; SSE delivers the decision summary and actions to the dashboard. **No physical vehicle or vehicle interface is required.** Stopping, door, ramp geometry and approval conditions come from a simulated scene. Results remain visible for presentation.
 
-The interface, model summaries, rule-based results, error messages and passenger guidance are in English. Speech output uses the English locale `en-SG`.
+The interface, model summaries, rule-based results, error messages and passenger guidance are in English. The dashboard renders validated passenger guidance as text.
 
 For a step-by-step walkthrough of local startup, LAN access, app/YOLO integration and public backend configuration, see the [backend setup guide in Chinese](README_BACKEND.zh-CN.md).
 
@@ -19,7 +19,7 @@ node scripts/dev-integrated.mjs --key-stdin
 
 Open <http://127.0.0.1:3000>. The signal server listens on `http://127.0.0.1:8787`. Select a scenario and click **Send signals & run**. Stop with Ctrl+C.
 
-Alternatively, set `DEEPSEEK_API_KEY` before running `npm run dev:integrated`. Without a key, Offline rules still works. `.env.example` lists the configuration options; an optional local `.env` can be loaded with `node --env-file=.env scripts/dev-integrated.mjs`. Never expose the key through a `NEXT_PUBLIC_` variable.
+Alternatively, set `DEEPSEEK_API_KEY` before running `npm run dev:integrated`. Without a DeepSeek key, Offline rules still works. `.env.example` lists the configuration options; an optional local `.env` can be loaded with `node --env-file=.env scripts/dev-integrated.mjs`. Never expose the key through a `NEXT_PUBLIC_` variable.
 
 ## Send Python and app signals
 
@@ -73,12 +73,12 @@ The Thinking panel is a short explanation for the audience. `meta.source` identi
 
 The original GitHub Pages workflow and Sites build configuration are preserved. Static Pages can run the UI and offline presets. Live DeepSeek and external signals require a separate HTTPS server: set `NEXT_PUBLIC_API_BASE_URL` or enter its URL in Connection settings, then add the website origin, such as `https://dwjh.github.io`, to the server's `ALLOWED_ORIGINS`.
 
-The current changes are local; no push or deployment has been made.
+Development work is kept on feature branches; publishing a branch does not deploy the live signal server.
 
 ```text
 npm run dev:integrated   Start the dashboard and signal server together
 npm run bridge          Start only the signal server
-npm test                Run 39 policy and communication checks without API calls
+npm test                Run policy and communication checks without API calls
 npm run build           Build the Sites/Cloudflare frontend
 npm run build:pages     Run the Next build; Pages CI exports a static site
 npm run test:render     Build and check server-rendered dashboard HTML

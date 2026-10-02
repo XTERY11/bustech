@@ -12,7 +12,7 @@ export const TwinHud = memo(function TwinHud({ state, presentation }: { state: V
   const assisting = state.boardingStatus !== 'idle';
   const ann = state.announcement;
   const info = state.passengerInfo;
-  const showBar = !!ann?.active || !!info?.title || !!info?.message;
+  const showDisplay = !!info?.title || !!info?.message;
 
   const chip = (label: string, value: string, live: boolean) => (
     <span className={`twin-chip ${live ? 'live' : ''}`}>
@@ -39,22 +39,21 @@ export const TwinHud = memo(function TwinHud({ state, presentation }: { state: V
         </ol>
       </div>
 
-      <div className={`twin-bar ${showBar ? 'show' : ''}`} aria-live="polite">
-        <span className={`twin-bar-icon ${ann?.active ? 'speaking' : ''}`}>
-          {ann?.active ? <IconSpeaker size={16} /> : <IconAccessible size={16} />}
+      <div className={`twin-bar twin-bar--display ${showDisplay ? 'show' : ''}`} aria-live="polite">
+        <span className="twin-bar-icon">
+          <IconAccessible size={16} />
         </span>
         <span className="twin-bar-text">
-          {ann?.active ? (
-            <>
-              <span className="t">Announcement</span>
-              <span className="m">“{ann.text}”</span>
-            </>
-          ) : (
-            <>
-              <span className="t">{info?.title}</span>
-              <span className="m">{info?.message}</span>
-            </>
-          )}
+          <span className="t">External display{info?.title ? ` · ${info.title}` : ''}</span>
+          <span className="m">{info?.message}</span>
+        </span>
+      </div>
+
+      <div className={`twin-bar twin-bar--announcement ${ann?.active ? 'show' : ''}`} aria-live="polite">
+        <span className="twin-bar-icon speaking"><IconSpeaker size={16} /></span>
+        <span className="twin-bar-text">
+          <span className="t">Announcement</span>
+          <span className="m">“{ann?.text}”</span>
         </span>
         {ann?.active && (
           <span className="twin-wave inline">
