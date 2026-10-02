@@ -1,28 +1,27 @@
-"""Second opinion for the aid detector, plus a separate PERSON overlay.
+"""Who is in the picture, and which mobility aid is with them.
 
-best.pt was trained on four classes whose boxes each contain "a person together
-with a device" and saw no person-only images, so outside its training room it
-labels a person without any device as stroller / wheelchair with high confidence,
-and it mixes the classes up. This module does not touch those weights. It adds an
-open-vocabulary detector (YOLO-World) that knows the objects themselves:
+best.pt was trained on four classes whose boxes each contain "a person together with a
+device", on one room and a few people. Elsewhere it labels people without any device as
+stroller or wheelchair, misses people it has not seen, and mixes the classes up, so its
+boxes are not used. It only votes on wheelchair-versus-stroller for a device that has
+already been found.
 
-  * AidVerifier.persons(frame)   -> person boxes for the preview overlay
-  * AidVerifier.evidence(frame, box) -> which object accompanies the person in
-    one aid box (run on a zoomed crop of that box), or None for a bare person
-  * ConfirmedTracks              -> an aid box only counts after the same answer
-    was given `hits` times within the last `window` checks; the confirmation
-    then stays with that box while it keeps being detected.
+The devices are found by an open-vocabulary detector (YOLO-World) on the whole frame:
 
-The rule is deliberately loose about which object it is and strict about there
-being one: a person alone is never reported as an aid, and neither is a device
-nobody is with (a parked stroller, or one standing in the background behind a
-passer-by). Umbrellas, sticks and tripods are accepted as rehearsal stand-ins for
-a cane when the person is holding them; chairs and trolleys can be switched on as stand-ins for wheelchair and
-stroller when no real ones are at hand.
+  * AidVerifier.detect(frame)  -> people, wheeled devices and cane-like objects
+  * AidVerifier.seated(frame, person_box) -> pose check: is this person sitting?
+  * Scene.update(...)          -> people, and the aids that count right now
 
-Weights. The small model (yolov8s-world-aids.pt, ~26 MB) is in the repository.
-The extra-large one sees thin objects such as canes far better but is ~140 MB,
-too big for git, so build it locally once; it is used automatically when present:
+Scene keeps one track per *device*, because the device is what has an identity: its
+wheelchair/stroller votes add up on the device itself, including while it is parked, and
+one device can only ever give one box and one label. A device counts when someone is
+with it: an adult is sitting in it, or it has been moving along with a person beside it.
+A parked device is ignored however many people stand around it, and a person who lets go
+of one carries nothing away. A cane is judged per person from the last few frames only.
+
+Weights. The small model (yolov8s-world-aids.pt, ~26 MB) is in the repository. The
+extra-large one sees devices and canes far better but is ~140 MB, too big for git, so
+build it locally once; it is used automatically when present:
 
     .venv/bin/python aid_verifier.py x      # downloads yolov8x-worldv2.pt and the CLIP text encoder
     .venv/bin/python aid_verifier.py s      # rebuild the small one after editing PROMPTS
@@ -38,14 +37,15 @@ SMALL = ROOT / 'weights/yolov8s-world-aids.pt'
 LARGE = ROOT / 'weights/yolov8x-world-aids.pt'
 POSE = ROOT / 'weights/yolov8n-pose.pt'
 WEIGHTS = LARGE if LARGE.is_file() else SMALL
-# Index 0 must stay "person". The groups below refer to positions in this list.
+# Index 0 must stay "person". The groups below refer to positions in this list; prompts in no
+# group (chairs, trolley, suitcase, tripod stand) are decoys that keep furniture out of the groups.
 PROMPTS = ['person', 'wheelchair', 'stroller', 'baby carriage', 'walking cane', 'crutch', 'white cane',
            'office chair', 'chair', 'trolley', 'suitcase', 'umbrella', 'stick', 'tripod stand']
-WHEELED = {1: 'WHEELCHAIR', 2: 'STROLLER', 3: 'STROLLER'}   # real wheeled aids
-CANES = {4, 5, 6}                                            # real walking aids
-SEATS = {7, 8}                                               # stand-in for a wheelchair, only when the person is on it
-CARTS = {9, 10}                                              # stand-in for a stroller
-STICKS = {11, 12}                                            # stand-in for a cane; 'tripod stand' is a decoy for TV stands
+# Wheeled devices and what each prompt says about the label. "baby carriage" fires on an empty
+# wheelchair being pushed and not on the strollers tested, so it is a weak vote for wheelchair.
+WHEELED = {1: ('WHEELCHAIR', 1.0), 2: ('STROLLER', 1.0), 3: ('WHEELCHAIR', 0.6)}
+CANES = {4, 5, 6}
+STICKS = {11, 12}  # rehearsal stand-ins for a cane
 
 
 def _overlap(a, b):
@@ -62,210 +62,182 @@ def iou(a, b):
     return inter / (_area(a) + _area(b) - inter) if inter else 0.0
 
 
-def _key(found):
-    return found[0] if isinstance(found, tuple) else found
+def _gap(a, b):
+    return max(a[0] - b[2], b[0] - a[2], 0)
 
 
-class ConfirmedTracks:
-    """Frame-to-frame box association with a verification latch (no model inside)."""
+def _same(a, b):
+    """Two boxes on one object: they overlap well, or one's centre lies inside the other
+    (a part and the whole, or the same object seen from a changed angle)."""
+    inside = lambda p, q: q[0] <= (p[0] + p[2]) / 2 <= q[2] and q[1] <= (p[1] + p[3]) / 2 <= q[3]
+    return iou(a, b) >= 0.3 or inside(a, b) or inside(b, a)
 
-    def __init__(self, hits=2, window=30, max_misses=15, match_iou=0.3, interval=1, refresh=0, revoke=6, rank=None):
-        self.hits, self.window, self.max_misses, self.match_iou = hits, window, max_misses, match_iou
-        self.interval = interval  # check an unconfirmed box only every Nth frame it is seen
-        self.refresh = refresh    # re-check a confirmed box every Nth frame (0 = never): votes keep coming in,
-        self.revoke = revoke      # and after this many failed re-checks in a row the confirmation is withdrawn
-        self.rank = rank or {}    # answer -> priority: a higher one seen in the window holds back a lower one
-        self.tracks = []
-        self.evidence, self.votes, self.peaks = [], [], []
+
+def _both(scores):
+    """Two sightings combined (noisy-OR)."""
+    top = sorted(scores, reverse=True)[:2]
+    return 1 - (1 - top[0]) * (1 - (top[1] if len(top) > 1 else 0.0)) if top else 0.0
+
+
+class Scene:
+    """Tracks devices and people over successive detections (no model inside). One `update` is
+    one step; with detection on every other frame that is roughly 7-10 steps a second."""
+
+    def __init__(self, conf=0.15, person_conf=0.35, stick_conf=0.3, sticks=True, min_seen=4, moved=0.15,
+                 release=10, max_misses=10, cane_hits=2, cane_window=8):
+        self.conf, self.person_conf, self.stick_conf, self.sticks = conf, person_conf, stick_conf, sticks
+        self.min_seen = min_seen      # sightings before a new device is believed
+        self.moved = moved            # share of its width a device must travel to count as moving
+        self.release = release        # steps without anyone beside it before a device is parked again
+        self.max_misses = max_misses  # steps a track survives without being detected
+        self.cane_hits, self.cane_window = cane_hits, cane_window
+        self.devices, self.people, self.step = [], [], 0
 
     def reset(self):
-        self.tracks = []
+        self.devices, self.people, self.step = [], [], 0
 
-    def step(self, boxes, check, votes=None, confidences=None):
-        """Return one bool per box. `check(box)` is only called for boxes not confirmed yet.
-        A box is confirmed once `check` gave the same answer `hits` times; for a tuple answer
-        its first item is what has to repeat.
+    @staticmethod
+    def _beside(person, device):
+        """The person is at the device: touching it sideways and about as far from the camera
+        (a device whose base is well above the person's feet stands behind them)."""
+        return (_gap(person, device) <= 0.2 * (person[2] - person[0])
+                and device[3] >= person[3] - 0.2 * (person[3] - person[1]))
 
-        `votes` (one {label: weight} per box) and `confidences` are accumulated per track, so the
-        caller can report the label the detector preferred over the whole track rather than in one
-        frame, and the best confidence seen. Results are in .evidence, .votes and .peaks."""
-        free = list(self.tracks)
-        result, alive = [], []
-        for box in boxes:
-            track = max(free, key=lambda t: iou(t['box'], box), default=None)
-            if track is not None and iou(track['box'], box) >= self.match_iou:
+    def _moving(self, track):
+        """Has the device travelled since some point 3 to 15 steps ago (roughly the last 2 s)?"""
+        _, x, y = track['trail'][-1]
+        reach = self.moved * (track['box'][2] - track['box'][0])
+        return any(3 <= self.step - step <= 15 and ((x - px) ** 2 + (y - py) ** 2) ** 0.5 >= reach
+                   for step, px, py in track['trail'])
+
+    def update(self, rows, detector=(), seated=None):
+        """rows: [x1, y1, x2, y2, score, class] from AidVerifier.detect. detector: (box, {label: score})
+        pairs from best.pt, used as votes only. seated(person_box) -> bool, called sparingly.
+        Returns (people, aids); an aid is {'label', 'confidence', 'box', 'owners'}."""
+        self.step += 1
+        people = [row[:5] for row in rows if int(row[5]) == 0 and row[4] >= self.person_conf]
+
+        # Wheeled devices: several prompts fire on one object, so merge them and keep each one's say.
+        found = []
+        for row in sorted((r for r in rows if int(r[5]) in WHEELED and r[4] >= self.conf), key=lambda r: -r[4]):
+            label, weight = WHEELED[int(row[5])]
+            same = next((d for d in found if _same(row[:4], d['box'])), None)
+            if same is None:
+                found.append({'box': list(row[:4]), 'score': row[4], 'votes': Counter({label: row[4] * weight})})
+            else:
+                same['votes'][label] += row[4] * weight
+
+        free, alive = list(self.devices), []
+        for det in found:
+            track = max((t for t in free if _same(t['box'], det['box'])), key=lambda t: iou(t['box'], det['box']), default=None)
+            if track is not None:
                 free.remove(track)
             else:
-                track = {'checks': deque(maxlen=self.window), 'confirmed': False, 'seen': 0, 'votes': Counter(), 'peak': 0.0}
-            track['box'], track['misses'] = list(box), 0
+                track = {'votes': Counter(), 'trail': deque(maxlen=40), 'scores': deque(maxlen=5), 'seen': 0,
+                         'attended': False, 'alone': 0, 'sitting': 0, 'label': None}
+            box = track['box'] = det['box']
+            track['misses'] = 0
             track['seen'] += 1
-            index = len(result)
-            if votes:
-                track['votes'].update(votes[index])
-            if confidences:
-                track['peak'] = max(track['peak'], confidences[index])
-            if not track['confirmed'] and track['seen'] >= track.get('due', 0):
-                found = check(box) or None
-                track['checks'].append(found)
-                # A box that keeps failing (a bare person, a parked device) is checked five times less often after six misses in a row.
-                track['fails'] = 0 if found else track.get('fails', 0) + 1
-                track['due'] = track['seen'] + self.interval * (5 if track['fails'] >= 6 else 1)
-                if isinstance(found, tuple) and len(found) > 3:
-                    track['votes'].update(found[3])  # the checker's own opinion on the label
-                    track['since'] = track['seen']
-                answers = Counter(_key(found) for found in track['checks'] if found)
-                # Prefer the highest-ranked answer seen at all (a stroller's handle can look like a cane).
-                winner = max(answers, key=lambda k: (self.rank.get(k, 0), answers[k]), default=None)
-                if winner is not None and answers[winner] >= self.hits:
-                    track['confirmed'] = True
-                    track['evidence'] = next(found for found in reversed(track['checks']) if found and _key(found) == winner)
-            elif track['confirmed'] and self.refresh and track['seen'] - track.get('since', 0) >= self.refresh:
-                found = check(box) or None
-                track['since'] = track['seen']
-                if isinstance(found, tuple) and len(found) > 3:
-                    track['votes'].update(found[3])
-                if found and _key(found) == _key(track['evidence']):
-                    track['evidence'], track['lost'], track['up'] = found, 0, 0
-                elif found and self.rank.get(_key(found), 0) > self.rank.get(_key(track['evidence']), 0):
-                    track['up'] = track.get('up', 0) + 1  # a higher-ranked answer keeps coming: switch to it
-                    if track['up'] >= self.hits:
-                        track['evidence'], track['lost'], track['up'] = found, 0, 0
-                else:  # e.g. the person walked away from the device they had been pushing
-                    track['lost'] = track.get('lost', 0) + 1
-                    if track['lost'] >= self.revoke:
-                        track.update(confirmed=False, lost=0, fails=0, due=0, votes=Counter())
-                        track['checks'].clear(); track.pop('evidence', None)
-            alive.append(track); result.append(track['confirmed'])
-        for track in free:  # not detected in this frame: keep briefly so flicker does not drop the latch
+            track['votes'].update(det['votes'])
+            track['scores'].append(det['score'])
+            track['trail'].append((self.step, (box[0] + box[2]) / 2, box[3]))
+            centre = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+            for theirs, votes in detector:
+                if iou(theirs, box) >= 0.2 or (theirs[0] <= centre[0] <= theirs[2] and theirs[1] <= centre[1] <= theirs[3]):
+                    track['votes'].update({k: v for k, v in votes.items() if k in ('WHEELCHAIR', 'STROLLER')})
+            owners = track['owners'] = [p for p in people if self._beside(p, box)]
+            riders = [p for p in owners if _overlap(box, p) >= 0.4 * _area(p)]
+            if not riders:
+                track['sitting'] = max(track['sitting'] - 1, 0)
+            elif seated and track['seen'] % 3 == 1:  # a pose check on every third sighting is enough
+                track['sitting'] = min(track['sitting'] + 2, 6) if any(seated(p) for p in riders) else max(track['sitting'] - 2, 0)
+            if track['sitting']:
+                track['votes']['WHEELCHAIR'] += 5.0  # an adult sitting in it: strollers carry no adults
+            if track['sitting'] or (owners and self._moving(track)):
+                track['attended'], track['alone'] = True, 0
+            elif track['attended'] and owners:
+                track['alone'] = 0  # stopped, but the person is still holding it
+            elif track['attended']:
+                track['alone'] += 1
+                track['attended'] = track['alone'] <= self.release
+            alive.append(track)
+        for track in free:  # not detected this step: keep briefly so one missed frame does not break the track
             track['misses'] += 1
             if track['misses'] <= self.max_misses:
                 alive.append(track)
-        self.tracks = alive
-        current = alive[:len(result)]
-        self.evidence = [t.get('evidence') for t in current]  # the confirming answer, per box
-        self.votes = [t['votes'] for t in current]
-        self.peaks = [t['peak'] for t in current]
-        return result
+        self.devices = alive
+
+        aids, taken = [], []
+        for track in sorted(self.devices, key=lambda t: -t['seen']):
+            votes = track['votes']
+            leader = 'STROLLER' if votes['STROLLER'] > votes['WHEELCHAIR'] else 'WHEELCHAIR'
+            # The label is sticky: it only changes once the other one is clearly ahead.
+            if track['label'] is None or votes[leader] > 1.3 * votes[track['label']] + 2:
+                track['label'] = leader
+            if (track['attended'] and track['seen'] >= self.min_seen and track['misses'] <= 3
+                    and not any(_same(track['box'], aid['box']) for aid in aids)):
+                aids.append({'label': track['label'], 'confidence': _both(track['scores']), 'box': track['box'], 'owners': track['owners']})
+                taken.extend(track['owners'])
+
+        # Canes: per person, from the last few steps only, so one is seen when it is picked up and
+        # forgotten when it is put down. Someone with a wheeled device is not also given a cane.
+        canes = [row for row in rows if (int(row[5]) in CANES and row[4] >= self.conf)
+                 or (self.sticks and int(row[5]) in STICKS and row[4] >= self.stick_conf)]
+        free, alive = list(self.people), []
+        for person in people:
+            track = max(free, key=lambda t: iou(t['box'], person[:4]), default=None)
+            if track is not None and iou(track['box'], person[:4]) >= 0.3:
+                free.remove(track)
+            else:
+                track = {'hits': deque(maxlen=self.cane_window)}
+            track['box'], track['misses'] = list(person[:4]), 0
+            tall = person[3] - person[1]
+            # Held: it touches the person, starts around hand height and reaches down to their feet.
+            held = [c[4] for c in canes if _gap(person, c) <= 0.15 * (person[2] - person[0]) and c[3] >= person[3] - 0.15 * tall
+                    and c[1] >= person[1] + 0.3 * tall and c[3] - c[1] >= 0.25 * tall]
+            busy = any(list(person[:4]) == list(other[:4]) for other in taken)
+            track['hits'].append(0.0 if busy else max(held, default=0.0))
+            seen = [score for score in track['hits'] if score]
+            if len(seen) >= self.cane_hits:
+                aids.append({'label': 'CANE', 'confidence': _both(seen), 'box': track['box'], 'owners': [person]})
+            alive.append(track)
+        for track in free:
+            track['misses'] += 1
+            if track['misses'] <= 5:
+                alive.append(track)
+        self.people = alive
+        return people, aids
 
 
 class AidVerifier:
-    def __init__(self, weights=WEIGHTS, device='cpu', conf=0.15, person_conf=0.35, imgsz=480, pad=0.15,
-                 stick_stand_ins=True, bulky_stand_ins=False, stand_in_conf=0.3, bulky_share=0.15, person_weights=None,
-                 pose_weights=POSE):
+    def __init__(self, weights=WEIGHTS, device='cpu', pose_weights=POSE, imgsz=640):
         from ultralytics import YOLO
         self.model = YOLO(str(weights))
-        # Person boxes are needed every frame: use the small model for them when the large one does the checks.
-        if person_weights is None and Path(weights) != SMALL and SMALL.is_file():
-            person_weights = SMALL
-        self.person_model = YOLO(str(person_weights)) if person_weights else self.model
         self.pose_model = YOLO(str(pose_weights)) if pose_weights and Path(pose_weights).is_file() else None
-        self.device, self.conf, self.person_conf, self.imgsz, self.pad = device, conf, person_conf, imgsz, pad
-        self.stick_stand_ins, self.bulky_stand_ins = stick_stand_ins, bulky_stand_ins
-        self.stand_in_conf, self.bulky_share = stand_in_conf, bulky_share
+        self.device, self.imgsz = device, imgsz
 
-    def persons(self, frame, imgsz=640):
-        result = self.person_model.predict(frame, imgsz=imgsz, conf=self.person_conf, classes=[0], device=self.device, verbose=False)[0]
-        return [box[:5] for box in result.boxes.data.cpu().tolist()]
-
-    def _crop(self, frame, box, wide=False):
-        height, width = frame.shape[:2]
-        # A box drawn around the person only needs room to the sides, where a pushed device would be.
-        dx, dy = (0.8 if wide else self.pad) * (box[2] - box[0]), self.pad * (box[3] - box[1])
-        x1, y1 = int(max(0, box[0] - dx)), int(max(0, box[1] - dy))
-        x2, y2 = int(min(width, box[2] + dx)), int(min(height, box[3] + dy))
-        return (frame[y1:y2, x1:x2], x1, y1) if x2 - x1 >= 8 and y2 - y1 >= 8 else (None, 0, 0)
-
-    def _objects(self, frame, box, wide=False):
-        crop = self._crop(frame, box, wide)[0]
-        if crop is None:
-            return []
-        result = self.model.predict(crop, imgsz=self.imgsz, conf=0.03, device=self.device, verbose=False)[0]
+    def detect(self, frame):
+        result = self.model.predict(frame, imgsz=self.imgsz, conf=0.15, device=self.device, verbose=False)[0]
         return result.boxes.data.cpu().tolist()
 
-    def _seated(self, crop):
-        """Boxes of people who are sitting: their thighs are short on screen compared with the torso
-        (hip-to-knee drop under 0.6 of the shoulder-to-hip drop; standing people measure 0.65-0.85)."""
-        if self.pose_model is None or crop is None:
-            return []
-        result = self.pose_model.predict(crop, imgsz=self.imgsz, conf=0.4, device=self.device, verbose=False)[0]
-        seated = []
-        for xyxy, points in zip(result.boxes.xyxy.cpu().tolist(), result.keypoints.data.cpu().tolist()):
+    def seated(self, frame, box):
+        """Sitting: the thighs are short on screen compared with the torso (hip-to-knee drop under
+        0.6 of the shoulder-to-hip drop; standing people measure 0.65-0.85). Without a pose model,
+        fall back on the shape of the person's box."""
+        height, width = frame.shape[:2]
+        dx, dy = 0.15 * (box[2] - box[0]), 0.15 * (box[3] - box[1])
+        x1, y1 = int(max(0, box[0] - dx)), int(max(0, box[1] - dy))
+        x2, y2 = int(min(width, box[2] + dx)), int(min(height, box[3] + dy))
+        if self.pose_model is None or x2 - x1 < 8 or y2 - y1 < 8:
+            return (box[3] - box[1]) < 2.1 * (box[2] - box[0])
+        result = self.pose_model.predict(frame[y1:y2, x1:x2], imgsz=480, conf=0.4, device=self.device, verbose=False)[0]
+        for points in result.keypoints.data.cpu().tolist():
             rows = [[points[i][1] for i in pair if points[i][2] > 0.5] for pair in ((5, 6), (11, 12), (13, 14))]
-            if not all(rows):
-                continue
-            shoulder, hip, knee = (sum(row) / len(row) for row in rows)
-            if hip - shoulder > 8 and 0 <= (knee - hip) / (hip - shoulder) < 0.6:
-                seated.append(xyxy)
-        return seated
-
-    def evidence(self, frame, box, wide=False):
-        """(kind, score, label, votes, device_box) for the object that accompanies the person, or None.
-
-        None means a bare person, or a device nobody is with. Wheeled aids win over canes.
-        kind is 'WHEELED' for a real wheelchair or stroller. This model cannot tell those two apart
-        reliably, so `label` is only its guess and `votes` its weight in the caller's tally: an adult
-        sitting in the device makes it a wheelchair, otherwise the detector's vote should decide.
-        For every other kind, kind == label. device_box is the object itself in frame coordinates
-        (None for a cane, which is too thin to be worth drawing on its own)."""
-        crop, left, top = self._crop(frame, box, wide)
-        if crop is None:
-            return None
-        result = self.model.predict(crop, imgsz=self.imgsz, conf=0.03, device=self.device, verbose=False)[0]
-        rows = [(row[:4], row[4], int(row[5])) for row in result.boxes.data.cpu().tolist()]
-        people = [xyxy for xyxy, score, cls in rows if cls == 0 and score >= self.person_conf]
-
-        def with_person(xyxy):
-            """People who are with this object: beside or over it, and about as far from the camera
-            (an object whose base is well above the person's feet stands behind them)."""
-            return [p for p in people
-                    if max(p[0] - xyxy[2], xyxy[0] - p[2], 0) <= 0.3 * (p[2] - p[0])
-                    and xyxy[3] >= p[3] - 0.2 * (p[3] - p[1])]
-
-        def held(group, floor):
-            """Best score of a cane-like object a person is holding: it touches the person, starts
-            around hand height and reaches down to about their feet. A stand or pole in the
-            background, or an arm, fails this."""
-            scores = []
-            for xyxy, score, cls in rows:
-                if cls not in group or score < floor:
-                    continue
-                for p in people:
-                    tall = p[3] - p[1]
-                    if (max(p[0] - xyxy[2], xyxy[0] - p[2], 0) <= 0.15 * (p[2] - p[0]) and xyxy[3] >= p[3] - 0.15 * tall
-                            and xyxy[1] >= p[1] + 0.3 * tall and xyxy[3] - xyxy[1] >= 0.25 * tall):
-                        scores.append(score); break
-            return max(scores, default=None)
-
-        for xyxy, score, cls in sorted((r for r in rows if r[2] in WHEELED and r[1] >= self.conf), key=lambda r: -r[1]):
-            owners = with_person(xyxy)
-            if not owners:
-                continue
-            device = [xyxy[0] + left, xyxy[1] + top, xyxy[2] + left, xyxy[3] + top]
-            # An adult sitting in the device settles it: strollers carry no adults. This covers the
-            # wheelchair user on their own, a case the detector never saw in training and flips on.
-            sitters = [p for p in owners if (p[3] - p[1]) < 2.1 * (p[2] - p[0])] + self._seated(crop)
-            if any(_overlap(xyxy, p) >= 0.4 * _area(p) for p in sitters):
-                return 'WHEELED', score, 'WHEELCHAIR', {'WHEELCHAIR': 1000.0}, device
-            return 'WHEELED', score, WHEELED[cls], {WHEELED[cls]: 0.5}, device
-        if self.bulky_stand_ins:
-            area = _area(box)
-            # A seat only counts when a person is on it; a chair next to a standing person does not.
-            seats = [score for xyxy, score, cls in rows if cls in SEATS and score >= self.stand_in_conf
-                     and _area(xyxy) >= self.bulky_share * area
-                     and any(_overlap(xyxy, p) >= 0.3 * _area(xyxy) for p in people)]
-            if seats:
-                return 'WHEELCHAIR', max(seats), 'WHEELCHAIR', {}, None
-            carts = [score for xyxy, score, cls in rows if cls in CARTS and score >= self.stand_in_conf
-                     and _area(xyxy) >= self.bulky_share * area and with_person(xyxy)]
-            if carts:
-                return 'STROLLER', max(carts), 'STROLLER', {}, None
-        if wide:  # a cane is held close: look again in a tight crop, where a thin object is not lost
-            rows = [(row[:4], row[4], int(row[5])) for row in self._objects(frame, box)]
-            people = [xyxy for xyxy, score, cls in rows if cls == 0 and score >= self.person_conf]
-        if not people:
-            return None
-        cane = held(CANES, self.conf) or (held(STICKS, self.stand_in_conf) if self.stick_stand_ins else None)
-        return ('CANE', cane, 'CANE', {}, None) if cane else None
+            if all(rows):
+                shoulder, hip, knee = (sum(row) / len(row) for row in rows)
+                if hip - shoulder > 8 and 0 <= (knee - hip) / (hip - shoulder) < 0.6:
+                    return True
+        return False
 
 
 def build_weights(size='s'):

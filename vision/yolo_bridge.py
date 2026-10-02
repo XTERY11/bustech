@@ -27,8 +27,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from aid_verifier import WEIGHTS as VERIFY_WEIGHTS, AidVerifier, ConfirmedTracks, iou
-from monitor_zone import Trigger, anchor_point, load_roi
+from aid_verifier import WEIGHTS as VERIFY_WEIGHTS, AidVerifier, Scene, iou
+from monitor_zone import anchor_point, load_roi
 from ride_signal_client import RideSignalClient
 
 ROOT = Path(__file__).resolve().parent
@@ -105,6 +105,7 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--source', default='0', help='Camera index, video file, RTSP or HTTP video stream')
     p.add_argument('--loop', action='store_true', help='Restart a video file when it ends (demo playback)')
+    p.add_argument('--realtime', action='store_true', help='Replay a video file like a live camera: frames that arrive while a frame is being processed are dropped')
     p.add_argument('--model', type=Path, default=ROOT / 'runs/bustech_yolov8n/weights/best.pt')
     p.add_argument('--roi', type=Path, default=ROOT / 'monitor_roi.json')
     p.add_argument('--anchor', choices=['bottom-center', 'center'], default=None)
@@ -112,14 +113,12 @@ def parse_args():
     p.add_argument('--classes', type=int, nargs='+', help='Class IDs; default is all four classes')
     p.add_argument('--device', default='auto', help='auto, cpu, mps, or GPU index such as 0')
     p.add_argument('--imgsz', type=int, default=640)
-    p.add_argument('--verify-model', type=Path, default=VERIFY_WEIGHTS, help='Open-vocabulary weights that must see the device inside an aid box (see aid_verifier.py)')
-    p.add_argument('--no-verify', action='store_true', help='Report raw detections without the device check and without person boxes')
-    p.add_argument('--verify-conf', type=float, default=0.15, help='Minimum device score inside an aid box')
-    p.add_argument('--verify-hits', type=int, default=2, help='Device sightings needed before an aid box counts')
-    p.add_argument('--strict-verify', action='store_true', help='Only real aids count; no stand-ins at all (by default an umbrella, stick or tripod counts as a cane)')
-    p.add_argument('--chair-stand-ins', action='store_true', help='Rehearsal without real aids: a person on a chair counts as a wheelchair, a trolley or suitcase as a stroller')
-    p.add_argument('--enter-frames', type=int, default=8, help='Frames a target must stay in the region before the trigger (about 0.3 s), so the label has settled')
-    p.add_argument('--exit-frames', type=int, default=60, help='Frames with nobody in the region before it clears (about 2 s)')
+    p.add_argument('--verify-model', type=Path, default=VERIFY_WEIGHTS, help='Open-vocabulary weights that find people and devices (see aid_verifier.py)')
+    p.add_argument('--no-verify', action='store_true', help='Report the raw best.pt detections instead (no person boxes, no device tracking)')
+    p.add_argument('--strict-verify', action='store_true', help='Only real canes count; by default an umbrella or stick held like a cane does too')
+    p.add_argument('--detect-every', type=int, default=2, help='Run detection on every Nth frame and reuse the result in between')
+    p.add_argument('--enter-seconds', type=float, default=0.3, help='How long an aid must be in the region before the trigger')
+    p.add_argument('--exit-seconds', type=float, default=2.0, help='How long the region must be empty of people before it clears')
     p.add_argument('--width', type=int, default=1280, help='Maximum processed/streamed frame width')
     p.add_argument('--rotate', choices=['none', 'cw', 'ccw', '180'], default='none')
     p.add_argument('--jpeg-quality', type=int, default=80)
@@ -217,14 +216,14 @@ def main():
     verifier = None
     if not args.no_verify:
         if args.verify_model.is_file():
-            verifier = AidVerifier(args.verify_model, device, conf=args.verify_conf, stick_stand_ins=not args.strict_verify, bulky_stand_ins=args.chair_stand_ins)
+            verifier = AidVerifier(args.verify_model, device)
         else:
             print(f'Verifier weights not found: {args.verify_model}. Running unverified; build them with: python aid_verifier.py', flush=True)
-    if args.conf is None:  # with the device check on, the check filters false alarms, so the detector can be more sensitive
+    if args.conf is None:
         args.conf = 0.25 if verifier else 0.4
-    tracks = ConfirmedTracks(hits=args.verify_hits, interval=3, refresh=8, rank={'WHEELED': 1})
+    scene = Scene(sticks=not args.strict_verify)
     region_mask = None
-    persons, held = [], []
+    persons, aids, held = [], [], []
 
     shared = SharedFrame()
     info = {'source': str(args.source), 'device': device, 'roi': str(args.roi), 'bridge_url': None if args.no_signal else args.bridge_url}
@@ -235,7 +234,8 @@ def main():
 
     client = None if args.no_signal else RideSignalClient(args.bridge_url, args.bridge_token)
     roi_id = args.roi.stem
-    trigger = Trigger(args.enter_frames, args.exit_frames)
+    active = False            # region occupied (the trigger)
+    since = last_seen = None  # when the current aid entered / when somebody was last in the region
     if args.snapshots:
         args.snapshots.mkdir(parents=True, exist_ok=True)
         args.events = args.events or args.snapshots / 'events.jsonl'
@@ -245,6 +245,8 @@ def main():
     pending = []  # snapshot names waiting for the frame to be fully drawn
 
     def record(event):
+        if is_file:
+            event['second'] = round(position / fps_src, 1)  # where in the recording this happened
         if args.snapshots and event.get('event') in ('TRIGGER', 'LABEL', 'CLEAR'):
             event['snapshot'] = f"{datetime.now().strftime('%H%M%S')}_{event['frame']:06d}_{event['event'].lower()}.jpg"
             pending.append(event['snapshot'])
@@ -272,7 +274,7 @@ def main():
         cap = LatestFrame(cap)
     fps_src = cap.get(cv2.CAP_PROP_FPS)
     fps_src = fps_src if np.isfinite(fps_src) and 0 < fps_src <= 240 else 30
-    processed = 0
+    processed = position = 0
     last_heartbeat = 0.0
     tick_fps = time.monotonic(); fps_count = 0
     window = 'Bustech | Sense bridge'
@@ -282,9 +284,10 @@ def main():
         while True:
             tick = time.monotonic()
             ok, frame = cap.read()
+            position += 1
             if not ok:
                 if is_file and args.loop:
-                    cap.release(); cap = open_capture(source); trigger.reset(); tracks.reset(); continue
+                    cap.release(); cap = open_capture(source); scene.reset(); active, since, last_seen, position = False, None, None, 0; continue
                 if is_file:
                     print('Video finished.', flush=True); break
                 raise RuntimeError('Camera/stream stopped delivering frames.')
@@ -294,103 +297,47 @@ def main():
                 frame = cv2.resize(frame, (args.width, round(frame.shape[0] * args.width / frame.shape[1])))
             height, width = frame.shape[:2]
             view = frame.copy()
-            result = model.predict(frame, imgsz=args.imgsz, conf=args.conf, classes=args.classes, device=device, verbose=False)[0]
             if region_mask is None or region_mask.shape != (height, width):
                 region_mask = np.zeros((height, width), np.uint8)
                 cv2.fillPoly(region_mask, [np.round(np.asarray(points) * [width - 1, height - 1]).astype(np.int32)], 1)
-            inside_detections, all_detections = [], []
-            # The detector often gives one target two boxes with different classes (wheelchair and
-            # stroller). Keep the strongest box per target and remember what every class scored.
-            raw, raw_votes = [], []
-            for box in sorted(result.boxes.data.cpu().tolist(), key=lambda box: -box[4]):
-                label = CLASS_MAP.get(str(names[int(box[5])]).lower())
-                same = next((i for i, kept in enumerate(raw) if iou(box[:4], kept[:4]) >= 0.5), None)
-                if same is None:
-                    raw.append(box); raw_votes.append({label: box[4]})
+            if processed % args.detect_every == 0 or not verifier:
+                result = model.predict(frame, imgsz=args.imgsz, conf=args.conf, classes=args.classes, device=device, verbose=False)[0]
+                raw = [(box[:4], {CLASS_MAP.get(str(names[int(box[5])]).lower()): box[4]}, box[4]) for box in result.boxes.data.cpu().tolist()]
+                if verifier:
+                    # People and devices come from the open-vocabulary model; best.pt only votes on the label.
+                    persons, aids = scene.update(verifier.detect(frame), [(box, votes) for box, votes, _ in raw],
+                                                 lambda person: verifier.seated(frame, person))
                 else:
-                    raw_votes[same][label] = max(raw_votes[same].get(label, 0.0), box[4])
-            if verifier:
-                # Candidates are people, not detector boxes: the detector misses people it was not
-                # trained on (other clothes, a wheelchair user on their own) and its boxes vary in
-                # size. Its class scores still count as votes for the person they overlap.
-                persons = verifier.persons(frame)
-                boxes, votes, used = [], [], set()
-                for person in persons:
-                    if person[3] - person[1] < 0.2 * height and not in_region(person[:4], region_mask, args.anchor):
-                        continue  # too far away to judge
-                    centre = ((person[0] + person[2]) / 2, (person[1] + person[3]) / 2)
-                    mine = [i for i, box in enumerate(raw) if iou(person[:4], box[:4]) >= 0.3
-                            or (box[0] <= centre[0] <= box[2] and box[1] <= centre[1] <= box[3])]
-                    tally = {}
-                    for i in mine:
-                        used.add(i)
-                        for label, score in raw_votes[i].items():
-                            tally[label] = max(tally.get(label, 0.0), score)
-                    boxes.append([*person[:4], max((raw[i][4] for i in mine), default=0.0), -1]); votes.append(tally)
-                for i, box in enumerate(raw):  # detector boxes with no person found: kept in case the person detector missed one
-                    if i not in used:
-                        boxes.append(box); votes.append(raw_votes[i])
-                from_person = {tuple(box[:4]) for box in boxes if box[5] == -1}
-
-                def check(candidate):
-                    found = verifier.evidence(frame, candidate, wide=tuple(candidate) in from_person)
-                    if found and found[4]:  # remember where the device sits relative to the candidate, so its box follows between checks
-                        wide, tall = candidate[2] - candidate[0], candidate[3] - candidate[1]
-                        device = found[4]
-                        found = (*found[:4], [(device[0] - candidate[0]) / wide, (device[1] - candidate[1]) / tall,
-                                              (device[2] - candidate[0]) / wide, (device[3] - candidate[1]) / tall])
-                    return found
-
-                # A candidate only counts once the verifier has seen an object with the person.
-                verified = tracks.step([box[:4] for box in boxes], check, votes, [box[4] for box in boxes])
-                evidence, tallies, peaks = tracks.evidence, tracks.votes, tracks.peaks
-            else:
-                boxes, votes = raw, raw_votes
-                verified, evidence, tallies, peaks = [True] * len(boxes), [None] * len(boxes), votes, [box[4] for box in boxes]
+                    aids = [{'label': next(iter(votes)), 'confidence': score, 'box': box, 'owners': []} for box, votes, score in raw]
             someone_inside = any(in_region(person[:4], region_mask, args.anchor) for person in persons)
             for x1, y1, x2, y2, confidence in persons:
                 cv2.rectangle(view, (int(x1), int(y1)), (int(x2), int(y2)), (170, 170, 170), 1)
                 cv2.putText(view, f'person {confidence:.2f}', (max(0, int(x1)), max(20, int(y1) - 6)), cv2.FONT_HERSHEY_SIMPLEX, .45, (170, 170, 170), 1)
-            shown = []
-            for box, confirmed, found, tally, peak in zip(boxes, verified, evidence, tallies, peaks):
-                if not confirmed:
-                    continue
-                x1, y1, x2, y2, confidence, cls = box
-                own = names[int(cls)] if cls >= 0 else 'person'
-                kind, seen, label, _, where = found or (None, 0.0, CLASS_MAP.get(str(own).lower()), None, None)
-                if kind == 'WHEELED':
-                    # Wheelchair or stroller: go by the tally over the whole track (detector class scores
-                    # plus the verifier's own opinion), not by a single frame.
-                    wheeled = {name: tally.get(name, 0.0) for name in ('WHEELCHAIR', 'STROLLER')}
-                    if any(wheeled.values()):
-                        label = max(wheeled, key=wheeled.get)
-                if where:  # draw and place the device itself, so the box is the same size whoever is with it
-                    x1, y1, x2, y2 = (x1 + where[0] * (x2 - x1), y1 + where[1] * (y2 - y1), x1 + where[2] * (x2 - x1), y1 + where[3] * (y2 - y1))
-                target = [x1, y1, x2, y2]
-                # Combine the evidence (noisy-OR): the verifier saw the object on `verify_hits` checks, and
-                # the detector's best frame on this track counts too, so the value does not dip between frames.
-                detector_confidence = max(confidence, peak)
-                confidence = 1 - (1 - detector_confidence) * (1 - seen) ** (args.verify_hits if found else 1)
-                centre = ((x1 + x2) / 2, (y1 + y2) / 2)
-                if any(other == label and (iou(target, kept) >= 0.3 or (kept[0] <= centre[0] <= kept[2] and kept[1] <= centre[1] <= kept[3])
-                                           or (target[0] <= (kept[0] + kept[2]) / 2 <= target[2] and target[1] <= (kept[1] + kept[3]) / 2 <= target[3]))
-                       for kept, other in shown):
-                    continue  # one device seen twice (from the pusher and the passenger, or as a whole and a part)
-                shown.append((target, label))
-                # In the region when the device is, or when the person with it is.
-                inside = in_region(target, region_mask, args.anchor) or in_region(box[:4], region_mask, args.anchor)
-                all_detections.append({'label': label or 'UNKNOWN', 'confidence': round(float(confidence), 3), 'detector_confidence': round(float(detector_confidence), 3), 'model_class': own})
+            inside_detections, all_detections = [], []
+            for aid in aids:
+                label, confidence, (x1, y1, x2, y2) = aid['label'], aid['confidence'], aid['box']
+                # In the region when the device is, or when a person with it is.
+                inside = in_region(aid['box'], region_mask, args.anchor) or any(in_region(owner[:4], region_mask, args.anchor) for owner in aid['owners'])
+                all_detections.append({'label': label or 'UNKNOWN', 'confidence': round(float(confidence), 3)})
                 if inside and label:
                     inside_detections.append({'label': label, 'confidence': round(float(confidence), 3)})
                 color = (0, 100, 255) if inside else (220, 180, 70)
                 cv2.rectangle(view, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
-                cv2.putText(view, f'{(label or own).lower()} {confidence:.2f}', (max(0, int(x1)), max(20, int(y1) - 8)), cv2.FONT_HERSHEY_SIMPLEX, .6, color, 2)
-                cv2.circle(view, tuple(round(v) for v in anchor_point(target, args.anchor)), 5, color, -1)
+                cv2.putText(view, f'{(label or "?").lower()} {confidence:.2f}', (max(0, int(x1)), max(20, int(y1) - 8)), cv2.FONT_HERSHEY_SIMPLEX, .6, color, 2)
+                cv2.circle(view, tuple(round(v) for v in anchor_point(aid['box'], args.anchor)), 5, color, -1)
             # Occupancy: an aid in the region starts the trigger and fixes what is reported. After that
             # the region stays occupied for as long as anybody is in it (people are detected far more
             # steadily than aids), and clears only once it has been empty for `exit_frames`.
-            was_active = trigger.active
-            active, entered = trigger.update(bool(inside_detections) or (was_active and someone_inside))
+            now = position / fps_src if is_file else time.monotonic()  # recordings run on their own clock
+            was_active = active
+            if inside_detections or (active and someone_inside):
+                last_seen = now
+            since = (since if since is not None else now) if inside_detections else None
+            if not active and since is not None and now - since >= args.enter_seconds:
+                active = True
+            elif active and now - last_seen >= args.exit_seconds:
+                active = False
+            entered = active and not was_active
             before = sorted(d['label'] for d in held)
             if inside_detections:
                 held = inside_detections
@@ -418,7 +365,7 @@ def main():
             while ok_jpeg and pending:
                 (args.snapshots / pending.pop()).write_bytes(buf.tobytes())
             if ok_jpeg:
-                shared.set(buf.tobytes(), {'triggered': active, 'inside': len(inside_detections), 'held': held if active else [], 'detections': all_detections[:20], 'rejected': len(verified) - sum(verified), 'persons': len(persons), 'frames': processed})
+                shared.set(buf.tobytes(), {'triggered': active, 'inside': len(inside_detections), 'held': held if active else [], 'detections': all_detections[:20], 'persons': len(persons), 'frames': processed})
             fps_count += 1
             if time.monotonic() - tick_fps >= 1:
                 shared.fps = fps_count / (time.monotonic() - tick_fps); tick_fps = time.monotonic(); fps_count = 0
@@ -428,7 +375,10 @@ def main():
                 cv2.imshow(window, view)
                 if cv2.waitKey(1) & 0xff == ord('q'):
                     break
-            if is_file:  # pace file playback at the source frame rate
+            if is_file and args.realtime:  # a live camera would have moved on by this many frames
+                for _ in range(max(0, round((time.monotonic() - tick) * fps_src) - 1)):
+                    cap.grab(); position += 1
+            elif is_file:  # pace file playback at the source frame rate
                 time.sleep(max(0.0, 1 / fps_src - (time.monotonic() - tick)))
     finally:
         cap.release(); server.shutdown()
@@ -436,7 +386,7 @@ def main():
             log.close()
         if not args.no_window:
             cv2.destroyAllWindows()
-        print(json.dumps({'processed_frames': processed, 'triggered_final': trigger.active}), flush=True)
+        print(json.dumps({'processed_frames': processed, 'triggered_final': active}), flush=True)
 
 
 if __name__ == '__main__':
