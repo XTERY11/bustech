@@ -5,12 +5,13 @@
 #   bash start_demo.sh 0               # same, but the bridge reads camera 0 (draw monitor_roi.json first, see README)
 #   DEEPSEEK_API_KEY=sk-... bash start_demo.sh 0
 #   LAN=1 bash start_demo.sh 0         # bind to 0.0.0.0 with a generated BRIDGE_TOKEN for phones / other PCs
+#   BRIDGE_WINDOW=1 bash start_demo.sh 0   # also show the annotated camera view in a local window (Q stops the bridge)
 #
 # Ports: dashboard 3000 · signal hub 8787 · camera MJPEG/health 8790. Ctrl+C stops everything.
 # Override DASHBOARD_PORT, BRIDGE_PORT or VISION_PORT when a default port is busy.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-SRC="${1:-demos/clips/wheelchair_test.mp4}"
+SRC="${1:-demos/clips/wheelchair-003.mp4}"
 command -v node >/dev/null || { echo "Node.js 22.13+ is required (brew install node)"; exit 1; }
 [ -d "$ROOT/dashboard/node_modules" ] || (cd "$ROOT/dashboard" && npm ci --no-audit --no-fund)
 [ -f "$ROOT/dashboard/public/twin/index.html" ] || bash "$ROOT/twin/sync_to_dashboard.sh"
@@ -32,6 +33,7 @@ else
   echo "Dashboard http://127.0.0.1:${DASHBOARD_PORT}  hub http://127.0.0.1:${BRIDGE_PORT}  camera http://127.0.0.1:${VISION_PORT}"
 fi
 
+WINDOW_FLAG="--no-window"; [ -n "${BRIDGE_WINDOW:-}" ] && WINDOW_FLAG=""
 PIDS=()
 cleanup() {
   trap - INT TERM EXIT
@@ -49,7 +51,7 @@ if ! kill -0 "${PIDS[0]}" 2>/dev/null; then
   wait "${PIDS[0]}" || exit $?
   exit 1
 fi
-(cd "$ROOT/vision" && RIDE_BRIDGE_URL="http://127.0.0.1:${BRIDGE_PORT}" BRIDGE_TOKEN="${BRIDGE_TOKEN:-}" bash start_bridge.sh "$SRC" --no-window --mjpeg-port "$VISION_PORT") &
+(cd "$ROOT/vision" && RIDE_BRIDGE_URL="http://127.0.0.1:${BRIDGE_PORT}" BRIDGE_TOKEN="${BRIDGE_TOKEN:-}" bash start_bridge.sh "$SRC" $WINDOW_FLAG --snapshots "$ROOT/vision/trigger_snapshots" --mjpeg-port "$VISION_PORT") &
 PIDS+=("$!")
 
 # macOS still ships Bash 3.2, so use a portable fail-fast monitor instead of

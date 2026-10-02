@@ -95,7 +95,7 @@ Model classes map as `wheelchair_with`/`wheelchair_without → WHEELCHAIR`, `can
 ```bash
 cd dashboard && npm test                       # 42 policy/communication checks (incl. stroller)
 cd vision && .venv/bin/python -m unittest test_monitor_zone -v
-cd vision && .venv/bin/python yolo_bridge.py --source demos/clips/wheelchair_test.mp4 --roi monitor_example_roi.json --no-window --max-frames 120 --no-signal
+cd vision && .venv/bin/python yolo_bridge.py --source demos/clips/wheelchair-003.mp4 --roi monitor_example_roi.json --no-window --max-frames 120 --no-signal
 ```
 
 ## Not covered yet

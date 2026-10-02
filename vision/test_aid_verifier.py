@@ -2,71 +2,92 @@ import unittest
 
 import numpy as np
 
-from aid_verifier import ConfirmedTracks, iou
+from aid_verifier import Scene, iou
 
-BOX = [100, 100, 200, 300]
-NEAR = [104, 102, 204, 302]
-FAR = [600, 100, 700, 300]
+PERSON, WHEELCHAIR, STROLLER, CARRIAGE, CANE, STICK = 0, 1, 2, 3, 4, 12
 
 
-class ConfirmedTracksTest(unittest.TestCase):
-    def test_box_without_device_is_never_confirmed(self):
-        tracks = ConfirmedTracks(hits=2, window=30)
-        for _ in range(200):
-            self.assertEqual(tracks.step([BOX], lambda b: False), [False])
+def person(x, y=100, w=100, h=300, score=.9):
+    return [x, y, x + w, y + h, score, PERSON]
 
-    def test_confirms_after_enough_hits_and_stays_latched(self):
-        tracks = ConfirmedTracks(hits=2, window=30)
-        self.assertEqual(tracks.step([BOX], lambda b: True), [False])
-        self.assertEqual(tracks.step([NEAR], lambda b: True), [True])
-        calls = []
-        self.assertEqual(tracks.step([BOX], lambda b: calls.append(b) or False), [True])
-        self.assertEqual(calls, [])  # confirmed boxes are not re-checked
 
-    def test_hits_outside_window_do_not_count(self):
-        tracks = ConfirmedTracks(hits=2, window=5)
-        answers = iter([True] + [False] * 5 + [True])
-        for _ in range(7):
-            confirmed = tracks.step([BOX], lambda b: next(answers))
-        self.assertEqual(confirmed, [False])
+def device(x, cls=WHEELCHAIR, y=250, w=120, h=150, score=.7):
+    return [x, y, x + w, y + h, score, cls]
 
-    def test_latch_survives_short_gap_but_not_long_absence(self):
-        tracks = ConfirmedTracks(hits=1, max_misses=3)
-        self.assertEqual(tracks.step([BOX], lambda b: True), [True])
-        for _ in range(3):
-            tracks.step([], lambda b: False)
-        self.assertEqual(tracks.step([BOX], lambda b: False), [True])
-        for _ in range(4):
-            tracks.step([], lambda b: False)
-        self.assertEqual(tracks.step([BOX], lambda b: False), [False])
 
-    def test_boxes_are_tracked_independently(self):
-        tracks = ConfirmedTracks(hits=1)
-        self.assertEqual(tracks.step([BOX, FAR], lambda b: b == BOX), [True, False])
-        self.assertEqual(tracks.step([FAR, NEAR], lambda b: False), [False, True])
+def run(scene, frames, **kwargs):
+    aids = []
+    for rows in frames:
+        _, aids = scene.update(rows, **kwargs)
+    return aids
 
-    def test_interval_skips_checks_between_frames(self):
-        tracks = ConfirmedTracks(hits=2, interval=3)
-        calls = []
-        results = [tracks.step([BOX], lambda b: calls.append(1) or True) for _ in range(4)]
-        self.assertEqual(results, [[False], [False], [False], [True]])
-        self.assertEqual(len(calls), 2)
 
-    def test_evidence_is_kept_per_box(self):
-        tracks = ConfirmedTracks(hits=1)
-        tracks.step([BOX, FAR], lambda b: 'WHEELCHAIR' if b == BOX else None)
-        self.assertEqual(tracks.evidence, ['WHEELCHAIR', None])
+class SceneTest(unittest.TestCase):
+    def test_parked_device_is_ignored_even_with_people_around(self):
+        aids = run(Scene(), [[device(300), person(240), person(400)]] * 40)
+        self.assertEqual(aids, [])
 
-    def test_label_must_repeat_before_it_confirms(self):
-        tracks = ConfirmedTracks(hits=2)
-        answers = iter([('WHEELCHAIR', .5), ('CANE', .4), ('CANE', .6)])
-        results = [tracks.step([BOX], lambda b: next(answers)) for _ in range(3)]
-        self.assertEqual(results, [[False], [False], [True]])
-        self.assertEqual(tracks.evidence, [('CANE', .6)])
+    def test_wobbling_box_of_a_parked_device_is_not_movement(self):
+        frames = [[device(300 + (12 if i % 2 else -12), w=120 - (20 if i % 3 == 0 else 0)), person(240)] for i in range(40)]
+        self.assertEqual(run(Scene(), frames), [])
+
+    def test_parked_device_counts_once_someone_takes_it_away(self):
+        scene = Scene()
+        self.assertEqual(run(scene, [[device(300)]] * 10 + [[device(300), person(240)]] * 10), [])
+        pushed = [[device(300 + 10 * i), person(240 + 10 * i)] for i in range(1, 12)]
+        self.assertEqual([a['label'] for a in run(scene, pushed)], ['WHEELCHAIR'])
+
+    def test_device_moving_with_a_person_counts_once(self):
+        frames = [[device(300 + 6 * i), person(240 + 6 * i), person(430 + 6 * i)] for i in range(20)]
+        aids = run(Scene(), frames)
+        self.assertEqual([a['label'] for a in aids], ['WHEELCHAIR'])  # two people beside it, still one aid
+
+    def test_it_stays_while_the_person_holds_it_and_is_dropped_when_they_leave(self):
+        scene = Scene(release=5)
+        moving = [[device(300 + 6 * i), person(240 + 6 * i)] for i in range(20)]
+        stopped = [[device(414), person(354)]] * 40
+        self.assertEqual(len(run(scene, moving + stopped)), 1)
+        left = [[device(414), person(900)]] * 6
+        self.assertEqual(run(scene, left), [])
+
+    def test_seated_adult_makes_it_a_wheelchair_without_moving(self):
+        rows = [device(300, STROLLER), person(310, y=200, w=100, h=200)]
+        aids = run(Scene(), [rows] * 6, seated=lambda box: True)
+        self.assertEqual([a['label'] for a in aids], ['WHEELCHAIR'])
+        self.assertEqual(run(Scene(), [rows] * 6, seated=lambda box: False), [])
+
+    def test_label_is_the_devices_own_tally(self):
+        pushed = lambda cls: [[device(300 + 6 * i, cls), person(240 + 6 * i)] for i in range(20)]
+        self.assertEqual(run(Scene(), pushed(STROLLER))[0]['label'], 'STROLLER')
+        self.assertEqual(run(Scene(), pushed(CARRIAGE))[0]['label'], 'WHEELCHAIR')
+        votes = [([280, 100, 480, 400], {'WHEELCHAIR': .9})]
+        self.assertEqual(run(Scene(), pushed(STROLLER), detector=votes)[0]['label'], 'WHEELCHAIR')
+
+    def test_device_behind_a_person_is_not_theirs(self):
+        frames = [[device(300 + 6 * i, y=100, h=150), person(260 + 6 * i, y=150, h=400)] for i in range(20)]
+        self.assertEqual(run(Scene(), frames), [])  # its base is far above their feet
+
+    def test_cane_is_seen_when_held_and_forgotten_when_put_down(self):
+        scene = Scene(cane_window=4)
+        held = [person(300), [380, 250, 400, 410, .4, CANE]]
+        self.assertEqual(run(scene, [held] * 1), [])
+        self.assertEqual([a['label'] for a in run(scene, [held] * 2)], ['CANE'])
+        self.assertEqual(run(scene, [[person(300)]] * 4), [])
+
+    def test_pole_in_the_background_is_not_a_cane(self):
+        far = [person(300), [600, 100, 620, 400, .6, CANE]]
+        high = [person(300), [380, 100, 400, 200, .6, CANE]]
+        self.assertEqual(run(Scene(), [far] * 5), [])
+        self.assertEqual(run(Scene(), [high] * 5), [])
+
+    def test_stick_stand_in_can_be_switched_off(self):
+        held = [person(300), [380, 250, 400, 410, .5, STICK]]
+        self.assertEqual(len(run(Scene(), [held] * 3)), 1)
+        self.assertEqual(run(Scene(sticks=False), [held] * 3), [])
 
     def test_iou(self):
-        self.assertEqual(iou(BOX, FAR), 0.0)
-        self.assertAlmostEqual(iou(BOX, BOX), 1.0)
+        self.assertEqual(iou([0, 0, 10, 10], [20, 20, 30, 30]), 0.0)
+        self.assertAlmostEqual(iou([0, 0, 10, 10], [0, 0, 10, 10]), 1.0)
 
 
 class InRegionTest(unittest.TestCase):
@@ -82,6 +103,12 @@ class InRegionTest(unittest.TestCase):
     def test_box_running_past_the_region_edge_still_counts(self):
         # bottom-centre falls below the region, but the lower part of the box covers it
         self.assertTrue(self.in_region([40, 10, 70, 99], self.mask, 'bottom-center'))
+
+    def test_large_box_on_a_small_region_counts(self):
+        mask = np.zeros((720, 1280), np.uint8)
+        mask[630:690, 510:1045] = 1  # thin strip near the bottom of the frame
+        self.assertTrue(self.in_region([318, 195, 777, 720], mask, 'bottom-center'))  # wheelchair running out of frame
+        self.assertFalse(self.in_region([318, 100, 777, 500], mask, 'bottom-center'))  # same box, well above the strip
 
     def test_box_elsewhere_does_not_count(self):
         self.assertFalse(self.in_region([0, 0, 20, 50], self.mask, 'bottom-center'))

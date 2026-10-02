@@ -92,7 +92,9 @@
 - `label` 取值：`WHEELCHAIR` `CRUTCH` `CANE` `WALKER` `STROLLER` `PERSON` `NONE` `UNKNOWN`。
 - `confidence` 0–1；策略阈值 0.75，低于它不算有效识别。检测桥上报的是检测模型与确认模型两者合并后的置信度（noisy-OR：`1-(1-检测)(1-确认)`）。最多 20 条；可选 `track_id`。
 - 只发结构化结果，**不发图像**。进入区域发一次，占用期间按心跳（默认 2 秒）重发，离开时发空数组。
-- “在区域内”的判定：检测框底边中点落在区域内，或框的下部 30% 与区域重叠达到 25%。连续 2 帧成立即触发，连续 30 帧（约 1 秒）没有目标才解除。
+- **触发逻辑（占用状态机）**：①进入：有人带着的辅具（或带着它的人）与区域重叠并持续 0.3 秒即触发，上报当时的类别。“与区域重叠”指框的底边中点在区域内，或框下部 30% 与区域的重叠达到框下部或区域面积中较小者的 25%。②占用：触发后只要区域里还有人就保持（人体检测比辅具检测稳定得多），心跳继续上报类别。③离开：区域里连续 2 秒没有任何人才解除，发空数组。
+- **识别对象是辅具，不是人**：开放词表模型（YOLO-World）在整幅画面上找出人、带轮辅具和手杖类物件，每台辅具一条轨迹。类别的票记在辅具上（停着时也在累计），所以一台辅具只会有一个框、一个标签。`best.pt` 只认训练时见过的样子，它的框不再使用，只给重叠的辅具投票。**辅具有人带着才算数**：有成年人坐在里面（姿态检测判断，且人不比辅具高出太多），或它被身边的人带离了原来停放的位置（超过自身宽度的 0.3 倍）；一直停着的辅具旁边站多少人都不算，人松手离开约 1 秒后它回到“停放”状态，当前位置成为新的停放位置。类别投票会随时间衰减（只保留最近几秒），被画面边缘切掉一部分的辅具不参与投票。手杖按人逐帧判断（被人握着：贴着人、从手的高度伸到脚边），只看最近约 1 秒，拿起就认、放下就消失。
+- **轮椅与婴儿车的区分**：按辅具轨迹累计投票（确认模型的各提示词 + `best.pt` 的类别得分），标签带粘性，只有另一类明显领先才切换；成年人坐在里面直接判为轮椅。
 
 ### 2.4 预约：`POST /api/booking`（模块 B → 中枢）
 
@@ -219,12 +221,14 @@ A 和 B 只通过第 2 节的 HTTP 接口与 C 通信，D 只通过 2.8 的消�
 
   ```bash
   cd vision && python3 setup_environment.py
-  .venv/bin/python yolo_bridge.py --source demos/clips/wheelchair_test.mp4 --roi monitor_example_roi.json --no-window --no-signal --max-frames 120
+  .venv/bin/python yolo_bridge.py --source demos/clips/wheelchair-003.mp4 --roi monitor_example_roi.json --no-window --no-signal --max-frames 120
   ```
 
   控制台应出现 `TRIGGER … → CLEAR …` 和 `{"processed_frames":120,…}`。真实摄像头先画区域：`.venv/bin/python monitor_zone.py --source 0`（回车保存 `monitor_roi.json`）。
 - **手机摄像头**：手机装 DroidCam 类应用，与电脑连同一网络（如手机热点），视频地址形如 `http://172.20.10.3:4747/video`，直接作为 `--source` 传入：先 `monitor_zone.py --source "<地址>"` 画区域，再 `bash start_demo.sh "<地址>"`。
-- **人与辅具的区分（二次确认）**：`best.pt` 的四个类别标注的都是“人 + 辅具”整体，训练集里没有只有人的画面，所以会把普通行人高置信度地判成婴儿车或轮椅。`yolo_bridge.py` 不改这份权重，而是用 `aid_verifier.py` 加了一个开放词表模型（`weights/yolov8s-world-aids.pt`）：辅具框必须在框内看到一个实体物件累计 2 次才算数，确认后随该目标保持。物件可以是真辅具（轮椅 / 婴儿车 / 手杖 / 拐杖），也可以是排练用的替代物（办公椅 → 轮椅，手推车或行李箱 → 婴儿车，雨伞或长杆 → 手杖）；原则是“是哪种物件可以宽松，但必须有物件”，单独一个人永远不会被报成辅具。`--strict-verify` 只认真辅具。上报的类别由看到的物件决定（带轮的辅具优先于手杖；轮椅与婴儿车之间沿用 `best.pt` 自己的类别），椅子只有在人坐在上面时才算轮椅替代物，旁边的空椅子不算。确认模型有两个：仓库自带小号（`yolov8s-world-aids.pt`），对手杖这类细长物体很弱；超大号对手杖和支架好得多，但约 140 MB 不能入库，需要每台机器本地生成一次：`cd vision && .venv/bin/python aid_verifier.py x`（会下载约 480 MB），生成后自动启用；同一个模型另外画出灰色的 `person` 框（只显示，不上报）。两类轮椅在画面和上报里都合并为 `wheelchair`。`--no-verify` 可关闭以对比。注意 `monitor_zone.py` 没有这层确认，演示和联调请用 `yolo_bridge.py`。
+- **为什么不直接用 `best.pt`**：它的四个类别标注的都是“人 + 辅具”整体，训练集只有一个房间、少数几个人、没有“只有人”的画面，换场地后会把普通行人高置信度地判成婴儿车或轮椅，对没见过的衣着会漏检，轮椅和婴儿车也会混。所以权重没有改，但它在 `yolo_bridge.py` 里只是投票者。实际逻辑见 `aid_verifier.py` 和 2.3 节。确认模型有两个：仓库自带小号（`yolov8s-world-aids.pt`）；超大号效果好得多但约 140 MB 不能入库，需要每台机器本地生成一次：`cd vision && .venv/bin/python aid_verifier.py x`（会下载约 480 MB），生成后自动启用。默认还接受被人握着的雨伞、长杆作为手杖替代物（`--strict-verify` 关闭）；椅子、手推车不再作为轮椅或婴儿车的替代物。`--no-verify` 可退回 `best.pt` 原始输出以对比。注意 `monitor_zone.py` 没有这些逻辑，演示和联调请用 `yolo_bridge.py`。
+- **看效果用哪个窗口**：`monitor_zone.py` 只用来画区域，它保存后显示的是没有上述逻辑的原始检测，画完按 `Q` 退出（DroidCam 同时只允许一个连接）。看真实效果用 `BRIDGE_WINDOW=1 bash start_demo.sh "<地址>"` 弹出的检测桥窗口，或 dashboard 左上角。
+- **触发记录与回放**：`start_demo.sh` 启动的检测桥会在每次触发、类别变化、解除时把带标注的画面存到 `vision/trigger_snapshots/`（不入库），同目录 `events.jsonl` 记录事件。`record_clip.py` 可以把摄像头原始画面录成 MP4；之后用 `yolo_bridge.py --source <录像> --realtime --no-window --no-signal --snapshots <目录>` 回放，改完逻辑先对着录像验证，不必让人重走一遍。
 - **联调**：去掉 `--no-signal`，中枢收到后 `curl http://127.0.0.1:8787/api/state` 的 `context.perception.yolo_detections` 应有对应标签。
 - **待办**：二次确认目前只在仓库自带的五段视频上验证过（真辅具全部确认，旁观者零误确认），手机实拍下的效果待测，尤其是手杖和婴儿车；效果不够时的后备方案是加入“只有人”的负样本重训。真实摄像头 / RTSP 实测；现场光照和角度下的置信度（需 ≥ 0.75 才生效）；进出区域的抖动（`--enter-frames` / `--exit-frames`）；Apple Silicon 上 `--device mps` 与 `cpu` 的帧率对比。
 - **验收**：`.venv/bin/python -m unittest test_monitor_zone test_aid_verifier` 11 项通过；`curl :8790/health` 返回 `ok:true` 且 `fps > 0`；实物进入区域后 dashboard 出现 `NEEDS_CONFIRMATION`，离开后检测清空。
