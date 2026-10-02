@@ -27,6 +27,16 @@ class SceneTest(unittest.TestCase):
         aids = run(Scene(), [[device(300), person(240), person(400)]] * 40)
         self.assertEqual(aids, [])
 
+    def test_wobbling_box_of_a_parked_device_is_not_movement(self):
+        frames = [[device(300 + (12 if i % 2 else -12), w=120 - (20 if i % 3 == 0 else 0)), person(240)] for i in range(40)]
+        self.assertEqual(run(Scene(), frames), [])
+
+    def test_parked_device_counts_once_someone_takes_it_away(self):
+        scene = Scene()
+        self.assertEqual(run(scene, [[device(300)]] * 10 + [[device(300), person(240)]] * 10), [])
+        pushed = [[device(300 + 10 * i), person(240 + 10 * i)] for i in range(1, 12)]
+        self.assertEqual([a['label'] for a in run(scene, pushed)], ['WHEELCHAIR'])
+
     def test_device_moving_with_a_person_counts_once(self):
         frames = [[device(300 + 6 * i), person(240 + 6 * i), person(430 + 6 * i)] for i in range(20)]
         aids = run(Scene(), frames)

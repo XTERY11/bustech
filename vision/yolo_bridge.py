@@ -306,7 +306,7 @@ def main():
                 if verifier:
                     # People and devices come from the open-vocabulary model; best.pt only votes on the label.
                     persons, aids = scene.update(verifier.detect(frame), [(box, votes) for box, votes, _ in raw],
-                                                 lambda person: verifier.seated(frame, person))
+                                                 lambda person: verifier.seated(frame, person), (width, height))
                 else:
                     aids = [{'label': next(iter(votes)), 'confidence': score, 'box': box, 'owners': []} for box, votes, score in raw]
             someone_inside = any(in_region(person[:4], region_mask, args.anchor) for person in persons)

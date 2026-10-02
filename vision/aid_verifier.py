@@ -15,7 +15,8 @@ The devices are found by an open-vocabulary detector (YOLO-World) on the whole f
 Scene keeps one track per *device*, because the device is what has an identity: its
 wheelchair/stroller votes add up on the device itself, including while it is parked, and
 one device can only ever give one box and one label. A device counts when someone is
-with it: an adult is sitting in it, or it has been moving along with a person beside it.
+with it: an adult is sitting in it, or a person beside it has taken it away from where it
+stood.
 A parked device is ignored however many people stand around it, and a person who lets go
 of one carries nothing away. A cane is judged per person from the last few frames only.
 
@@ -83,14 +84,15 @@ class Scene:
     """Tracks devices and people over successive detections (no model inside). One `update` is
     one step; with detection on every other frame that is roughly 7-10 steps a second."""
 
-    def __init__(self, conf=0.15, person_conf=0.35, stick_conf=0.3, sticks=True, min_seen=4, moved=0.15,
-                 release=10, max_misses=10, cane_hits=2, cane_window=8):
+    def __init__(self, conf=0.15, person_conf=0.35, stick_conf=0.3, sticks=True, min_seen=4, moved=0.3,
+                 release=10, max_misses=6, cane_hits=2, cane_window=8, forget=0.97):
         self.conf, self.person_conf, self.stick_conf, self.sticks = conf, person_conf, stick_conf, sticks
         self.min_seen = min_seen      # sightings before a new device is believed
-        self.moved = moved            # share of its width a device must travel to count as moving
+        self.moved = moved            # share of its width a device must leave its resting place by to count as taken along
         self.release = release        # steps without anyone beside it before a device is parked again
         self.max_misses = max_misses  # steps a track survives without being detected
         self.cane_hits, self.cane_window = cane_hits, cane_window
+        self.forget = forget          # label votes fade by this factor every step, so old evidence cannot outvote new
         self.devices, self.people, self.step = [], [], 0
 
     def reset(self):
@@ -103,16 +105,20 @@ class Scene:
         return (_gap(person, device) <= 0.2 * (person[2] - person[0])
                 and device[3] >= person[3] - 0.2 * (person[3] - person[1]))
 
-    def _moving(self, track):
-        """Has the device travelled since some point 3 to 15 steps ago (roughly the last 2 s)?"""
+    def _taken(self, track):
+        """Has the device left its resting place? The resting place is where it stood when nobody
+        was beside it, so a box that merely wobbles or shrinks while someone stands in front of a
+        parked device does not count; it has to be away on two sightings in a row."""
         _, x, y = track['trail'][-1]
-        reach = self.moved * (track['box'][2] - track['box'][0])
-        return any(3 <= self.step - step <= 15 and ((x - px) ** 2 + (y - py) ** 2) ** 0.5 >= reach
-                   for step, px, py in track['trail'])
+        hx, hy = track['home']
+        away = ((x - hx) ** 2 + (y - hy) ** 2) ** 0.5 >= self.moved * (track['box'][2] - track['box'][0])
+        track['away'] = track['away'] + 1 if away else 0
+        return track['away'] >= 2
 
-    def update(self, rows, detector=(), seated=None):
+    def update(self, rows, detector=(), seated=None, size=None):
         """rows: [x1, y1, x2, y2, score, class] from AidVerifier.detect. detector: (box, {label: score})
         pairs from best.pt, used as votes only. seated(person_box) -> bool, called sparingly.
+        size: (width, height) of the frame; a device cut off by the frame edge gets no say on its label.
         Returns (people, aids); an aid is {'label', 'confidence', 'box', 'owners'}."""
         self.step += 1
         people = [row[:5] for row in rows if int(row[5]) == 0 and row[4] >= self.person_conf]
@@ -127,6 +133,9 @@ class Scene:
             else:
                 same['votes'][label] += row[4] * weight
 
+        for track in self.devices:
+            for label in track['votes']:
+                track['votes'][label] *= self.forget
         free, alive = list(self.devices), []
         for det in found:
             track = max((t for t in free if _same(t['box'], det['box'])), key=lambda t: iou(t['box'], det['box']), default=None)
@@ -134,32 +143,43 @@ class Scene:
                 free.remove(track)
             else:
                 track = {'votes': Counter(), 'trail': deque(maxlen=40), 'scores': deque(maxlen=5), 'seen': 0,
-                         'attended': False, 'alone': 0, 'sitting': 0, 'label': None}
+                         'attended': False, 'alone': 0, 'sitting': 0, 'label': None, 'away': 0,
+                         'home': ((det['box'][0] + det['box'][2]) / 2, det['box'][3])}
             box = track['box'] = det['box']
             track['misses'] = 0
             track['seen'] += 1
-            track['votes'].update(det['votes'])
             track['scores'].append(det['score'])
             track['trail'].append((self.step, (box[0] + box[2]) / 2, box[3]))
             centre = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
-            for theirs, votes in detector:
-                if iou(theirs, box) >= 0.2 or (theirs[0] <= centre[0] <= theirs[2] and theirs[1] <= centre[1] <= theirs[3]):
-                    track['votes'].update({k: v for k, v in votes.items() if k in ('WHEELCHAIR', 'STROLLER')})
+            whole = size is None or (box[0] > 4 and box[1] > 4 and box[2] < size[0] - 4 and box[3] < size[1] - 4)
+            if whole:  # half a wheelchair at the edge of the frame looks like anything
+                track['votes'].update(det['votes'])
+                for theirs, votes in detector:
+                    if iou(theirs, box) >= 0.2 or (theirs[0] <= centre[0] <= theirs[2] and theirs[1] <= centre[1] <= theirs[3]):
+                        track['votes'].update({k: v for k, v in votes.items() if k in ('WHEELCHAIR', 'STROLLER')})
             owners = track['owners'] = [p for p in people if self._beside(p, box)]
-            riders = [p for p in owners if _overlap(box, p) >= 0.4 * _area(p)]
+            # In the device: mostly inside its box and not towering over it (someone standing behind a
+            # wheelchair is far taller than it; someone sitting in it is not).
+            riders = [p for p in owners if _overlap(box, p) >= 0.4 * _area(p) and p[3] - p[1] <= 1.7 * (box[3] - box[1])]
             if not riders:
                 track['sitting'] = max(track['sitting'] - 1, 0)
             elif seated and track['seen'] % 3 == 1:  # a pose check on every third sighting is enough
                 track['sitting'] = min(track['sitting'] + 2, 6) if any(seated(p) for p in riders) else max(track['sitting'] - 2, 0)
             if track['sitting']:
-                track['votes']['WHEELCHAIR'] += 5.0  # an adult sitting in it: strollers carry no adults
-            if track['sitting'] or (owners and self._moving(track)):
+                track['votes']['WHEELCHAIR'] += 2.0  # an adult sitting in it: strollers carry no adults
+            if not owners and not track['attended']:  # standing free: this is its resting place (smoothed)
+                x, y = track['trail'][-1][1:]
+                track['home'] = (0.8 * track['home'][0] + 0.2 * x, 0.8 * track['home'][1] + 0.2 * y)
+                track['away'] = 0
+            if track['sitting'] or (owners and self._taken(track)):
                 track['attended'], track['alone'] = True, 0
             elif track['attended'] and owners:
                 track['alone'] = 0  # stopped, but the person is still holding it
             elif track['attended']:
                 track['alone'] += 1
-                track['attended'] = track['alone'] <= self.release
+                if track['alone'] > self.release:  # left behind: it rests here now
+                    track['attended'], track['away'] = False, 0
+                    track['home'] = track['trail'][-1][1:]
             alive.append(track)
         for track in free:  # not detected this step: keep briefly so one missed frame does not break the track
             track['misses'] += 1
