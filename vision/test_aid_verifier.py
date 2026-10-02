@@ -72,6 +72,24 @@ class ConfirmedTracksTest(unittest.TestCase):
             tracks.step([BOX], lambda b: calls.append(1) and None)
         self.assertEqual(len(calls), 9)  # frames 1-6 every frame, then every fifth
 
+    def test_confirmation_is_withdrawn_when_rechecks_keep_failing(self):
+        tracks = ConfirmedTracks(hits=1, refresh=2, revoke=2)
+        answers = iter([('WHEELED', .8, 'STROLLER', {})] + [None] * 20)
+        results = [tracks.step([BOX], lambda b: next(answers))[0] for _ in range(7)]
+        self.assertEqual(results, [True, True, True, True, False, False, False])
+
+    def test_higher_ranked_answer_wins_and_takes_over(self):
+        tracks = ConfirmedTracks(hits=2, rank={'WHEELED': 1})
+        answers = iter([('CANE', .3), ('WHEELED', .6), ('CANE', .3), ('WHEELED', .7)])
+        results = [tracks.step([BOX], lambda b: next(answers))[0] for _ in range(4)]
+        self.assertEqual(results, [False, False, False, True])  # two canes do not confirm while a wheeled answer is around
+        self.assertEqual(tracks.evidence[0][0], 'WHEELED')
+        tracks = ConfirmedTracks(hits=2, refresh=1, rank={'WHEELED': 1})
+        answers = iter([('CANE', .3), ('CANE', .3), ('WHEELED', .6), ('WHEELED', .7)])
+        for _ in range(4):
+            tracks.step([BOX], lambda b: next(answers))
+        self.assertEqual(tracks.evidence[0][0], 'WHEELED')  # confirmed as cane, then switched
+
     def test_interval_skips_checks_between_frames(self):
         tracks = ConfirmedTracks(hits=2, interval=3)
         calls = []

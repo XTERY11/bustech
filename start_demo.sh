@@ -31,7 +31,7 @@ fi
 WINDOW_FLAG="--no-window"; [ -n "${BRIDGE_WINDOW:-}" ] && WINDOW_FLAG=""
 cleanup() { trap - INT TERM; kill 0 2>/dev/null || true; }
 trap cleanup INT TERM EXIT
-(cd "$ROOT/vision" && RIDE_BRIDGE_URL="http://127.0.0.1:${BRIDGE_PORT}" BRIDGE_TOKEN="${BRIDGE_TOKEN:-}" bash start_bridge.sh "$SRC" $WINDOW_FLAG) &
+(cd "$ROOT/vision" && RIDE_BRIDGE_URL="http://127.0.0.1:${BRIDGE_PORT}" BRIDGE_TOKEN="${BRIDGE_TOKEN:-}" bash start_bridge.sh "$SRC" $WINDOW_FLAG --snapshots "$ROOT/vision/trigger_snapshots") &
 sleep 1
 (cd "$ROOT/dashboard" && node scripts/dev-integrated.mjs) &
 wait
