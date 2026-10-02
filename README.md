@@ -1,5 +1,7 @@
 # BusTech integrated demo · Camera → YOLO → Hub → LLM → Dashboard + Digital Twin
 
+> Start here: [HANDOFF.md](HANDOFF.md) explains what works today, how to run it, and the two open modules. Interfaces are in [PROMPT.md](PROMPT.md).
+
 Three prototypes wired into one open-loop demonstration:
 
 ```
@@ -93,8 +95,8 @@ Model classes map as `wheelchair_with`/`wheelchair_without → WHEELCHAIR`, `can
 ## Tests
 
 ```bash
-cd dashboard && npm test                       # 42 policy/communication checks (incl. stroller)
-cd vision && .venv/bin/python -m unittest test_monitor_zone -v
+cd dashboard && npm test                       # 47 policy / communication / journey checks
+cd vision && .venv/bin/python -m unittest test_aid_verifier test_monitor_zone
 cd vision && .venv/bin/python yolo_bridge.py --source demos/clips/wheelchair_2.mp4 --roi monitor_example_roi.json --no-window --max-frames 120 --no-signal
 ```
 
