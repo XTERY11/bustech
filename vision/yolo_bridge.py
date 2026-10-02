@@ -221,7 +221,7 @@ def main():
             print(f'Verifier weights not found: {args.verify_model}. Running unverified; build them with: python aid_verifier.py', flush=True)
     if args.conf is None:  # with the device check on, the check filters false alarms, so the detector can be more sensitive
         args.conf = 0.25 if verifier else 0.4
-    tracks = ConfirmedTracks(hits=args.verify_hits, interval=3)
+    tracks = ConfirmedTracks(hits=args.verify_hits, interval=3, refresh=15)
     region_mask = None
     persons, held = [], []
 

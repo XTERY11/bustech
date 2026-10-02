@@ -53,6 +53,18 @@ class ConfirmedTracksTest(unittest.TestCase):
         self.assertEqual(max(tracks.votes[0], key=tracks.votes[0].get), 'WHEELCHAIR')
         self.assertEqual(tracks.peaks, [.9])
 
+    def test_confirmed_track_keeps_collecting_votes_on_refresh(self):
+        tracks = ConfirmedTracks(hits=1, refresh=3)
+        calls = []
+        def check(box):
+            calls.append(1)
+            return ('WHEELED', .8, 'STROLLER', {'WHEELCHAIR': 1000.0} if len(calls) > 1 else {'STROLLER': .5})
+        for _ in range(5):
+            confirmed = tracks.step([BOX], check, [{'STROLLER': .9}], [.9])
+        self.assertEqual(confirmed, [True])
+        self.assertEqual(len(calls), 2)  # once to confirm, once on refresh
+        self.assertEqual(max(tracks.votes[0], key=tracks.votes[0].get), 'WHEELCHAIR')
+
     def test_interval_skips_checks_between_frames(self):
         tracks = ConfirmedTracks(hits=2, interval=3)
         calls = []

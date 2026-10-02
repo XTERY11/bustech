@@ -36,6 +36,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 SMALL = ROOT / 'weights/yolov8s-world-aids.pt'
 LARGE = ROOT / 'weights/yolov8x-world-aids.pt'
+POSE = ROOT / 'weights/yolov8n-pose.pt'
 WEIGHTS = LARGE if LARGE.is_file() else SMALL
 # Index 0 must stay "person". The groups below refer to positions in this list.
 PROMPTS = ['person', 'wheelchair', 'stroller', 'baby carriage', 'walking cane', 'crutch', 'white cane',
@@ -68,9 +69,10 @@ def _key(found):
 class ConfirmedTracks:
     """Frame-to-frame box association with a verification latch (no model inside)."""
 
-    def __init__(self, hits=2, window=30, max_misses=15, match_iou=0.3, interval=1):
+    def __init__(self, hits=2, window=30, max_misses=15, match_iou=0.3, interval=1, refresh=0):
         self.hits, self.window, self.max_misses, self.match_iou = hits, window, max_misses, match_iou
         self.interval = interval  # check an unconfirmed box only every Nth frame it is seen
+        self.refresh = refresh    # re-check a confirmed box every Nth frame to keep collecting votes (0 = never)
         self.tracks = []
         self.evidence, self.votes, self.peaks = [], [], []
 
@@ -105,11 +107,17 @@ class ConfirmedTracks:
                 track['checks'].append(found)
                 if isinstance(found, tuple) and len(found) > 3:
                     track['votes'].update(found[3])  # the checker's own opinion on the label
+                    track['since'] = track['seen']
                 answers = Counter(_key(found) for found in track['checks'] if found)
                 if answers and answers.most_common(1)[0][1] >= self.hits:
                     winner = answers.most_common(1)[0][0]
                     track['confirmed'] = True
                     track['evidence'] = next(found for found in reversed(track['checks']) if found and _key(found) == winner)
+            elif track['confirmed'] and self.refresh and track['seen'] - track.get('since', 0) >= self.refresh:
+                found = check(box)  # the latch stays; only the label tally keeps learning
+                track['since'] = track['seen']
+                if isinstance(found, tuple) and len(found) > 3:
+                    track['votes'].update(found[3])
             alive.append(track); result.append(track['confirmed'])
         for track in free:  # not detected in this frame: keep briefly so flicker does not drop the latch
             track['misses'] += 1
@@ -125,13 +133,15 @@ class ConfirmedTracks:
 
 class AidVerifier:
     def __init__(self, weights=WEIGHTS, device='cpu', conf=0.15, person_conf=0.35, imgsz=480, pad=0.15,
-                 stick_stand_ins=True, bulky_stand_ins=False, stand_in_conf=0.3, bulky_share=0.15, person_weights=None):
+                 stick_stand_ins=True, bulky_stand_ins=False, stand_in_conf=0.3, bulky_share=0.15, person_weights=None,
+                 pose_weights=POSE):
         from ultralytics import YOLO
         self.model = YOLO(str(weights))
         # Person boxes are needed every frame: use the small model for them when the large one does the checks.
         if person_weights is None and Path(weights) != SMALL and SMALL.is_file():
             person_weights = SMALL
         self.person_model = YOLO(str(person_weights)) if person_weights else self.model
+        self.pose_model = YOLO(str(pose_weights)) if pose_weights and Path(pose_weights).is_file() else None
         self.device, self.conf, self.person_conf, self.imgsz, self.pad = device, conf, person_conf, imgsz, pad
         self.stick_stand_ins, self.bulky_stand_ins = stick_stand_ins, bulky_stand_ins
         self.stand_in_conf, self.bulky_share = stand_in_conf, bulky_share
@@ -140,16 +150,36 @@ class AidVerifier:
         result = self.person_model.predict(frame, imgsz=imgsz, conf=self.person_conf, classes=[0], device=self.device, verbose=False)[0]
         return [box[:5] for box in result.boxes.data.cpu().tolist()]
 
-    def _objects(self, frame, box, wide=False):
+    def _crop(self, frame, box, wide=False):
         height, width = frame.shape[:2]
         # A box drawn around the person only needs room to the sides, where a pushed device would be.
         dx, dy = (0.8 if wide else self.pad) * (box[2] - box[0]), self.pad * (box[3] - box[1])
         x1, y1 = int(max(0, box[0] - dx)), int(max(0, box[1] - dy))
         x2, y2 = int(min(width, box[2] + dx)), int(min(height, box[3] + dy))
-        if x2 - x1 < 8 or y2 - y1 < 8:
+        return frame[y1:y2, x1:x2] if x2 - x1 >= 8 and y2 - y1 >= 8 else None
+
+    def _objects(self, frame, box, wide=False):
+        crop = self._crop(frame, box, wide)
+        if crop is None:
             return []
-        result = self.model.predict(frame[y1:y2, x1:x2], imgsz=self.imgsz, conf=0.03, device=self.device, verbose=False)[0]
+        result = self.model.predict(crop, imgsz=self.imgsz, conf=0.03, device=self.device, verbose=False)[0]
         return result.boxes.data.cpu().tolist()
+
+    def _seated(self, crop):
+        """Boxes of people who are sitting: their thighs are short on screen compared with the torso
+        (hip-to-knee drop under 0.6 of the shoulder-to-hip drop; standing people measure 0.65-0.85)."""
+        if self.pose_model is None or crop is None:
+            return []
+        result = self.pose_model.predict(crop, imgsz=self.imgsz, conf=0.4, device=self.device, verbose=False)[0]
+        seated = []
+        for xyxy, points in zip(result.boxes.xyxy.cpu().tolist(), result.keypoints.data.cpu().tolist()):
+            rows = [[points[i][1] for i in pair if points[i][2] > 0.5] for pair in ((5, 6), (11, 12), (13, 14))]
+            if not all(rows):
+                continue
+            shoulder, hip, knee = (sum(row) / len(row) for row in rows)
+            if hip - shoulder > 8 and 0 <= (knee - hip) / (hip - shoulder) < 0.6:
+                seated.append(xyxy)
+        return seated
 
     def evidence(self, frame, box, wide=False):
         """(kind, score, label, votes) for the object that accompanies the person, or None.
@@ -159,7 +189,11 @@ class AidVerifier:
         reliably, so `label` is only its guess and `votes` its weight in the caller's tally: an adult
         sitting in the device makes it a wheelchair, otherwise the detector's vote should decide.
         For every other kind, kind == label."""
-        rows = [(row[:4], row[4], int(row[5])) for row in self._objects(frame, box, wide)]
+        crop = self._crop(frame, box, wide)
+        if crop is None:
+            return None
+        result = self.model.predict(crop, imgsz=self.imgsz, conf=0.03, device=self.device, verbose=False)[0]
+        rows = [(row[:4], row[4], int(row[5])) for row in result.boxes.data.cpu().tolist()]
         people = [xyxy for xyxy, score, cls in rows if cls == 0 and score >= self.person_conf]
 
         def with_person(xyxy):
@@ -176,9 +210,11 @@ class AidVerifier:
             owners = with_person(xyxy)
             if not owners:
                 continue
-            seated = any((p[3] - p[1]) < 2.1 * (p[2] - p[0]) and _overlap(xyxy, p) >= 0.4 * _area(p) for p in owners)
-            if seated:
-                return 'WHEELED', score, 'WHEELCHAIR', {'WHEELCHAIR': 20.0}
+            # An adult sitting in the device settles it: strollers carry no adults. This covers the
+            # wheelchair user on their own, a case the detector never saw in training and flips on.
+            sitters = [p for p in owners if (p[3] - p[1]) < 2.1 * (p[2] - p[0])] + self._seated(crop)
+            if any(_overlap(xyxy, p) >= 0.4 * _area(p) for p in sitters):
+                return 'WHEELED', score, 'WHEELCHAIR', {'WHEELCHAIR': 1000.0}
             return 'WHEELED', score, WHEELED[cls], {WHEELED[cls]: 0.5}
         if self.bulky_stand_ins:
             area = _area(box)
@@ -192,6 +228,9 @@ class AidVerifier:
                      and _area(xyxy) >= self.bulky_share * area and with_person(xyxy)]
             if carts:
                 return 'STROLLER', max(carts), 'STROLLER', {}
+        if wide:  # a cane is held close: look again in a tight crop, where a thin object is not lost
+            rows = [(row[:4], row[4], int(row[5])) for row in self._objects(frame, box)]
+            people = [xyxy for xyxy, score, cls in rows if cls == 0 and score >= self.person_conf]
         if not people:
             return None
         cane = best(CANES, self.conf)
