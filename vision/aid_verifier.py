@@ -7,9 +7,8 @@ and it mixes the classes up. This module does not touch those weights. It adds a
 open-vocabulary detector (YOLO-World) that knows the objects themselves:
 
   * AidVerifier.persons(frame)   -> person boxes for the preview overlay
-  * AidVerifier.evidence(frame, box, detector_label) -> which object accompanies
-    the person in one aid box (run on a zoomed crop of that box) and therefore
-    which label to report, or None for a bare person
+  * AidVerifier.evidence(frame, box) -> which object accompanies the person in
+    one aid box (run on a zoomed crop of that box), or None for a bare person
   * ConfirmedTracks              -> an aid box only counts after the same answer
     was given `hits` times within the last `window` checks; the confirmation
     then stays with that box while it keeps being detected.
@@ -71,15 +70,19 @@ class ConfirmedTracks:
         self.hits, self.window, self.max_misses, self.match_iou = hits, window, max_misses, match_iou
         self.interval = interval  # check an unconfirmed box only every Nth frame it is seen
         self.tracks = []
-        self.evidence = []
+        self.evidence, self.votes, self.peaks = [], [], []
 
     def reset(self):
         self.tracks = []
 
-    def step(self, boxes, check):
+    def step(self, boxes, check, votes=None, confidences=None):
         """Return one bool per box. `check(box)` is only called for boxes not confirmed yet.
         A box is confirmed once `check` gave the same answer `hits` times; for a tuple answer
-        its first item (the label) is what has to repeat."""
+        its first item is what has to repeat.
+
+        `votes` (one {label: weight} per box) and `confidences` are accumulated per track, so the
+        caller can report the label the detector preferred over the whole track rather than in one
+        frame, and the best confidence seen. Results are in .evidence, .votes and .peaks."""
         free = list(self.tracks)
         result, alive = [], []
         for box in boxes:
@@ -87,14 +90,19 @@ class ConfirmedTracks:
             if track is not None and iou(track['box'], box) >= self.match_iou:
                 free.remove(track)
             else:
-                track = {'checks': deque(maxlen=self.window), 'confirmed': False, 'seen': 0}
+                track = {'checks': deque(maxlen=self.window), 'confirmed': False, 'seen': 0, 'votes': Counter(), 'peak': 0.0}
             track['box'], track['misses'] = list(box), 0
             track['seen'] += 1
+            index = len(result)
+            if votes:
+                track['votes'].update(votes[index])
+            if confidences:
+                track['peak'] = max(track['peak'], confidences[index])
             if not track['confirmed'] and (track['seen'] - 1) % self.interval == 0:
                 track['checks'].append(check(box) or None)
-                votes = Counter(_key(found) for found in track['checks'] if found)
-                if votes and votes.most_common(1)[0][1] >= self.hits:
-                    winner = votes.most_common(1)[0][0]
+                answers = Counter(_key(found) for found in track['checks'] if found)
+                if answers and answers.most_common(1)[0][1] >= self.hits:
+                    winner = answers.most_common(1)[0][0]
                     track['confirmed'] = True
                     track['evidence'] = next(found for found in reversed(track['checks']) if found and _key(found) == winner)
             alive.append(track); result.append(track['confirmed'])
@@ -103,7 +111,10 @@ class ConfirmedTracks:
             if track['misses'] <= self.max_misses:
                 alive.append(track)
         self.tracks = alive
-        self.evidence = [t.get('evidence') for t in alive[:len(result)]]  # the confirming answer, per box
+        current = alive[:len(result)]
+        self.evidence = [t.get('evidence') for t in current]  # the confirming answer, per box
+        self.votes = [t['votes'] for t in current]
+        self.peaks = [t['peak'] for t in current]
         return result
 
 
@@ -133,12 +144,12 @@ class AidVerifier:
         result = self.model.predict(frame[y1:y2, x1:x2], imgsz=self.imgsz, conf=0.03, device=self.device, verbose=False)[0]
         return result.boxes.data.cpu().tolist()
 
-    def evidence(self, frame, box, detector_label=None):
-        """(label, score) for the object that accompanies the person, or None for a bare person.
+    def evidence(self, frame, box):
+        """(kind, score, label) for the object that accompanies the person, or None for a bare person.
 
-        Wheeled aids win over canes. Between wheelchair and stroller the detector's own class is
-        kept when it names one of them (it was trained on that distinction); otherwise, and for
-        canes and stand-ins, the object decides the label."""
+        Wheeled aids win over canes. kind is 'WHEELED' for a real wheelchair or stroller: this model
+        cannot tell those two apart reliably, so `label` is only its guess and the caller should
+        prefer the detector's vote over the track. For every other kind, kind == label."""
         rows = [(row[:4], row[4], int(row[5])) for row in self._objects(frame, box)]
 
         def best(group, floor):
@@ -146,8 +157,7 @@ class AidVerifier:
 
         wheeled = best(WHEELED, self.conf)
         if wheeled:
-            label = detector_label if detector_label in ('WHEELCHAIR', 'STROLLER') else WHEELED[wheeled[1]]
-            return label, wheeled[0]
+            return 'WHEELED', wheeled[0], WHEELED[wheeled[1]]
         if self.stand_ins:
             area = _area(box)
             people = [xyxy for xyxy, score, cls in rows if cls == 0 and score >= self.person_conf]
@@ -156,18 +166,18 @@ class AidVerifier:
                      and _area(xyxy) >= self.bulky_share * area
                      and any(_overlap(xyxy, p) >= 0.3 * _area(xyxy) for p in people)]
             if seats:
-                return 'WHEELCHAIR', max(seats)
+                return 'WHEELCHAIR', max(seats), 'WHEELCHAIR'
             carts = [score for xyxy, score, cls in rows if cls in CARTS and score >= self.stand_in_conf
                      and _area(xyxy) >= self.bulky_share * area]
             if carts:
-                return 'STROLLER', max(carts)
+                return 'STROLLER', max(carts), 'STROLLER'
         cane = best(CANES, self.conf)
         if cane:
-            return 'CANE', cane[0]
+            return 'CANE', cane[0], 'CANE'
         if self.stand_ins:
             stick = best(STICKS, self.stand_in_conf)
             if stick:
-                return 'CANE', stick[0]
+                return 'CANE', stick[0], 'CANE'
         return None
 
 

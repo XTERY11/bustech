@@ -117,7 +117,7 @@ def parse_args():
     p.add_argument('--verify-conf', type=float, default=0.15, help='Minimum device score inside an aid box')
     p.add_argument('--verify-hits', type=int, default=2, help='Device sightings needed before an aid box counts')
     p.add_argument('--strict-verify', action='store_true', help='Only real aids count; do not accept stand-ins such as an office chair')
-    p.add_argument('--enter-frames', type=int, default=2)
+    p.add_argument('--enter-frames', type=int, default=8, help='Frames a target must stay in the region before the trigger (about 0.3 s), so the label has settled')
     p.add_argument('--exit-frames', type=int, default=30, help='Frames without a target before the region clears (about 1 s), so a flickering box does not end the trigger')
     p.add_argument('--width', type=int, default=1280, help='Maximum processed/streamed frame width')
     p.add_argument('--rotate', choices=['none', 'cw', 'ccw', '180'], default='none')
@@ -164,8 +164,10 @@ class LatestFrame:
 
 def in_region(box, mask, anchor):
     """A target counts as in the region when its anchor point is inside, or when the lower part of
-    its box (where the wheels / feet are) overlaps the region. A single point alone misses a target
-    whose box runs past the region edge or the bottom of the frame."""
+    its box (where the wheels / feet are) overlaps the region: the overlap has to cover a quarter of
+    that lower part or a quarter of the region, whichever is smaller. A single point alone misses a
+    target whose box runs past the region edge or the bottom of the frame, and a share of the box
+    alone misses a large target standing on a small region."""
     height, width = mask.shape
     x, y = anchor_point(box, anchor)
     if 0 <= int(y) < height and 0 <= int(x) < width and mask[int(y), int(x)]:
@@ -174,7 +176,8 @@ def in_region(box, mask, anchor):
     y2 = min(height, int(box[3])); y1 = max(0, int(box[3] - 0.3 * (box[3] - box[1])))
     if x2 <= x1 or y2 <= y1:
         return False
-    return float(mask[y1:y2, x1:x2].mean()) >= 0.25
+    overlap = int(mask[y1:y2, x1:x2].sum())
+    return overlap >= 0.25 * min((y2 - y1) * (x2 - x1), int(mask.sum()))
 
 
 def open_capture(source):
@@ -282,28 +285,45 @@ def main():
                 frame = cv2.resize(frame, (args.width, round(frame.shape[0] * args.width / frame.shape[1])))
             height, width = frame.shape[:2]
             view = frame.copy()
-            result = model.predict(frame, imgsz=args.imgsz, conf=args.conf, classes=args.classes, device=device, agnostic_nms=True, verbose=False)[0]
+            result = model.predict(frame, imgsz=args.imgsz, conf=args.conf, classes=args.classes, device=device, verbose=False)[0]
             if region_mask is None or region_mask.shape != (height, width):
                 region_mask = np.zeros((height, width), np.uint8)
                 cv2.fillPoly(region_mask, [np.round(np.asarray(points) * [width - 1, height - 1]).astype(np.int32)], 1)
             inside_detections, all_detections = [], []
-            boxes = sorted(result.boxes.data.cpu().tolist(), key=lambda box: -box[4])
+            # The detector often gives one target two boxes with different classes (wheelchair and
+            # stroller). Keep the strongest box per target and remember what every class scored.
+            boxes, votes = [], []
+            for box in sorted(result.boxes.data.cpu().tolist(), key=lambda box: -box[4]):
+                label = CLASS_MAP.get(str(names[int(box[5])]).lower())
+                same = next((i for i, kept in enumerate(boxes) if iou(box[:4], kept[:4]) >= 0.5), None)
+                if same is None:
+                    boxes.append(box); votes.append({label: box[4]})
+                else:
+                    votes[same][label] = max(votes[same].get(label, 0.0), box[4])
             # An aid box only counts once the verifier has seen an object with the person inside it.
-            own = {tuple(box[:4]): CLASS_MAP.get(str(names[int(box[5])]).lower()) for box in boxes}
-            verified = tracks.step([box[:4] for box in boxes], lambda b: verifier.evidence(frame, b, own[tuple(b)])) if verifier else [True] * len(boxes)
-            evidence = tracks.evidence if verifier else [None] * len(boxes)
+            if verifier:
+                verified = tracks.step([box[:4] for box in boxes], lambda b: verifier.evidence(frame, b), votes, [box[4] for box in boxes])
+                evidence, tallies, peaks = tracks.evidence, tracks.votes, tracks.peaks
+            else:
+                verified, evidence, tallies, peaks = [True] * len(boxes), [None] * len(boxes), votes, [box[4] for box in boxes]
             shown = []
             if verifier and processed % 2 == 0:  # person boxes are display-only; every other frame is enough
                 persons = verifier.persons(frame)
             for x1, y1, x2, y2, confidence in persons:
                 cv2.rectangle(view, (int(x1), int(y1)), (int(x2), int(y2)), (170, 170, 170), 1)
                 cv2.putText(view, f'person {confidence:.2f}', (max(0, int(x1)), max(20, int(y1) - 6)), cv2.FONT_HERSHEY_SIMPLEX, .45, (170, 170, 170), 1)
-            for box, confirmed, found in zip(boxes, verified, evidence):
+            for box, confirmed, found, tally, peak in zip(boxes, verified, evidence, tallies, peaks):
                 x1, y1, x2, y2, confidence, cls = box
-                # The verifier's object decides the label (see AidVerifier.evidence); unverified runs keep the detector's class.
-                label, seen = found or (own[tuple(box[:4])], 0.0)
-                # Two independent models agree on this target: combine them (noisy-OR) into the reported confidence.
-                detector_confidence, confidence = confidence, 1 - (1 - confidence) * (1 - seen)
+                kind, seen, label = found or (None, 0.0, CLASS_MAP.get(str(names[int(cls)]).lower()))
+                if kind == 'WHEELED':
+                    # Wheelchair or stroller: the verifier cannot tell, so go by what the detector
+                    # preferred over the whole track, not by a single frame.
+                    wheeled = {name: tally.get(name, 0.0) for name in ('WHEELCHAIR', 'STROLLER')}
+                    if any(wheeled.values()):
+                        label = max(wheeled, key=wheeled.get)
+                # Two independent models agree on this target: combine them (noisy-OR) into the reported
+                # confidence, using the detector's best frame on this track so it does not dip between frames.
+                detector_confidence, confidence = confidence, 1 - (1 - max(confidence, peak)) * (1 - seen)
                 inside = in_region(box[:4], region_mask, args.anchor)
                 if not confirmed:
                     continue

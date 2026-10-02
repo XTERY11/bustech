@@ -45,6 +45,14 @@ class ConfirmedTracksTest(unittest.TestCase):
         self.assertEqual(tracks.step([BOX, FAR], lambda b: b == BOX), [True, False])
         self.assertEqual(tracks.step([FAR, NEAR], lambda b: False), [False, True])
 
+    def test_votes_and_peak_accumulate_over_the_track(self):
+        tracks = ConfirmedTracks(hits=1)
+        tracks.step([BOX], lambda b: True, [{'STROLLER': .9}], [.9])
+        tracks.step([NEAR], lambda b: True, [{'WHEELCHAIR': .6}], [.6])
+        tracks.step([BOX], lambda b: True, [{'WHEELCHAIR': .7, 'STROLLER': .2}], [.7])
+        self.assertEqual(max(tracks.votes[0], key=tracks.votes[0].get), 'WHEELCHAIR')
+        self.assertEqual(tracks.peaks, [.9])
+
     def test_interval_skips_checks_between_frames(self):
         tracks = ConfirmedTracks(hits=2, interval=3)
         calls = []
@@ -82,6 +90,12 @@ class InRegionTest(unittest.TestCase):
     def test_box_running_past_the_region_edge_still_counts(self):
         # bottom-centre falls below the region, but the lower part of the box covers it
         self.assertTrue(self.in_region([40, 10, 70, 99], self.mask, 'bottom-center'))
+
+    def test_large_box_on_a_small_region_counts(self):
+        mask = np.zeros((720, 1280), np.uint8)
+        mask[630:690, 510:1045] = 1  # thin strip near the bottom of the frame
+        self.assertTrue(self.in_region([318, 195, 777, 720], mask, 'bottom-center'))  # wheelchair running out of frame
+        self.assertFalse(self.in_region([318, 100, 777, 500], mask, 'bottom-center'))  # same box, well above the strip
 
     def test_box_elsewhere_does_not_count(self):
         self.assertFalse(self.in_region([0, 0, 20, 50], self.mask, 'bottom-center'))
