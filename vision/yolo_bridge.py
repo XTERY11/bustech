@@ -116,9 +116,10 @@ def parse_args():
     p.add_argument('--no-verify', action='store_true', help='Report raw detections without the device check and without person boxes')
     p.add_argument('--verify-conf', type=float, default=0.15, help='Minimum device score inside an aid box')
     p.add_argument('--verify-hits', type=int, default=2, help='Device sightings needed before an aid box counts')
-    p.add_argument('--strict-verify', action='store_true', help='Only real aids count; do not accept stand-ins such as an office chair')
+    p.add_argument('--strict-verify', action='store_true', help='Only real aids count; no stand-ins at all (by default an umbrella, stick or tripod counts as a cane)')
+    p.add_argument('--chair-stand-ins', action='store_true', help='Rehearsal without real aids: a person on a chair counts as a wheelchair, a trolley or suitcase as a stroller')
     p.add_argument('--enter-frames', type=int, default=8, help='Frames a target must stay in the region before the trigger (about 0.3 s), so the label has settled')
-    p.add_argument('--exit-frames', type=int, default=30, help='Frames without a target before the region clears (about 1 s), so a flickering box does not end the trigger')
+    p.add_argument('--exit-frames', type=int, default=60, help='Frames with nobody in the region before it clears (about 2 s)')
     p.add_argument('--width', type=int, default=1280, help='Maximum processed/streamed frame width')
     p.add_argument('--rotate', choices=['none', 'cw', 'ccw', '180'], default='none')
     p.add_argument('--jpeg-quality', type=int, default=80)
@@ -215,14 +216,14 @@ def main():
     verifier = None
     if not args.no_verify:
         if args.verify_model.is_file():
-            verifier = AidVerifier(args.verify_model, device, conf=args.verify_conf, stand_ins=not args.strict_verify)
+            verifier = AidVerifier(args.verify_model, device, conf=args.verify_conf, stick_stand_ins=not args.strict_verify, bulky_stand_ins=args.chair_stand_ins)
         else:
             print(f'Verifier weights not found: {args.verify_model}. Running unverified; build them with: python aid_verifier.py', flush=True)
     if args.conf is None:  # with the device check on, the check filters false alarms, so the detector can be more sensitive
         args.conf = 0.25 if verifier else 0.4
     tracks = ConfirmedTracks(hits=args.verify_hits, interval=3)
     region_mask = None
-    persons = []
+    persons, held = [], []
 
     shared = SharedFrame()
     info = {'source': str(args.source), 'device': device, 'roi': str(args.roi), 'bridge_url': None if args.no_signal else args.bridge_url}
@@ -300,65 +301,80 @@ def main():
                     boxes.append(box); votes.append({label: box[4]})
                 else:
                     votes[same][label] = max(votes[same].get(label, 0.0), box[4])
-            # An aid box only counts once the verifier has seen an object with the person inside it.
             if verifier:
-                verified = tracks.step([box[:4] for box in boxes], lambda b: verifier.evidence(frame, b), votes, [box[4] for box in boxes])
+                persons = verifier.persons(frame)
+                # The detector misses people in some poses, so everybody standing in the region is a
+                # candidate too (class -1: no detector box, the verifier alone decides).
+                for person in persons:
+                    if in_region(person[:4], region_mask, args.anchor) and not any(iou(person[:4], box[:4]) >= 0.3 for box in boxes):
+                        boxes.append([*person[:4], 0.0, -1]); votes.append({})
+                # A candidate only counts once the verifier has seen an object with the person.
+                from_person = {tuple(box[:4]) for box in boxes if box[5] == -1}
+                verified = tracks.step([box[:4] for box in boxes], lambda b: verifier.evidence(frame, b, wide=tuple(b) in from_person),
+                                       votes, [box[4] for box in boxes])
                 evidence, tallies, peaks = tracks.evidence, tracks.votes, tracks.peaks
             else:
                 verified, evidence, tallies, peaks = [True] * len(boxes), [None] * len(boxes), votes, [box[4] for box in boxes]
-            shown = []
-            if verifier and processed % 2 == 0:  # person boxes are display-only; every other frame is enough
-                persons = verifier.persons(frame)
+            someone_inside = any(in_region(person[:4], region_mask, args.anchor) for person in persons)
             for x1, y1, x2, y2, confidence in persons:
                 cv2.rectangle(view, (int(x1), int(y1)), (int(x2), int(y2)), (170, 170, 170), 1)
                 cv2.putText(view, f'person {confidence:.2f}', (max(0, int(x1)), max(20, int(y1) - 6)), cv2.FONT_HERSHEY_SIMPLEX, .45, (170, 170, 170), 1)
+            shown = []
             for box, confirmed, found, tally, peak in zip(boxes, verified, evidence, tallies, peaks):
                 x1, y1, x2, y2, confidence, cls = box
-                kind, seen, label = found or (None, 0.0, CLASS_MAP.get(str(names[int(cls)]).lower()))
+                own = names[int(cls)] if cls >= 0 else 'person'
+                kind, seen, label = (found or (None, 0.0, CLASS_MAP.get(str(own).lower())))[:3]
                 if kind == 'WHEELED':
-                    # Wheelchair or stroller: the verifier cannot tell, so go by what the detector
-                    # preferred over the whole track, not by a single frame.
+                    # Wheelchair or stroller: go by the tally over the whole track (detector class scores
+                    # plus the verifier's own opinion), not by a single frame.
                     wheeled = {name: tally.get(name, 0.0) for name in ('WHEELCHAIR', 'STROLLER')}
                     if any(wheeled.values()):
                         label = max(wheeled, key=wheeled.get)
-                # Two independent models agree on this target: combine them (noisy-OR) into the reported
-                # confidence, using the detector's best frame on this track so it does not dip between frames.
-                detector_confidence, confidence = confidence, 1 - (1 - max(confidence, peak)) * (1 - seen)
+                # Combine the evidence (noisy-OR): the verifier saw the object on `verify_hits` checks, and
+                # the detector's best frame on this track counts too, so the value does not dip between frames.
+                detector_confidence = max(confidence, peak)
+                confidence = 1 - (1 - detector_confidence) * (1 - seen) ** (args.verify_hits if found else 1)
                 inside = in_region(box[:4], region_mask, args.anchor)
                 if not confirmed:
                     continue
                 if any(other == label and iou(box[:4], kept) >= 0.4 for kept, other in shown):
-                    continue  # the detector sometimes gives two boxes for one person
+                    continue  # two boxes for one target
                 shown.append((box[:4], label))
-                all_detections.append({'label': label or 'UNKNOWN', 'confidence': round(float(confidence), 3), 'detector_confidence': round(float(detector_confidence), 3), 'model_class': names[int(cls)]})
+                all_detections.append({'label': label or 'UNKNOWN', 'confidence': round(float(confidence), 3), 'detector_confidence': round(float(detector_confidence), 3), 'model_class': own})
                 if inside and label:
                     inside_detections.append({'label': label, 'confidence': round(float(confidence), 3)})
                 color = (0, 100, 255) if inside else (220, 180, 70)
                 cv2.rectangle(view, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
-                cv2.putText(view, f'{(label or names[int(cls)]).lower()} {confidence:.2f}', (max(0, int(x1)), max(20, int(y1) - 8)), cv2.FONT_HERSHEY_SIMPLEX, .6, color, 2)
+                cv2.putText(view, f'{(label or own).lower()} {confidence:.2f}', (max(0, int(x1)), max(20, int(y1) - 8)), cv2.FONT_HERSHEY_SIMPLEX, .6, color, 2)
                 cv2.circle(view, tuple(round(v) for v in anchor_point(box[:4], args.anchor)), 5, color, -1)
+            # Occupancy: an aid in the region starts the trigger and fixes what is reported. After that
+            # the region stays occupied for as long as anybody is in it (people are detected far more
+            # steadily than aids), and clears only once it has been empty for `exit_frames`.
             was_active = trigger.active
-            active, entered = trigger.update(len(inside_detections) > 0)
+            active, entered = trigger.update(bool(inside_detections) or (was_active and someone_inside))
+            if inside_detections:
+                held = inside_detections
             processed += 1
             if entered:
-                record({'event': 'TRIGGER', 'frame': processed, 'targets_in_region': len(inside_detections)})
-                post(inside_detections, 'enter'); last_heartbeat = time.monotonic()
-            elif active and inside_detections and time.monotonic() - last_heartbeat >= args.heartbeat:
-                post(inside_detections, 'heartbeat'); last_heartbeat = time.monotonic()
+                record({'event': 'TRIGGER', 'frame': processed, 'targets_in_region': len(held)})
+                post(held, 'enter'); last_heartbeat = time.monotonic()
+            elif active and time.monotonic() - last_heartbeat >= args.heartbeat:
+                post(held, 'heartbeat'); last_heartbeat = time.monotonic()
             elif was_active and not active:  # exit transition
                 record({'event': 'CLEAR', 'frame': processed})
-                post([], 'exit')
+                post([], 'exit'); held = []
             # overlay: region, state bar
             contour = np.round(np.asarray(points) * [width - 1, height - 1]).astype(np.int32)
             color = (0, 0, 255) if active else (60, 210, 60)
             overlay = view.copy(); cv2.fillPoly(overlay, [contour], color); view = cv2.addWeighted(overlay, .15, view, .85, 0)
             cv2.polylines(view, [contour], True, color, 2)
             cv2.rectangle(view, (0, 0), (width, 54), (24, 24, 24), -1)
-            cv2.putText(view, 'TRIGGER' if active else 'MONITORING', (12, 36), cv2.FONT_HERSHEY_SIMPLEX, .95, (0, 70, 255) if active else (255, 255, 255), 2)
+            state = 'TRIGGER  ' + ' + '.join(sorted({d['label'].lower() for d in held})) if active else 'MONITORING'
+            cv2.putText(view, state, (12, 36), cv2.FONT_HERSHEY_SIMPLEX, .95, (0, 70, 255) if active else (255, 255, 255), 2)
             cv2.putText(view, f'inside {len(inside_detections)} | {device} | {shared.fps:.0f} fps', (width - 290, 36), cv2.FONT_HERSHEY_SIMPLEX, .55, (200, 200, 200), 1)
             ok_jpeg, buf = cv2.imencode('.jpg', view, [cv2.IMWRITE_JPEG_QUALITY, args.jpeg_quality])
             if ok_jpeg:
-                shared.set(buf.tobytes(), {'triggered': active, 'inside': len(inside_detections), 'detections': all_detections[:20], 'rejected': len(verified) - sum(verified), 'persons': len(persons), 'frames': processed})
+                shared.set(buf.tobytes(), {'triggered': active, 'inside': len(inside_detections), 'held': held if active else [], 'detections': all_detections[:20], 'rejected': len(verified) - sum(verified), 'persons': len(persons), 'frames': processed})
             fps_count += 1
             if time.monotonic() - tick_fps >= 1:
                 shared.fps = fps_count / (time.monotonic() - tick_fps); tick_fps = time.monotonic(); fps_count = 0

@@ -14,9 +14,11 @@ open-vocabulary detector (YOLO-World) that knows the objects themselves:
     then stays with that box while it keeps being detected.
 
 The rule is deliberately loose about which object it is and strict about there
-being one: a person alone is never reported as an aid. Everyday objects are
-accepted as rehearsal stand-ins (office chair -> wheelchair, trolley -> stroller,
-umbrella / stick / tripod -> cane).
+being one: a person alone is never reported as an aid, and neither is a device
+nobody is with (a parked stroller, or one standing in the background behind a
+passer-by). Umbrellas, sticks and tripods are accepted as rehearsal stand-ins for
+a cane; chairs and trolleys can be switched on as stand-ins for wheelchair and
+stroller when no real ones are at hand.
 
 Weights. The small model (yolov8s-world-aids.pt, ~26 MB) is in the repository.
 The extra-large one sees thin objects such as canes far better but is ~140 MB,
@@ -99,7 +101,10 @@ class ConfirmedTracks:
             if confidences:
                 track['peak'] = max(track['peak'], confidences[index])
             if not track['confirmed'] and (track['seen'] - 1) % self.interval == 0:
-                track['checks'].append(check(box) or None)
+                found = check(box) or None
+                track['checks'].append(found)
+                if isinstance(found, tuple) and len(found) > 3:
+                    track['votes'].update(found[3])  # the checker's own opinion on the label
                 answers = Counter(_key(found) for found in track['checks'] if found)
                 if answers and answers.most_common(1)[0][1] >= self.hits:
                     winner = answers.most_common(1)[0][0]
@@ -120,23 +125,25 @@ class ConfirmedTracks:
 
 class AidVerifier:
     def __init__(self, weights=WEIGHTS, device='cpu', conf=0.15, person_conf=0.35, imgsz=480, pad=0.15,
-                 stand_ins=True, stand_in_conf=0.3, bulky_share=0.15, person_weights=None):
+                 stick_stand_ins=True, bulky_stand_ins=False, stand_in_conf=0.3, bulky_share=0.15, person_weights=None):
         from ultralytics import YOLO
         self.model = YOLO(str(weights))
-        # Person boxes are display-only: use the small model for them when the large one does the checks.
+        # Person boxes are needed every frame: use the small model for them when the large one does the checks.
         if person_weights is None and Path(weights) != SMALL and SMALL.is_file():
             person_weights = SMALL
         self.person_model = YOLO(str(person_weights)) if person_weights else self.model
         self.device, self.conf, self.person_conf, self.imgsz, self.pad = device, conf, person_conf, imgsz, pad
-        self.stand_ins, self.stand_in_conf, self.bulky_share = stand_ins, stand_in_conf, bulky_share
+        self.stick_stand_ins, self.bulky_stand_ins = stick_stand_ins, bulky_stand_ins
+        self.stand_in_conf, self.bulky_share = stand_in_conf, bulky_share
 
     def persons(self, frame, imgsz=640):
         result = self.person_model.predict(frame, imgsz=imgsz, conf=self.person_conf, classes=[0], device=self.device, verbose=False)[0]
         return [box[:5] for box in result.boxes.data.cpu().tolist()]
 
-    def _objects(self, frame, box):
+    def _objects(self, frame, box, wide=False):
         height, width = frame.shape[:2]
-        dx, dy = self.pad * (box[2] - box[0]), self.pad * (box[3] - box[1])
+        # A box drawn around the person only needs room to the sides, where a pushed device would be.
+        dx, dy = (0.8 if wide else self.pad) * (box[2] - box[0]), self.pad * (box[3] - box[1])
         x1, y1 = int(max(0, box[0] - dx)), int(max(0, box[1] - dy))
         x2, y2 = int(min(width, box[2] + dx)), int(min(height, box[3] + dy))
         if x2 - x1 < 8 or y2 - y1 < 8:
@@ -144,40 +151,56 @@ class AidVerifier:
         result = self.model.predict(frame[y1:y2, x1:x2], imgsz=self.imgsz, conf=0.03, device=self.device, verbose=False)[0]
         return result.boxes.data.cpu().tolist()
 
-    def evidence(self, frame, box):
-        """(kind, score, label) for the object that accompanies the person, or None for a bare person.
+    def evidence(self, frame, box, wide=False):
+        """(kind, score, label, votes) for the object that accompanies the person, or None.
 
-        Wheeled aids win over canes. kind is 'WHEELED' for a real wheelchair or stroller: this model
-        cannot tell those two apart reliably, so `label` is only its guess and the caller should
-        prefer the detector's vote over the track. For every other kind, kind == label."""
-        rows = [(row[:4], row[4], int(row[5])) for row in self._objects(frame, box)]
+        None means a bare person, or a device nobody is with. Wheeled aids win over canes.
+        kind is 'WHEELED' for a real wheelchair or stroller. This model cannot tell those two apart
+        reliably, so `label` is only its guess and `votes` its weight in the caller's tally: an adult
+        sitting in the device makes it a wheelchair, otherwise the detector's vote should decide.
+        For every other kind, kind == label."""
+        rows = [(row[:4], row[4], int(row[5])) for row in self._objects(frame, box, wide)]
+        people = [xyxy for xyxy, score, cls in rows if cls == 0 and score >= self.person_conf]
+
+        def with_person(xyxy):
+            """People who are with this object: beside or over it, and about as far from the camera
+            (an object whose base is well above the person's feet stands behind them)."""
+            return [p for p in people
+                    if max(p[0] - xyxy[2], xyxy[0] - p[2], 0) <= 0.3 * (p[2] - p[0])
+                    and xyxy[3] >= p[3] - 0.2 * (p[3] - p[1])]
 
         def best(group, floor):
             return max(((score, cls) for _, score, cls in rows if cls in group and score >= floor), default=None)
 
-        wheeled = best(WHEELED, self.conf)
-        if wheeled:
-            return 'WHEELED', wheeled[0], WHEELED[wheeled[1]]
-        if self.stand_ins:
+        for xyxy, score, cls in sorted((r for r in rows if r[2] in WHEELED and r[1] >= self.conf), key=lambda r: -r[1]):
+            owners = with_person(xyxy)
+            if not owners:
+                continue
+            seated = any((p[3] - p[1]) < 2.1 * (p[2] - p[0]) and _overlap(xyxy, p) >= 0.4 * _area(p) for p in owners)
+            if seated:
+                return 'WHEELED', score, 'WHEELCHAIR', {'WHEELCHAIR': 20.0}
+            return 'WHEELED', score, WHEELED[cls], {WHEELED[cls]: 0.5}
+        if self.bulky_stand_ins:
             area = _area(box)
-            people = [xyxy for xyxy, score, cls in rows if cls == 0 and score >= self.person_conf]
             # A seat only counts when a person is on it; a chair next to a standing person does not.
             seats = [score for xyxy, score, cls in rows if cls in SEATS and score >= self.stand_in_conf
                      and _area(xyxy) >= self.bulky_share * area
                      and any(_overlap(xyxy, p) >= 0.3 * _area(xyxy) for p in people)]
             if seats:
-                return 'WHEELCHAIR', max(seats), 'WHEELCHAIR'
+                return 'WHEELCHAIR', max(seats), 'WHEELCHAIR', {}
             carts = [score for xyxy, score, cls in rows if cls in CARTS and score >= self.stand_in_conf
-                     and _area(xyxy) >= self.bulky_share * area]
+                     and _area(xyxy) >= self.bulky_share * area and with_person(xyxy)]
             if carts:
-                return 'STROLLER', max(carts), 'STROLLER'
+                return 'STROLLER', max(carts), 'STROLLER', {}
+        if not people:
+            return None
         cane = best(CANES, self.conf)
         if cane:
-            return 'CANE', cane[0], 'CANE'
-        if self.stand_ins:
+            return 'CANE', cane[0], 'CANE', {}
+        if self.stick_stand_ins:
             stick = best(STICKS, self.stand_in_conf)
             if stick:
-                return 'CANE', stick[0], 'CANE'
+                return 'CANE', stick[0], 'CANE', {}
         return None
 
 

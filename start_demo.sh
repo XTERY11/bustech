@@ -5,6 +5,7 @@
 #   bash start_demo.sh 0               # same, but the bridge reads camera 0 (draw monitor_roi.json first, see README)
 #   DEEPSEEK_API_KEY=sk-... bash start_demo.sh 0
 #   LAN=1 bash start_demo.sh 0         # bind to 0.0.0.0 with a generated BRIDGE_TOKEN for phones / other PCs
+#   BRIDGE_WINDOW=1 bash start_demo.sh 0   # also show the annotated camera view in a local window (Q stops the bridge)
 #
 # Ports: dashboard 3000 · signal hub 8787 · camera MJPEG/health 8790. Ctrl+C stops everything.
 set -euo pipefail
@@ -27,9 +28,10 @@ else
   echo "Dashboard http://127.0.0.1:3000  hub http://127.0.0.1:8787  camera http://127.0.0.1:8790"
 fi
 
+WINDOW_FLAG="--no-window"; [ -n "${BRIDGE_WINDOW:-}" ] && WINDOW_FLAG=""
 cleanup() { trap - INT TERM; kill 0 2>/dev/null || true; }
 trap cleanup INT TERM EXIT
-(cd "$ROOT/vision" && RIDE_BRIDGE_URL="http://127.0.0.1:${BRIDGE_PORT}" BRIDGE_TOKEN="${BRIDGE_TOKEN:-}" bash start_bridge.sh "$SRC" --no-window) &
+(cd "$ROOT/vision" && RIDE_BRIDGE_URL="http://127.0.0.1:${BRIDGE_PORT}" BRIDGE_TOKEN="${BRIDGE_TOKEN:-}" bash start_bridge.sh "$SRC" $WINDOW_FLAG) &
 sleep 1
 (cd "$ROOT/dashboard" && node scripts/dev-integrated.mjs) &
 wait
