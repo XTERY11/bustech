@@ -41,7 +41,7 @@
 | 目录 | 内容 | 状态 |
 |---|---|---|
 | `vision/` | YOLOv8n 权重（4 类：`wheelchair_with` / `wheelchair_without` / `cane` / `stroller`）、区域绘制 `monitor_zone.py`、桥接 `yolo_bridge.py`、测试视频 `demos/clips/` | 可运行；真实摄像头未实测 |
-| `dashboard/backend/` | 信号中枢 `hub.mjs` + `server.mjs`、规划器 `planner/`、系统提示词 `prompts/system_prompt.txt`、25 个预设案例 `examples/demo_cases.json` | 可运行，40 项测试 |
+| `dashboard/backend/` | 信号中枢 `hub.mjs` + `server.mjs`、规划器 `planner/`、系统提示词 `prompts/system_prompt.txt`、25 个预设案例 `examples/demo_cases.json` | 可运行，42 项测试 |
 | `dashboard/app/` | 页面：摄像头面板、孪生面板、输入信号、Thinking→Action、输出 | 可运行 |
 | `twin/` | React Three Fiber 公交模型 + embed 模式，构建为单文件 `dashboard/public/twin/index.html` | 可运行 |
 | 手机 App | **尚无代码**。形态定为手机网页 / PWA。参考仓库 `github.com/apinfiniteloop/buspulse-sg`（目前对外不可见，需要仓库所有者开权限） | 待开发 |
@@ -191,7 +191,7 @@ type Result = {
 2. **全员不得修改**：`vision/monitor_zone.py`、`dashboard/backend/hub.mjs`。`twin/` 下的 3D 组件只有模块 D 可以改。
 3. 页面与乘客提示文案保持英文（评委界面）；代码风格跟随所在文件。
 4. 密钥（`DEEPSEEK_API_KEY`、`BRIDGE_TOKEN`）只通过环境变量传入，不写进文件、不提交。
-5. 每个模块在自己的分支开发：`mod-a-vision`、`mod-b-app`、`mod-c-dashboard`、`mod-d-twin`；合并前必须通过自己模块的验收命令和 `cd dashboard && npm test`（40 项全过）。
+5. 每个模块在自己的分支开发：`mod-a-vision`、`mod-b-app`、`mod-c-dashboard`、`mod-d-twin`；合并前必须通过自己模块的验收命令和 `cd dashboard && npm test`（42 项全过）。
 6. 环境：Node ≥ 22.13，Python 3.10–3.12。不要全局安装依赖，全部留在 `vision/.venv`、`dashboard/node_modules`、`twin/node_modules`。
 7. 遇到失败：贴出原始报错，提出最小修复，不要重构或重写已有代码。
 
@@ -271,7 +271,7 @@ A 和 B 只通过第 2 节的 HTTP 接口与 C 通信，D 只通过 2.8 的消�
 - **独立开发**（不需要摄像头和 App，用页面上的预设场景按钮驱动）：
 
   ```bash
-  cd dashboard && npm ci && npm test                      # 40 项，改策略 / 提示词后必须全过
+  cd dashboard && npm ci && npm test                      # 42 项，改策略 / 提示词后必须全过
   npm run dev:integrated                                  # 中枢 + 页面
   DEEPSEEK_API_KEY=... npm run dev:integrated             # 真实模型；key 只放环境变量
   ```
@@ -281,7 +281,7 @@ A 和 B 只通过第 2 节的 HTTP 接口与 C 通信，D 只通过 2.8 的消�
   - C2：摘要的可读性（面向评委，短、英文、不泄露内部字段名）；`single` 与 `two_turn` 的延迟与观感取舍；`STROLLER` 标签的提示词覆盖；模型超时 / 出错时的展示。
   - C3：`NEEDS_CONFIRMATION` 与 `CANNOT_EXECUTE` 在输出面板上的区分度；乘客提示与 App 上显示的文字保持一致。
 - **验收**：
-  - 25 个预设在 `rules` 模式下结果不变，`npm test` 40 项全过。
+  - 25 个预设在 `rules` 模式下结果不变，`npm test` 42 项全过。
   - `single` 模式下 `meta.source` 为 “DeepSeek response”、`meta.validation_passed` 为 true；同一输入在三种模式下 `plan_status` 与动作集合一致。
 
 ### 模块 D · 公交孪生嵌入 dashboard（本队负责，当前最不完善）

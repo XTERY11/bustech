@@ -73,7 +73,7 @@ The Thinking panel is a short explanation for the audience. `meta.source` identi
 
 The original GitHub Pages workflow and Sites build configuration are preserved. Static Pages can run the UI and offline presets. Live DeepSeek and external signals require a separate HTTPS server: set `NEXT_PUBLIC_API_BASE_URL` or enter its URL in Connection settings, then add the website origin, such as `https://dwjh.github.io`, to the server's `ALLOWED_ORIGINS`.
 
-The current changes are local; no push or deployment has been made.
+Development work is kept on feature branches; publishing a branch does not deploy the live signal server.
 
 ```text
 npm run dev:integrated   Start the dashboard and signal server together
