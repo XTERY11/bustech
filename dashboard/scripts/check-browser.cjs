@@ -10,6 +10,7 @@ const assert = require('node:assert/strict');
   try {
     await page.goto('http://127.0.0.1:3000', { waitUntil: 'domcontentloaded' });
     await page.getByText('Signal server connected', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Show controls & details', exact: true }).click();
     const workflows = [];
     for (const [scenario, mode] of process.env.LIVE_API_TEST === '1' ? [['Wheelchair', 'single'], ['Crutches', 'two_turn']] : [['Wheelchair', 'rules'], ['Crutches', 'rules']]) {
       await page.locator('button[aria-pressed]').filter({ hasText: scenario }).first().click();

@@ -3,14 +3,15 @@ import { useEffect, useState } from 'react';
 
 type Health = { ok: boolean; fps?: number; triggered?: boolean; inside?: number; detections?: { label: string; confidence: number; model_class?: string }[]; device?: string; source?: string; frames?: number };
 const KEY = 'accessride.videoBase';
-const defaultBase = () => typeof window === 'undefined' ? 'http://127.0.0.1:8790' : `${window.location.protocol}//${window.location.hostname}:8790`;
+const DEFAULT_VISION_PORT = process.env.NEXT_PUBLIC_VISION_PORT || '8790';
+const defaultBase = () => typeof window === 'undefined' ? `http://127.0.0.1:${DEFAULT_VISION_PORT}` : `${window.location.protocol}//${window.location.hostname}:${DEFAULT_VISION_PORT}`;
 
 /**
  * Live camera view from the Sense bridge (vision/yolo_bridge.py): an MJPEG
  * stream of annotated frames plus a small /health poll for fps and trigger state.
  * Frames never pass through the signal hub; only structured detections do.
  */
-export function VideoPanel() {
+export function VideoPanel({ onStatusChange }: { onStatusChange?: (status: { online: boolean; triggered: boolean; fps: number }) => void }) {
   const [base, setBase] = useState(''), [draft, setDraft] = useState('');
   const [health, setHealth] = useState<Health | null>(null);
   const [epoch, setEpoch] = useState(0), [broken, setBroken] = useState(false);
@@ -36,8 +37,12 @@ export function VideoPanel() {
   }, [base]);
   useEffect(() => { if (!broken) return; const t = window.setTimeout(() => { setBroken(false); setEpoch(e => e + 1); }, 3000); return () => window.clearTimeout(t); }, [broken]);
 
-  function apply() { const next = draft.trim().replace(/\/$/, ''); setBase(next); setBroken(false); setEpoch(e => e + 1); try { window.localStorage.setItem(KEY, next); } catch { /* ignore */ } }
   const online = Boolean(health?.ok);
+  useEffect(() => {
+    onStatusChange?.({ online, triggered: Boolean(health?.triggered), fps: health?.fps ?? 0 });
+  }, [health?.fps, health?.triggered, online, onStatusChange]);
+
+  function apply() { const next = draft.trim().replace(/\/$/, ''); setBase(next); setBroken(false); setEpoch(e => e + 1); try { window.localStorage.setItem(KEY, next); } catch { /* ignore */ } }
   const labels = [...new Set((health?.detections ?? []).map(d => d.label))];
   return <section className="panel stagePanel videoPanel" aria-label="Live camera">
     <div className="panelHeader"><div><p className="sectionKicker">Sense · Live camera</p><h2>YOLO region monitor</h2></div>

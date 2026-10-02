@@ -22,8 +22,6 @@ interface Props {
   onViewerSize: (s: ViewerSize) => void;
   theme: 'light' | 'dark';
   onTheme: (t: 'light' | 'dark') => void;
-  speak: boolean;
-  onSpeak: (v: boolean) => void;
 }
 
 const DEST_PRESETS = ['400 Punggol Coast', '43 Upper East Coast', '9 Tampines Hub', 'Not in service'];
@@ -129,11 +127,6 @@ export function DemoControls(p: Props) {
             <button className="dc-btn" onClick={() => bus.playAnnouncement(annText)}>Play</button>
           )}
         </div>
-        <label className="dc-check dc-mt">
-          <Switch checked={p.speak} onChange={p.onSpeak} label="Speak aloud" />
-          <span>Speak aloud <small>Browser text-to-speech</small></span>
-        </label>
-
         <h4 className="dc-mt2">Destination</h4>
         <form
           className="dc-row"

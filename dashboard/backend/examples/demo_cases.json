@@ -15,7 +15,7 @@
           "ADDITIONAL_BOARDING_TIME"
         ],
         "ramp_preference": "REQUESTED",
-        "preferred_interaction": "VISUAL",
+        "preferred_interaction": "BOTH",
         "language": "en-SG"
       },
       "perception": {
@@ -65,7 +65,10 @@
     "expected": {
       "status": "READY",
       "includes": [
-        "DEPLOY_AUTOMATIC_SHORT_RAMP"
+        "DEPLOY_AUTOMATIC_SHORT_RAMP",
+        "ACTIVATE_EXTERNAL_SPEAKER",
+        "CONFIRM_ROUTE_IDENTITY",
+        "SHOW_EXTERNAL_DISPLAY"
       ],
       "excludes": [
         "REQUEST_MANUAL_RAMP_DEPLOYMENT"

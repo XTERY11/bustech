@@ -49,7 +49,8 @@ cd vision && .venv/bin/python monitor_zone.py --source 0
 
 ```bash
 bash start_demo.sh                       # test clip, looped, no API key: use "Offline rules"
-DEEPSEEK_API_KEY=sk-... bash start_demo.sh 0     # real camera + DeepSeek
+DEEPSEEK_API_KEY=sk-... bash start_demo.sh 0  # camera + DeepSeek
+DASHBOARD_PORT=3100 BRIDGE_PORT=8887 VISION_PORT=8890 bash start_demo.sh  # if the default ports are busy
 ```
 
 Open <http://127.0.0.1:3000>. The top row shows the live annotated camera stream and the bus twin; the lower row is the original signal / reasoning / output workspace.
@@ -92,7 +93,7 @@ Model classes map as `wheelchair_with`/`wheelchair_without → WHEELCHAIR`, `can
 ## Tests
 
 ```bash
-cd dashboard && npm test                       # 40 policy/communication checks (incl. stroller)
+cd dashboard && npm test                       # 42 policy/communication checks (incl. stroller)
 cd vision && .venv/bin/python -m unittest test_monitor_zone -v
 cd vision && .venv/bin/python yolo_bridge.py --source demos/clips/wheelchair_test.mp4 --roi monitor_example_roi.json --no-window --max-frames 120 --no-signal
 ```

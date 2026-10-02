@@ -197,7 +197,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .traceHeader { align-items: center; }
 .runControls { display: flex; align-items: center; gap: 8px; }
-.primaryButton, .secondaryButton, .audioButton {
+.primaryButton, .secondaryButton {
   border-radius: 10px;
   border: 1px solid var(--line);
   padding: 8px 11px;
@@ -268,14 +268,6 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .emptyOutput { min-height: 95px; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 20px; color: var(--muted); }
 .emptyOutput span { font-family: var(--font-geist-mono); font-size: 1.5rem; font-weight: 800; color: #d7dee7; }
 .emptyOutput p { margin: 0; max-width: 210px; font-size: 0.7rem; line-height: 1.45; }
-.audioButton { color: var(--purple); background: white; display: flex; align-items: center; gap: 6px; padding: 6px 8px; }
-.audioButton.isSpeaking { background: var(--purple); color: white; border-color: var(--purple); }
-.audioMessage { padding: 14px; }
-.audioMessage p { margin: 11px 0 0; color: #354a61; font-size: 0.72rem; line-height: 1.55; }
-.waveform { height: 42px; display: flex; align-items: center; gap: 4px; padding: 0 4px; }
-.waveform span { width: 4px; border-radius: 4px; background: var(--purple); opacity: 0.75; }
-.isSpeaking + * .waveform span, .audioButton.isSpeaking ~ .waveform span { animation: pulseBar 800ms ease-in-out infinite alternate; }
-@keyframes pulseBar { to { transform: scaleY(0.55); } }
 .externalDisplay { margin: 12px; border-radius: 12px; padding: 16px; background: #101820; color: #efffa6; border: 4px solid #2d3844; box-shadow: inset 0 0 24px rgba(166, 255, 67, 0.08); }
 .externalDisplay--red { color: #ffd2da; }
 .displayRoute { margin-bottom: 12px; font-family: var(--font-geist-mono); font-size: 0.8rem; font-weight: 800; }

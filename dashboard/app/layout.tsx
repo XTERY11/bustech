@@ -8,17 +8,17 @@ const description = "App and YOLO signals drive live DeepSeek boarding plans and
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
-  title: "AccessRide Prompt Lab",
+  title: "NUSNextBus",
   description,
   openGraph: {
-    title: "AccessRide Prompt Lab",
+    title: "NUSNextBus",
     description,
     type: "website",
-    images: [{ url: `${basePath}/og.png`, width: 1536, height: 1024, alt: "AccessRide Prompt Lab interface preview" }],
+    images: [{ url: `${basePath}/og.png`, width: 1536, height: 1024, alt: "NUSNextBus interface preview" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "AccessRide Prompt Lab",
+    title: "NUSNextBus",
     description,
     images: [`${basePath}/og.png`],
   },
