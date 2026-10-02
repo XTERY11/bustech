@@ -17,7 +17,7 @@ The rule is deliberately loose about which object it is and strict about there
 being one: a person alone is never reported as an aid, and neither is a device
 nobody is with (a parked stroller, or one standing in the background behind a
 passer-by). Umbrellas, sticks and tripods are accepted as rehearsal stand-ins for
-a cane; chairs and trolleys can be switched on as stand-ins for wheelchair and
+a cane when the person is holding them; chairs and trolleys can be switched on as stand-ins for wheelchair and
 stroller when no real ones are at hand.
 
 Weights. The small model (yolov8s-world-aids.pt, ~26 MB) is in the repository.
@@ -45,7 +45,7 @@ WHEELED = {1: 'WHEELCHAIR', 2: 'STROLLER', 3: 'STROLLER'}   # real wheeled aids
 CANES = {4, 5, 6}                                            # real walking aids
 SEATS = {7, 8}                                               # stand-in for a wheelchair, only when the person is on it
 CARTS = {9, 10}                                              # stand-in for a stroller
-STICKS = {11, 12, 13}                                        # stand-in for a cane
+STICKS = {11, 12}                                            # stand-in for a cane; 'tripod stand' is a decoy for TV stands
 
 
 def _overlap(a, b):
@@ -206,8 +206,20 @@ class AidVerifier:
                     if max(p[0] - xyxy[2], xyxy[0] - p[2], 0) <= 0.3 * (p[2] - p[0])
                     and xyxy[3] >= p[3] - 0.2 * (p[3] - p[1])]
 
-        def best(group, floor):
-            return max(((score, cls) for _, score, cls in rows if cls in group and score >= floor), default=None)
+        def held(group, floor):
+            """Best score of a cane-like object a person is holding: it touches the person, starts
+            around hand height and reaches down to about their feet. A stand or pole in the
+            background, or an arm, fails this."""
+            scores = []
+            for xyxy, score, cls in rows:
+                if cls not in group or score < floor:
+                    continue
+                for p in people:
+                    tall = p[3] - p[1]
+                    if (max(p[0] - xyxy[2], xyxy[0] - p[2], 0) <= 0.15 * (p[2] - p[0]) and xyxy[3] >= p[3] - 0.15 * tall
+                            and xyxy[1] >= p[1] + 0.3 * tall and xyxy[3] - xyxy[1] >= 0.25 * tall):
+                        scores.append(score); break
+            return max(scores, default=None)
 
         for xyxy, score, cls in sorted((r for r in rows if r[2] in WHEELED and r[1] >= self.conf), key=lambda r: -r[1]):
             owners = with_person(xyxy)
@@ -236,14 +248,8 @@ class AidVerifier:
             people = [xyxy for xyxy, score, cls in rows if cls == 0 and score >= self.person_conf]
         if not people:
             return None
-        cane = best(CANES, self.conf)
-        if cane:
-            return 'CANE', cane[0], 'CANE', {}
-        if self.stick_stand_ins:
-            stick = best(STICKS, self.stand_in_conf)
-            if stick:
-                return 'CANE', stick[0], 'CANE', {}
-        return None
+        cane = held(CANES, self.conf) or (held(STICKS, self.stand_in_conf) if self.stick_stand_ins else None)
+        return ('CANE', cane, 'CANE', {}) if cane else None
 
 
 def build_weights(size='s'):
