@@ -7,6 +7,8 @@
 #   LAN=1 bash start_demo.sh 0         # bind to 0.0.0.0 with a generated BRIDGE_TOKEN for phones / other PCs
 #   BRIDGE_WINDOW=1 bash start_demo.sh 0   # also show the annotated camera view in a local window (Q stops the bridge)
 #   BRIDGE_RECORD=1 bash start_demo.sh 0   # also save the raw camera frames to vision/recordings/ for replay
+#   bash start_demo.sh demos/captures/venue_live_172729   # replay a recorded session (no camera, no YOLO);
+#                                      # each pass starts once a booking arrives (AFTER_BOOKING=0: at once)
 #
 # Ports: dashboard 3000 · signal hub 8787 · camera MJPEG/health 8790. Ctrl+C stops everything.
 # Override DASHBOARD_PORT, BRIDGE_PORT or VISION_PORT when a default port is busy.
@@ -54,7 +56,15 @@ if ! kill -0 "${PIDS[0]}" 2>/dev/null; then
   wait "${PIDS[0]}" || exit $?
   exit 1
 fi
-(cd "$ROOT/vision" && RIDE_BRIDGE_URL="http://127.0.0.1:${BRIDGE_PORT}" BRIDGE_TOKEN="${BRIDGE_TOKEN:-}" exec bash start_bridge.sh "$SRC" $WINDOW_FLAG --snapshots "$ROOT/vision/trigger_snapshots" $RECORD_FLAG --mjpeg-port "$VISION_PORT") &
+if [ -f "$SRC/signals.jsonl" ]; then
+  # A capture folder (yolo_bridge.py --capture): replay its video and signals instead of running YOLO.
+  # The replay waits for a booking before each pass; AFTER_BOOKING=0 plays it straight away.
+  CAPTURE="$(cd "$SRC" && pwd)"
+  WAIT_FLAG="--after-booking"; [ "${AFTER_BOOKING:-1}" = "0" ] && WAIT_FLAG=""
+  (cd "$ROOT/vision" && RIDE_BRIDGE_URL="http://127.0.0.1:${BRIDGE_PORT}" BRIDGE_TOKEN="${BRIDGE_TOKEN:-}" exec .venv/bin/python replay_bridge.py --capture "$CAPTURE" --loop $WAIT_FLAG --mjpeg-port "$VISION_PORT") &
+else
+  (cd "$ROOT/vision" && RIDE_BRIDGE_URL="http://127.0.0.1:${BRIDGE_PORT}" BRIDGE_TOKEN="${BRIDGE_TOKEN:-}" exec bash start_bridge.sh "$SRC" $WINDOW_FLAG --snapshots "$ROOT/vision/trigger_snapshots" $RECORD_FLAG --mjpeg-port "$VISION_PORT") &
+fi
 PIDS+=("$!")
 
 # macOS still ships Bash 3.2, so use a portable fail-fast monitor instead of
