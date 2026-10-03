@@ -215,3 +215,8 @@ button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visi
   .livePulse,.communicationItem--active .communicationState,.thinkingCursor,.twinActions li.isActive { animation:none !important; }
   .thinkingWord { animation:none !important; }
 }
+.replayFlow { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; padding:8px 12px; border:1px solid var(--line); border-radius:12px; background:#f6faf7; }
+.replayFlow > span:first-child { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.replayFlow strong { color:var(--ink); font-size:12px; font-weight:750; }
+.replayFlow small { color:var(--muted); font-size:10px; }
+.replayFlow .replayAnimation { font-size:11px; padding:6px 11px; }

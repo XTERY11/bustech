@@ -209,6 +209,21 @@ export default function Dashboard() {
     }
   }
 
+  /** Books assistance for one need, as the App would; the replay bridge then plays that clip and its signals. */
+  async function replayFlow(need: string) {
+    const wheelchair = need === 'WHEELCHAIR';
+    setError('');
+    try {
+      await postSignal(apiBase, token, '/api/settings', { mode });
+      await postSignal(apiBase, token, '/api/booking', { event_id: `replay-${crypto.randomUUID()}`, observed_at: new Date().toISOString(), payload: {
+        active: true, intent: 'BOARDING', route_id: 'DEMO_ROUTE', stop_id: 'DEMO_STOP', accessibility_need: need,
+        ramp_preference: wheelchair ? 'REQUESTED' : 'UNSPECIFIED', assistance_requested: wheelchair ? ['WHEELCHAIR_RAMP', 'ADDITIONAL_BOARDING_TIME'] : ['ADDITIONAL_BOARDING_TIME'],
+        preferred_interaction: 'BOTH', language: 'en-SG' } });
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Could not connect to the server');
+    }
+  }
+
   async function changeMode(next: Mode) {
     setMode(next);
     reset();
@@ -314,7 +329,7 @@ export default function Dashboard() {
     </section>}
 
     <section className="stageRow" aria-label="Camera and vehicle">
-      <VideoPanel onStatusChange={setVisionStatus} />
+      <VideoPanel onStatusChange={setVisionStatus} onReplay={connected ? replayFlow : undefined} replayBusy={inputSource === 'external' && (journey?.stage === 'BOOKED' || journey?.stage === 'AT_STOP')} />
       <TwinPanel
         result={result}
         context={context}

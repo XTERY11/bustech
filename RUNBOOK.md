@@ -47,7 +47,7 @@
    ```bash
    cd ~/Documents/bustech && bash start_demo.sh demos/captures/venue
    ```
-   打开 <http://127.0.0.1:3000>，用 2.3 节的命令发一次预约，约 15 秒走完三步。按 `Ctrl + C` 停止。
+   打开 <http://127.0.0.1:3000>，在左侧摄像头面板下方的 **Replay full flow** 里点 Wheelchair、Stroller、Cane 中的一个：视频、触发信号、公交动画和指引会一起走完，约 15 秒进入上车阶段。三类各点一遍，都正常再接摄像头。按 `Ctrl + C` 停止。
 
 ### 2.2 启动
 
