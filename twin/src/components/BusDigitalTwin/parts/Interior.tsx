@@ -43,8 +43,14 @@ function Passenger({ index }: { index: number }) {
   const skin = ['#bd8d71', '#e0b998', '#92664e'][index % 3];
   return <group name="SimulatedPassenger" userData={{ simulated: true }}>
     <Block at={[0.015, 0.79, 0]} size={[0.25, 0.43, 0.31]} color={shirt} radius={0.09} />
-    <mesh position={[0, 1.14, 0]} scale={[0.94, 1.1, 0.92]}><sphereGeometry args={[0.117, 16, 12]} /><meshStandardMaterial color={skin} roughness={0.9} /></mesh>
-    <mesh position={[0.018, 1.20, 0]} scale={[1, 0.52, 1]}><sphereGeometry args={[0.119, 16, 10]} /><meshStandardMaterial color="#343332" roughness={1} /></mesh>
+    <group name="PassengerHead" position={[0, 1.14, 0]} scale={[0.94, 1.1, 0.92]}>
+      <mesh><sphereGeometry args={[0.117, 24, 16]} /><meshStandardMaterial color={skin} roughness={0.9} /></mesh>
+      {/* A concentric cap follows the scalp; tilt raises the hairline toward the face (-X). */}
+      <mesh name="PassengerHair" rotation={[0, 0, -0.20]}>
+        <sphereGeometry args={[0.124, 24, 12, 0, Math.PI * 2, 0, 1.5]} />
+        <meshStandardMaterial color="#343332" roughness={1} />
+      </mesh>
+    </group>
     <Rail from={[0, 0.96, 0]} to={[0, 1.07, 0]} radius={0.045} color={skin} />
     {[-1, 1].map((side) => <group key={side}>
       <Rail from={[-0.01, 0.51, side * 0.09]} to={[-0.31, 0.49, side * 0.10]} radius={0.075} color="#334658" />
