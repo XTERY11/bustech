@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-test('server renders the focused NUSNextBus signal dashboard', async () => {
+test('server renders the NUSNextBus classified sidebar workspace', async () => {
   const { default: worker } = await import('../dist/server/index.js');
   const response = await worker.fetch(new Request('http://localhost/', { headers: { accept: 'text/html' } }), { ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } }, { waitUntil() {}, passThroughOnException() {} });
   assert.equal(response.status, 200);
@@ -13,7 +13,13 @@ test('server renders the focused NUSNextBus signal dashboard', async () => {
   assert.match(html, /Sense: CV-Based Live Detection/);
   assert.match(html, /Bus digital twin/);
   assert.match(html, /Validated action plan/);
-  assert.match(html, /Preview boarding/);
+  assert.match(html, /aria-label="Workspaces"/);
+  assert.match(html, /aria-label="Digital twin"/);
+  assert.match(html, /data-view="overview"/);
+  assert.match(html, /sidebar-group-signal/);
+  assert.match(html, /sidebar-group-sense/);
+  assert.match(html, /sidebar-group-support/);
+  assert.doesNotMatch(html, /Preview boarding/);
   assert.match(html, /YOLO/);
   assert.match(html, /<html lang="en"/);
   assert.doesNotMatch(html, /Your site is taking shape|Building your site|Run simulated agent/);

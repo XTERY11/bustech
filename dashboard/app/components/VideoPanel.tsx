@@ -18,7 +18,7 @@ const REPLAY_NEEDS = [['WHEELCHAIR', 'Wheelchair'], ['STROLLER', 'Stroller'], ['
  * replay (vision/replay_bridge.py), which then plays the venue clip for that need and sends its signals:
  * one click shows the whole flow, video included. `replayBusy` is true while a journey is under way.
  */
-export function VideoPanel({ onStatusChange, onReplay, replayBusy = false }: { onStatusChange?: (status: { online: boolean; triggered: boolean; fps: number }) => void; onReplay?: (need: string) => void; replayBusy?: boolean }) {
+export function VideoPanel({ onStatusChange, onReplay, replayBusy = false, showControls = true }: { onStatusChange?: (status: { online: boolean; triggered: boolean; fps: number }) => void; onReplay?: (need: string) => void; replayBusy?: boolean; showControls?: boolean }) {
   const [base, setBase] = useState(''), [draft, setDraft] = useState('');
   const [health, setHealth] = useState<Health | null>(null);
   const [epoch, setEpoch] = useState(0), [broken, setBroken] = useState(false);
@@ -69,16 +69,18 @@ export function VideoPanel({ onStatusChange, onReplay, replayBusy = false }: { o
       {online && !broken
         // eslint-disable-next-line @next/next/no-img-element -- MJPEG stream, not an optimisable image
         ? <img key={epoch} src={`${base}/stream.mjpg?e=${epoch}`} alt="Live annotated camera stream" onError={() => setBroken(true)} />
-        : <div className="stagePlaceholder"><strong>No video stream</strong><p>Start the bridge on the vision computer:<br /><code>bash vision/start_bridge.sh 0</code><br />then check <code>{base || '…'}/health</code>.</p></div>}
+        : <div className="stagePlaceholder"><strong>Camera offline</strong>{showControls
+          ? <p>Start the bridge on the vision computer:<br /><code>bash vision/start_bridge.sh 0</code><br />then check <code>{base || '…'}/health</code>.</p>
+          : <p>Connect the vision bridge in controls &amp; details.</p>}</div>}
     </div>
-    {online && health?.device === 'replay' && onReplay && <div className="replayFlow" aria-label="Replay the full flow from a recorded session">
+    {showControls && online && health?.device === 'replay' && onReplay && <div className="replayFlow" aria-label="Replay the full flow from a recorded session">
       <span><strong>Replay full flow</strong><small>recorded venue clip · booking → at the stop → on board</small></span>
       <span className="stageFooterControls">{REPLAY_NEEDS.map(([need, label]) =>
         <button key={need} className="replayAnimation" disabled={replayBusy} onClick={() => onReplay(need)}>▶ {label}</button>)}</span>
     </div>}
-    <div className="stageFooter">
+    {showControls && <div className="stageFooter">
       <span>{online ? `${health?.fps ?? 0} fps · ${health?.device ?? ''} · inside ${health?.inside ?? 0}${labels.length ? ' · ' + labels.join(', ') : ''}` : 'Detections are sent to the signal hub only while a target is inside the region.'}</span>
       <details className="stageSettings"><summary>Stream URL</summary><div className="settingsFields"><label>Bridge base URL<input value={draft} onChange={e => setDraft(e.target.value)} placeholder="http://192.168.1.20:8790" /></label><button className="secondaryButton" onClick={apply}>Apply</button></div></details>
-    </div>
+    </div>}
   </section>;
 }

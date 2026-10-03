@@ -27,8 +27,10 @@ export const CAMERA_PRESETS: Record<CameraPreset, PresetDef> = {
 function framed(preset: CameraPreset, aspect: number): PresetDef {
   const p = CAMERA_PRESETS[preset];
   if (preset === 'interior') return p;
-  // Pull back on narrow/portrait viewports so the subject still fits.
-  const k = THREE.MathUtils.clamp(1.5 / aspect, 1, 2.6);
+  // Close entrance/ramp views retain roof clearance; overview can move up to 28% closer.
+  const closest = { overview: 0.72, cutaway: 0.78, entrance: 0.92, ramp: 0.98 }[preset];
+  const k = aspect > 2.4 ? THREE.MathUtils.clamp(1 - (aspect - 2.4) * 0.45, closest, 1)
+    : THREE.MathUtils.clamp(1.5 / aspect, 1, 2.6);
   const pos = p.pos.map((v, i) => p.target[i] + (v - p.target[i]) * k) as [number, number, number];
   return { pos, target: p.target };
 }

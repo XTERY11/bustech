@@ -46,7 +46,7 @@ export function WordReveal({ lines, running }: { lines: string[]; running: boole
   }, [prepared, total]);
 
   if (!lines.length) {
-    return <p className="thinkingWaiting">{running ? 'Reading the latest signals and checking safety constraints…' : 'Run a demo preset, or wait for camera and app signals.'}</p>;
+    return <p className="thinkingWaiting">{running ? 'Reviewing the latest signals…' : 'Waiting for app or camera signals.'}</p>;
   }
 
   return <div className="thinkingReveal">

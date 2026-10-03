@@ -7,7 +7,9 @@ import { TwinPanel } from './components/TwinPanel';
 import { VideoPanel } from './components/VideoPanel';
 import { WordReveal } from './components/WordReveal';
 import { SignalPanel } from './components/SignalPanel';
+import { DashboardSidebar, type DashboardView } from './components/DashboardSidebar';
 import { ACTION_LABELS } from './lib/actionLabels';
+import { appSignalFromSnapshot } from './lib/appSignal';
 import { postSignal, snapshotFromEvent, watchEvents } from './live-client';
 import type { Context, HubEvent, Journey, Mode, Navigation, Result, Snapshot, Summary } from './live-types';
 import { offlinePlan } from './offline';
@@ -20,6 +22,14 @@ const choices = [
   ['manual_unknown_limits', 'Manual help', 'Check ramp conditions', 'orange'],
   ['emergency_stop', 'Emergency stop', 'Pause assistance', 'red'],
 ];
+
+const workspaces: Record<DashboardView, { title: string; category: string }> = {
+  overview: { title: 'Overview', category: 'NUSNextBus Studio' },
+  signal: { title: 'Signal', category: 'App-based communication' },
+  sense: { title: 'Sense', category: 'CV-based detection' },
+  thinking: { title: 'LLM Agent: Thinking', category: 'Support' },
+  twin: { title: 'Bus digital twin', category: 'Support' },
+};
 
 const sample = (id: string) => ({
   ...structuredClone(cases.find(c => c.name === id)!.input),
@@ -78,6 +88,7 @@ export default function Dashboard() {
   const [events, setEvents] = useState<{ id: number; at: number; label: string }[]>([]);
   const [modal, setModal] = useState<'json' | 'library' | null>(null);
   const [showDetails, setShowDetails] = useState(false);
+  const [view, setView] = useState<DashboardView>('overview');
   const [visionStatus, setVisionStatus] = useState({ online: false, triggered: false, fps: 0 });
   const [twinReady, setTwinReady] = useState(false);
   const [journey, setJourney] = useState<Journey | null>(null);
@@ -249,7 +260,7 @@ export default function Dashboard() {
       : actions.includes('KEEP_RAMPS_STOWED')
         ? 'Keep stowed'
         : 'Awaiting plan';
-  const bookingActive = Boolean(request.active);
+  const appSignal = appSignalFromSnapshot(snapshot);
   const detectionActive = Boolean(detection?.label && detection.label !== 'NONE' && (detection.confidence ?? 0) >= 0.75);
   const modeLabel = mode === 'single' ? 'DeepSeek · Single' : mode === 'two_turn' ? 'DeepSeek · Two turns' : 'Offline rules';
   const navigationTitle = navigation ? ({ TO_STOP: 'Go to the boarding point', WAIT_AT_STOP: 'Wait at the boarding point', BOARD_BUS: 'Your bus is ready', TO_SEAT: 'Your assigned seat', TO_WHEELCHAIR_BAY: 'Your wheelchair space' })[navigation.phase] : running ? 'Preparing passenger guidance' : journey?.guidance.title ?? 'Waiting for an app booking';
@@ -257,31 +268,27 @@ export default function Dashboard() {
   const communication = [
     { label: 'Signal hub', value: connected ? 'Connected' : 'Offline', tone: connected ? 'online' : 'offline' },
     { label: 'Camera bridge', value: visionStatus.online ? `${Math.round(visionStatus.fps)} fps` : 'Offline', tone: visionStatus.triggered ? 'active' : visionStatus.online ? 'online' : 'offline' },
-    { label: 'App booking', value: bookingActive ? String(request.accessibility_need ?? 'Received').replaceAll('_', ' ') : 'Waiting', tone: bookingActive ? 'online' : 'waiting' },
+    { label: 'App booking', value: appSignal.source === 'demo' ? 'Demo · no app booking' : appSignal.statusLabel,
+      tone: appSignal.received && ['booked', 'at_stop', 'on_board'].includes(appSignal.status) ? 'online' : 'waiting' },
     { label: 'YOLO channel', value: detectionActive ? `${detection?.label} ${Math.round((detection?.confidence ?? 0) * 100)}%` : 'Waiting', tone: detectionActive ? 'active' : 'waiting' },
     { label: 'Journey', value: journey && inputSource === 'external' ? ({ IDLE: 'Waiting', BOOKED: 'Booked · on the way', AT_STOP: journey.matched ? 'At the stop' : 'At the stop · unmatched', ON_BOARD: 'On board' })[journey.stage] : 'Demo preset', tone: journey?.stage === 'AT_STOP' ? 'active' : journey && journey.stage !== 'IDLE' ? 'online' : 'waiting' },
     { label: 'Digital twin', value: twinReady ? 'Ready' : 'Loading', tone: twinReady ? 'online' : 'waiting' },
     { label: 'Decision', value: running ? 'Generating' : result?.plan_status ?? 'Standby', tone: running ? 'active' : result?.plan_status === 'READY' ? 'online' : result?.plan_status === 'CANNOT_EXECUTE' ? 'offline' : 'waiting' },
   ];
 
-  return <main className="demoShell">
-    <header className="topbar topbarCompact">
-      <div className="brandLockup teamBrand" aria-label="Team NUSNextBus">
-        <div className="brandMark" aria-hidden="true">NB</div>
-        <div><p className="eyebrow">Team</p><h1>NUSNextBus</h1></div>
-      </div>
-      <div className="topbarActions">
-        <div className="topbarStatus">
-          <span className={`connectionDot ${connected ? 'online' : ''}`} />
-          <span title="Signal-server connection. App booking details appear in Signal.">{connected ? 'Bus App Connected' : 'Bus App Disconnected'}</span>
-        </div>
+  return <main className="demoShell studioShell">
+    <DashboardSidebar view={view} onViewChange={setView} connected={connected} />
+    <div className="studioContent">
+    <header className="workspaceTopbar">
+      <div className="workspaceHeading"><p>{workspaces[view].category}</p><h1>{workspaces[view].title}</h1></div>
+      <div className="workspaceTopbarActions">
         <button className="detailsToggle" aria-expanded={showDetails} aria-controls="dashboard-details" onClick={() => setShowDetails(open => !open)}>
           <span>{showDetails ? 'Hide' : 'Show'} controls & details</span><span aria-hidden="true">{showDetails ? '−' : '+'}</span>
         </button>
       </div>
     </header>
 
-    <section className="presentationWorkspace" aria-label="App signals, live detection, digital twin and reasoning">
+    <section className={`presentationWorkspace view--${view}`} data-view={view} aria-label="App signals, live detection, digital twin and reasoning">
       <SignalPanel snapshot={snapshot} connected={connected} />
       <section className="panel primaryThinking" aria-label="Live reasoning summary">
         <div className="thinkingHeader">
@@ -293,14 +300,14 @@ export default function Dashboard() {
         {error && <div className="errorNotice" role="alert">{error}</div>}
         <div className="thinkingLayout">
           <article className={`thinkingStage ${summary ? 'isComplete' : ''}`}>
-            <div className="thinkingStageLabel"><span>{running && !summary ? 'Reading' : summary ? 'Decision summary' : 'Ready'}</span></div>
             <WordReveal key={summary?.request_id ?? 'empty'} lines={summary?.decision_summary ?? []} running={running} />
           </article>
         </div>
+        <button className="workspaceInlineLink" onClick={() => setView('thinking')}>Full reasoning <span aria-hidden="true">↗</span></button>
       </section>
 
       <section className="stageRow" aria-label="Camera and vehicle">
-        <VideoPanel onStatusChange={setVisionStatus} onReplay={connected ? replayFlow : undefined} replayBusy={inputSource === 'external' && (journey?.stage === 'BOOKED' || journey?.stage === 'AT_STOP')} />
+        <VideoPanel showControls={showDetails} onStatusChange={setVisionStatus} onReplay={connected ? replayFlow : undefined} replayBusy={inputSource === 'external' && (journey?.stage === 'BOOKED' || journey?.stage === 'AT_STOP')} />
         <TwinPanel
           result={result}
           context={context}
@@ -308,6 +315,7 @@ export default function Dashboard() {
           journey={inputSource === 'external' ? journey : null}
           basePath={basePath}
           onStatusChange={setTwinReady}
+          showControls={showDetails}
         />
       </section>
     </section>
@@ -435,5 +443,6 @@ export default function Dashboard() {
       <div className="modalHeader"><div><p className="sectionKicker">{modal === 'json' ? 'Received response' : 'Allowed meta-actions'}</p><h2>{modal === 'json' ? 'Response JSON' : 'Allowed actions'}</h2></div><button className="closeButton" aria-label="Close dialog" onClick={() => setModal(null)}>×</button></div>
       {modal === 'json' ? <pre className="jsonCode">{JSON.stringify(result, null, 2)}</pre> : <ul className="allowlist">{ACTIONS.map((action: string) => <li key={action}><code>{action}</code></li>)}</ul>}
     </dialog>
+    </div>
   </main>;
 }

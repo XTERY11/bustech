@@ -16,11 +16,12 @@ type TwinPanelProps = {
   running: boolean;
   /** Passenger journey for live App + camera input; null for demo presets, which play their plan directly. */
   journey?: Journey | null;
+  showControls?: boolean;
   basePath?: string;
   onStatusChange?: (ready: boolean) => void;
 };
 
-export function TwinPanel({ result, context, running, journey = null, basePath = '', onStatusChange }: TwinPanelProps) {
+export function TwinPanel({ result, context, running, journey = null, showControls = true, basePath = '', onStatusChange }: TwinPanelProps) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false);
   const [step, setStep] = useState<ScenarioStep | null>(null);
@@ -152,8 +153,8 @@ export function TwinPanel({ result, context, running, journey = null, basePath =
       </div>
     </div>
     <div className="stageFooter">
-      <span className="stageFooterStatus"><strong>{statusLabel}</strong>{activeAction && <small>Now: {actionLabel(activeAction.action)}</small>}</span>
-      <span className="stageFooterControls">
+      <span className="stageFooterStatus"><strong>{statusLabel}</strong>{showControls && activeAction && <small>Now: {actionLabel(activeAction.action)}</small>}</span>
+      {showControls && <span className="stageFooterControls">
         <span className="stageMeta">{steps.length ? `${done}/${steps.length} steps` : 'Simulated actions'}</span>
         {!boarded && <button className="replayAnimation previewBoarding" disabled={!ready || (!previewing && !canPreview)} onClick={() => {
           setPreview(previewing ? null : previewAnchor);
@@ -162,7 +163,7 @@ export function TwinPanel({ result, context, running, journey = null, basePath =
         <button className="replayAnimation" disabled={!result || running || !steps.length} onClick={() => {
           setPlaybackNonce(value => value + 1);
         }} aria-label="Replay validated bus animation">↻ Replay</button>
-      </span>
+      </span>}
     </div>
   </section>;
 }

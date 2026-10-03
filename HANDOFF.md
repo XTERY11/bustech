@@ -228,19 +228,23 @@ cd twin && npm ci && npm test
 
 **具体要改什么**：
 
-- [x] `codex/main-ui-refresh`（基于 `main@15a764d`）：首屏左侧新增 Signal，只显示中枢实际收到的预约类别、坡道偏好、协助需求和预约状态，不用默认预设冒充 App 输入。
+- [x] `codex/main-ui-refresh`（基于 `main@15a764d`）：Signal 只显示中枢实际收到的预约类别、坡道偏好、协助需求和预约状态，不用默认预设冒充 App 输入；折叠区的 App booking 通道使用同一收据判定。
 - [x] 保留 LLM Agent: Thinking、Sense: CV-Based Live Detection 和 Bus digital twin；Camera 与孪生同行。移除多余标题说明和四个摘要指标，Live channels、重跑按钮及完整诊断归入 controls & details。
-- [x] 孪生外层只保留可滚动的 External display；`hud=dashboard` 只移除 iframe 内六步列表及重复显示条。独立孪生、动作/动画、后端与 App 接口不变。
+- [x] 孪生外层只保留可滚动的 External display；`hud=dashboard` 只移除 iframe 内六步列表及重复显示条。独立孪生 HUD、动作/动画、后端与 App 接口不变。
+- [x] 按框架分为 Signal（橙色）、Sense（蓝色）、Support（粉色），使用深色侧边栏。Overview 中 Camera 与孪生同行、Signal 与简短推理在下方；App booking、Live detection、LLM Agent、Digital twin 可切换独立大视图。
+- [x] 预约使用图标和短标签，Route/Stop 等默认折叠；Overview 仅显示首条真实决策摘要，Full reasoning 展示全部摘要。回放、重播、视频连接设置随 controls & details 展开；视图切换只改 CSS，不重新挂载 iframe 或请求模型。
+- [x] 孪生宽屏取景（宽高比 > 2.4）适度靠近整车，最多 28%；常规比例和 Interior 取景不变。
 
 **已知问题，供参考**：
 
 - Signal 的状态随预约、到站、上车、取消或过期同步更新；取消/过期反馈留在 Signal，上车导航留在 External display，不重复占用左栏；完整三步进度保留在折叠区。
 - 逐词显示现在按摘要内容稳定计时，同内容心跳不再重启动画。
-- 顶栏按展示要求写为 Bus App Connected，实际反映 dashboard 与中枢的 SSE 连接，不是手机在线心跳。预约通道也可由 curl 或回放按钮模拟。
+- 侧栏按展示要求写为 Bus App Connected，实际反映 dashboard 与中枢的 SSE 连接，不是手机在线心跳。预约通道也可由 curl 或回放按钮模拟。
 
 **验收**（负责人可补充）：
 
 - Dashboard 123 项、构建后 HTML 渲染 1 项、Twin 16 项及类型检查、前端/后端/测试 ESLint 通过；Next 与 Vinext 构建通过。
+- 侧边栏五个视图在浏览器确认；完整推理保留三条摘要，切换过程中 iframe 保持单实例。390px 窄屏页面无水平溢出，折叠区通道卡改为单列。Next 构建使用 Webpack（本地共享依赖软链接不适配 Turbopack）。
 - 2026-10-03 使用录制视频 + 真实 DeepSeek Single 验证预约 → 到站 → 上车，`meta.source=llm`、`validation_passed=true`。浏览器确认红框两处和外层动作列表不存在，Live channels 只在展开折叠区后显示；不代表实物摄像头或手机重新验收。
 
 ---
