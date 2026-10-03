@@ -341,4 +341,18 @@
 .twin-presets button:focus-visible { outline: 2px solid var(--tw-neutral); outline-offset: 2px; }
 .twin-root.compact .twin-presets button { padding: 6px 7px; font-size: 11px; }
 .twin-root.compact .twin-cabin-summary { left: 10px; bottom: 10px; padding: 9px 12px; }
+.twin-root.dashboard-hud { min-height: 0; }
+.twin-root .twin-cabin-summary.is-compact {
+  left: 10px; bottom: 10px; max-width: calc(100% - 20px);
+  flex-direction: row; align-items: baseline; flex-wrap: wrap; gap: 3px 8px;
+  padding: 5px 8px; border-radius: 7px; font-size: 11px; line-height: 1.4;
+  box-sizing: border-box;
+  box-shadow: 0 2px 8px rgba(20, 28, 38, 0.08);
+}
+.twin-cabin-summary.is-compact strong { font-size: 11px; font-weight: 600; }
+.twin-cabin-summary.is-compact strong span { font-size: inherit; }
+.twin-cabin-summary.is-compact .twin-cabin-eyebrow,
+.twin-cabin-summary.is-compact .twin-cabin-hint { display: none; }
+.twin-cabin-summary.is-compact .twin-cabin-availability { color: var(--tw-muted); }
+.twin-cabin-summary.is-compact .twin-cabin-seat { font-size: 10px; }
 .twin-root.compact .twin-hud-tl { top: 86px; }

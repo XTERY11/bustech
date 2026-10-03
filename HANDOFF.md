@@ -230,7 +230,7 @@ cd twin && npm ci && npm test
 
 - [x] `codex/main-ui-refresh`（基于 `main@15a764d`）：Signal 只显示中枢实际收到的预约类别、坡道偏好、协助需求和预约状态，不用默认预设冒充 App 输入；折叠区的 App booking 通道使用同一收据判定。
 - [x] 保留 LLM Agent: Thinking、Sense: CV-Based Live Detection 和 Bus digital twin；Camera 与孪生同行。移除多余标题说明和四个摘要指标，Live channels、重跑按钮及完整诊断归入 controls & details。
-- [x] 孪生外层保留可滚动的 External display，但在 Overview 隐藏，其他视图保留；`hud=dashboard` 只移除 iframe 内六步列表及重复显示条。独立孪生 HUD、动作/动画、后端与 App 接口不变。
+- [x] 孪生外层保留可滚动的 External display，但在 Overview 隐藏，其他视图保留；`hud=dashboard` 移除 iframe 内六步列表及重复显示条，并把 Cutaway/Interior 的占用信息压成 11px 底角状态条（Occupied 8/16），选中座位时保留编号/状态反馈。独立孪生 HUD、动作/动画、后端与 App 接口不变。
 - [x] 按框架分为 Signal（橙色）、Sense（蓝色）、Support（粉色），使用浅灰蓝窄侧边栏（桌面 132–136px）。App booking、Live detection、LLM Agent、Digital twin 可切换独立大视图，保留分类色与键盘焦点提示。
 - [x] 预约使用图标和短标签，Route/Stop 等默认折叠；Overview 仅显示前两条真实决策摘要，Full reasoning 展示全部摘要。回放、重播、视频连接设置随 controls & details 展开；视图切换只改 CSS，不重新挂载 iframe 或请求模型。
 - [x] 紧凑布局：Overview 的 Signal 压为横向概要条，CV 与孪生等高并排，LLM Thinking 跨全宽置于两者下方，Full reasoning 按钮并入标题行。文字卡按内容自然高度，窄屏媒体改为等高纵向排列。Signal 页同时显示公交与 CV，Thinking 页同时显示 Signal 与公交；保留 2px 卡片边界、4px 分类顶边和文字层级。

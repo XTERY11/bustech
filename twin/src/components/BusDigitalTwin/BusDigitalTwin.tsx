@@ -111,7 +111,7 @@ export function BusDigitalTwin({
   }, []);
 
   return (
-    <div ref={rootRef} className={`twin-root ${compact ? 'compact' : ''} ${className ?? ''}`} data-theme={theme} style={style}>
+    <div ref={rootRef} className={`twin-root ${compact ? 'compact' : ''} ${compactHud ? 'dashboard-hud' : ''} ${className ?? ''}`} data-theme={theme} style={style}>
       <Canvas
         className="twin-canvas"
         frameloop="demand"
@@ -143,11 +143,15 @@ export function BusDigitalTwin({
 
       {showHud && !cabinView && <TwinHud state={state} presentation={presentation} compact={compactHud} />}
 
-      {showHud && cabinView && <div className="twin-cabin-summary glass" aria-live="polite">
+      {showHud && cabinView && <div className={`twin-cabin-summary glass${compactHud ? ' is-compact' : ''}`} aria-live="polite">
         <span className="twin-cabin-eyebrow">B70A02 · SIMULATED CABIN</span>
-        <strong>{cabin.occupiedFixedSeats} occupied <span> / 16 fixed seats</span></strong>
-        <span>{cabin.availableFixedSeats} available · Fold-up seat {state.seatOccupancy?.F01 ? 'occupied' : 'stowed'}</span>
-        <small>{selectedSeat ? `${selectedSeat.id} · ${selectedSeat.kind} · ${selectedSeat.occupied ? 'Occupied' : 'Empty'}` : 'Select a seat in the model to inspect it.'}</small>
+        <strong>{compactHud
+          ? <>Occupied {cabin.occupiedFixedSeats}<span> / {cabin.fixedSeatCount}</span></>
+          : <>{cabin.occupiedFixedSeats} occupied <span> / {cabin.fixedSeatCount} fixed seats</span></>}</strong>
+        <span className="twin-cabin-availability" title={`Fold-up seat ${state.seatOccupancy?.F01 ? 'occupied' : 'stowed'}`}>
+          {compactHud ? `${cabin.availableFixedSeats} free · F01 ${state.seatOccupancy?.F01 ? 'occupied' : 'stowed'}` : `${cabin.availableFixedSeats} available · Fold-up seat ${state.seatOccupancy?.F01 ? 'occupied' : 'stowed'}`}
+        </span>
+        <small className={selectedSeat ? 'twin-cabin-seat' : 'twin-cabin-hint'}>{selectedSeat ? `${selectedSeat.id} · ${selectedSeat.kind} · ${selectedSeat.occupied ? 'Occupied' : 'Empty'}` : 'Select a seat in the model to inspect it.'}</small>
       </div>}
 
       {showCameraPresets && (
