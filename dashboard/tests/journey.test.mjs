@@ -32,6 +32,14 @@ test('journey: leaving without a READY plan or with the wrong aid is not boardin
   assert.equal(advance(j, 'perception', exit('CANE'), 'READY').stage, 'BOOKED');
 });
 
+test('journey: walking off another way after a short stay is not boarding', () => {
+  const atStop = advance(advance({ stage: 'IDLE' }, 'booking', booking(), undefined), 'perception', enter(), 'READY');
+  const walkedOff = { ...exit(), zone: { ...exit().zone, boarding: false, dwell_seconds: 0.8 } };
+  assert.deepEqual([advance(atStop, 'perception', walkedOff, 'READY').stage], ['BOOKED']);
+  const towardsBus = { ...exit(), zone: { ...exit().zone, boarding: true, dwell_seconds: 6.2 } };
+  assert.equal(advance(atStop, 'perception', towardsBus, 'READY').stage, 'ON_BOARD');
+});
+
 test('journey: a walking passenger is given a priority seat; needs without a visible aid match anything', () => {
   let j = advance(advance({ stage: 'IDLE' }, 'booking', booking('VISUAL_ASSISTANCE'), undefined), 'perception', enter('CANE'), 'READY');
   j = advance(j, 'perception', exit('CANE'), 'READY');

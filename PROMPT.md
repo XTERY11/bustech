@@ -87,7 +87,8 @@
                "zone": { "triggered": true, "roi_id": "monitor_roi", "event": "enter" } } }
 ```
 
-- `zone.event`：站台区域发生了什么。`enter`（进入时发一次）、`present`（占用期间的心跳）、`exit`（区域空了，此时 `yolo_detections` 为空，`zone.left` 列出刚才在场的辅具类别）。`enter` 驱动决策和给乘客的反馈；`exit` 只说明目标离开监控区，**不能证明已上车**，不会单独触发车辆或入座动作。
+- `zone.event`：站台区域发生了什么。`enter`（进入时发一次）、`present`（占用期间的心跳）、`exit`（区域空了，此时 `yolo_detections` 为空，`zone.left` 列出刚才在场的辅具类别）。`enter` 驱动决策和给乘客的反馈；`exit` 只说明目标离开监控区，**不能证明已上车**。
+- `exit` 另带两个字段：`zone.dwell_seconds`（区域被占用了多久）和 `zone.boarding`（检测桥对“是否朝车走去”的判断）。`boarding: true`：在区域里至少停了 2 秒（`--min-dwell`），然后最后一次看到辅具时它已越过区域朝车一侧的边，或离开时仍在朝那个方向移动；`false`：停留太短（路过），或从侧面 / 朝镜头方向离开；字段缺失：辅具没跟上，按上车处理。车在哪个方向由 ROI 文件的 `board_direction` 或 `--board-direction` 指定，默认 `up`（往画面深处）。中枢只在 `boarding !== false` 时把离开当作上车（`ON_BOARD`），否则回到 `BOOKED`。
 - `target_match_confirmed`：`true` 表示“经过二次确认的辅具正处在画好的上车区域内”。**中枢只采信带 `true` 的检测**；为 `false` 时检测只会产生一个 `YOLO_TARGET_UNMATCHED` 标记，不影响决策。即使为 `true`，没有预约时结果仍是 `NEEDS_CONFIRMATION`（感知不能单独授权坡道）。
 
 - `label` 取值：`WHEELCHAIR` `CRUTCH` `CANE` `WALKER` `STROLLER` `PERSON` `NONE` `UNKNOWN`。

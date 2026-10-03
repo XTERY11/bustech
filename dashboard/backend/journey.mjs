@@ -38,8 +38,10 @@ export function advance(journey, channel, payload, planStatus, target = null) {
     if (zone.triggered === true && next.stage !== 'ON_BOARD') {
       next.stage = 'AT_STOP'; next.labels = [...new Set(labels)]; next.seat = null;
     } else if (next.stage === 'AT_STOP' && zone.triggered === false) {
-      // Leaving the stop after a READY plan for a matching passenger is taken as boarding.
-      const boarded = planStatus === 'READY' && matches(next.need, next.labels ?? []);
+      // Leaving the stop after a READY plan for a matching passenger is taken as boarding, unless the camera
+      // bridge judged that they did not leave towards the bus (zone.boarding === false: a short stay, or they
+      // walked off another way). A missing estimate counts as boarding.
+      const boarded = planStatus === 'READY' && matches(next.need, next.labels ?? []) && zone.boarding !== false;
       next.stage = boarded ? 'ON_BOARD' : next.need ? 'BOOKED' : 'IDLE';
       if (boarded) {
         next.boarded = (next.boarded ?? 0) + 1;

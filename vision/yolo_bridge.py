@@ -119,6 +119,9 @@ def parse_args():
     p.add_argument('--detect-every', type=int, default=2, help='Run detection on every Nth frame and reuse the result in between')
     p.add_argument('--enter-seconds', type=float, default=0.3, help='How long an aid must be in the region before the trigger')
     p.add_argument('--exit-seconds', type=float, default=2.0, help='How long the region must be empty of people before it clears')
+    p.add_argument('--board-direction', choices=sorted(DIRECTIONS), default=None,
+                   help="Where the bus is, seen from the region; default: the ROI file's board_direction, else 'up' (deeper into the picture)")
+    p.add_argument('--min-dwell', type=float, default=2.0, help='Seconds a passenger must wait in the region before leaving counts as boarding')
     p.add_argument('--width', type=int, default=1280, help='Maximum processed/streamed frame width')
     p.add_argument('--rotate', choices=['none', 'cw', 'ccw', '180'], default='none')
     p.add_argument('--jpeg-quality', type=int, default=80)
@@ -183,6 +186,39 @@ def in_region(box, mask, anchor):
     return overlap >= 0.25 * min((y2 - y1) * (x2 - x1), int(mask.sum()))
 
 
+DIRECTIONS = {'up': (0.0, -1.0), 'down': (0.0, 1.0), 'left': (-1.0, 0.0), 'right': (1.0, 0.0)}
+
+
+def boarding_intent(trail, points, direction, dwell, min_dwell=2.0, recent=1.5, margin=0.02, push=0.03):
+    """Did the passenger leave the stop region towards the bus, or just pass by / walk off?
+
+    trail: (seconds, x, y) of the passenger's anchor (the aid, or the person once the aid is lost) while
+    the region was occupied, normalised to the frame. points: the region polygon, normalised.
+    direction: where the bus is from the region ('up' = deeper into the picture). People at a stop hardly
+    ever walk back, so only clear evidence says "not boarding": a stay shorter than `min_dwell` (passing
+    by), or being last seen outside the region on another side, or moving away from the bus. Returns
+    (True | False | None, reason); None (lost while still in the region, or never seen) counts as boarding.
+    """
+    if dwell < min_dwell:
+        return False, 'short_stay'
+    if not trail:
+        return None, 'not_tracked'
+    dx, dy = DIRECTIONS[direction]
+    along = lambda x, y: x * dx + y * dy
+    far = max(along(x, y) for x, y in points)
+    last = trail[-1]
+    window = [p for p in trail if p[0] >= last[0] - recent]
+    moved = along(window[-1][1], window[-1][2]) - along(window[0][1], window[0][2])
+    if along(last[1], last[2]) >= far - margin:
+        return True, 'past_far_edge'
+    if moved >= push:
+        return True, 'moving_towards_bus'
+    inside = cv2.pointPolygonTest(np.asarray(points, np.float32), (float(last[1]), float(last[2])), True) >= -margin
+    if not inside or moved <= -push:
+        return False, 'left_another_way'
+    return None, 'lost_in_region'
+
+
 def open_capture(source):
     cap = cv2.VideoCapture(source, cv2.CAP_DSHOW) if isinstance(source, int) and os.name == 'nt' else cv2.VideoCapture(source)
     if not cap.isOpened() and isinstance(source, int) and os.name == 'nt':
@@ -202,8 +238,9 @@ def main():
     points = load_roi(args.roi)
     if not points:
         raise ValueError(f'No region in {args.roi}. Draw one first: python monitor_zone.py --source {args.source} --roi {args.roi}')
-    if args.anchor is None:
-        args.anchor = json.loads(args.roi.read_text(encoding='utf-8')).get('anchor', 'bottom-center')
+    roi_file = json.loads(args.roi.read_text(encoding='utf-8'))
+    args.anchor = args.anchor or roi_file.get('anchor', 'bottom-center')
+    args.board_direction = args.board_direction or roi_file.get('board_direction', 'up')
     os.environ.setdefault('YOLO_CONFIG_DIR', str(ROOT / '.yolo'))
     import torch
     from ultralytics import YOLO
@@ -238,6 +275,7 @@ def main():
     roi_id = args.roi.stem
     active = False            # region occupied (the trigger)
     since = last_seen = None  # when the current aid entered / when somebody was last in the region
+    trail, entered_at = [], None  # where the aid went while the region was occupied (for boarding_intent)
     if args.snapshots:
         args.snapshots.mkdir(parents=True, exist_ok=True)
         args.events = args.events or args.snapshots / 'events.jsonl'
@@ -260,7 +298,7 @@ def main():
         if log:
             log.write(json.dumps(event) + '\n'); log.flush()
 
-    def post(detections, reason, left=None):
+    def post(detections, reason, left=None, intent=None):
         # Same envelope as integrations/ride_signal_client.py; zone is informational for the dashboard.
         # target_match_confirmed: a verified aid is standing in the drawn boarding region. The hub ignores
         # camera detections without it; it still never authorises a ramp without a booking.
@@ -269,6 +307,8 @@ def main():
         zone = {'triggered': bool(detections), 'roi_id': roi_id, 'event': {'heartbeat': 'present'}.get(reason, reason)}
         if left:
             zone['left'] = left
+        if intent:  # on exit: {'boarding': bool | None, 'dwell_seconds': float}
+            zone.update({k: v for k, v in intent.items() if v is not None})
         payload = {'yolo_detections': detections[:20], 'target_match_confirmed': bool(detections), 'zone': zone}
         if signals:  # replay_bridge.py posts the same payload at the same point of annotated.mp4
             signals.write(json.dumps({'t': round(captured_frames / capture_fps, 2), 'channel': 'perception', 'payload': payload}) + '\n')
@@ -366,6 +406,21 @@ def main():
             before = sorted(d['label'] for d in held)
             if inside_detections:
                 held = inside_detections
+            if entered:
+                trail, entered_at = [], now
+            if active or was_active:  # follow the aid that triggered, also after it has left the region
+                follow = {d['label'] for d in held}
+                spots = [(aid['box'], anchor_point(aid['box'], args.anchor)) for aid in aids if aid['label'] in follow]
+                if not spots and trail:  # the aid is out of sight (a cane behind a leg): follow the person nearest to it
+                    near = [(p[:4], anchor_point(p[:4], args.anchor)) for p in persons]
+                    spots = [s for s in near if (s[1][0] / width - trail[-1][1]) ** 2 + (s[1][1] / height - trail[-1][2]) ** 2 < 0.12 ** 2]
+                if spots and trail:
+                    _, (x, y) = min(spots, key=lambda s: (s[1][0] / width - trail[-1][1]) ** 2 + (s[1][1] / height - trail[-1][2]) ** 2)
+                    if (x / width - trail[-1][1]) ** 2 + (y / height - trail[-1][2]) ** 2 < 0.3 ** 2:  # not a different aid
+                        trail.append((now, x / width, y / height))
+                elif spots:
+                    _, (x, y) = max(spots, key=lambda s: in_region(s[0], region_mask, args.anchor))
+                    trail.append((now, x / width, y / height))
             processed += 1
             if active and not entered and sorted(d['label'] for d in held) != before:
                 record({'event': 'LABEL', 'frame': processed, 'labels': sorted(d['label'] for d in held), 'was': before})
@@ -374,9 +429,12 @@ def main():
                 post(held, 'enter'); last_heartbeat = time.monotonic()
             elif active and time.monotonic() - last_heartbeat >= args.heartbeat:
                 post(held, 'heartbeat'); last_heartbeat = time.monotonic()
-            elif was_active and not active:  # exit transition
-                record({'event': 'CLEAR', 'frame': processed})
-                post([], 'exit', sorted({d['label'] for d in held})); held = []
+            elif was_active and not active:  # exit transition: did they leave towards the bus?
+                dwell = (last_seen or now) - (entered_at if entered_at is not None else now)
+                boarding, why = boarding_intent(trail, points, args.board_direction, dwell, args.min_dwell)
+                record({'event': 'CLEAR', 'frame': processed, 'boarding': boarding, 'why': why, 'dwell_seconds': round(dwell, 1),
+                        'last_seen_at': [round(v, 2) for v in trail[-1][1:]] if trail else None})
+                post([], 'exit', sorted({d['label'] for d in held}), {'boarding': boarding, 'dwell_seconds': round(dwell, 1)}); held = []
             # overlay: region, state bar
             contour = np.round(np.asarray(points) * [width - 1, height - 1]).astype(np.int32)
             color = (0, 0, 255) if active else (60, 210, 60)

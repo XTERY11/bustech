@@ -49,9 +49,12 @@ export const INPUT_SCHEMA = {
       }, ['label', 'confidence']) },
       // Optional region-trigger metadata from the camera bridge (vision/yolo_bridge.py); informational only.
       // event: what happened at the stop region (heartbeats are 'present'); left: aid labels that were
-      // there when it emptied. Exit is an observation only; it is not proof that a passenger boarded.
+      // there when it emptied. On exit, boarding is the bridge's estimate of intent: the passenger waited at
+      // least a couple of seconds and left towards the bus (false: a short stay, or walked off another way);
+      // dwell_seconds is how long the region was occupied. Exit is an observation only, never proof of boarding.
       zone: obj({ triggered: bool, roi_id: text(80), event: en(['enter', 'present', 'exit']),
-        left: { type: 'array', maxItems: 8, items: en(['WHEELCHAIR', 'CRUTCH', 'CANE', 'WALKER', 'STROLLER']) } }),
+        left: { type: 'array', maxItems: 8, items: en(['WHEELCHAIR', 'CRUTCH', 'CANE', 'WALKER', 'STROLLER']) },
+        boarding: bool, dwell_seconds: num(86400) }),
       geometry: obj({
         geometry_valid: bool, confidence: num(1), measured_gap_cm: num(1000), measured_slope_deg: num(90),
       }),
