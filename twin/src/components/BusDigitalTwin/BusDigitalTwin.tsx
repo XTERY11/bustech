@@ -22,6 +22,8 @@ export interface BusDigitalTwinProps {
   theme?: 'light' | 'dark';
   /** Overlay: status chips, boarding sequence, announcement bar. */
   showHud?: boolean;
+  /** Dashboard host already shows actions and passenger guidance outside the iframe. */
+  compactHud?: boolean;
   showCameraPresets?: boolean;
   /** Controlled camera preset (optional). */
   cameraPreset?: CameraPreset;
@@ -41,6 +43,7 @@ export function BusDigitalTwin({
   onAnimationUpdate,
   theme = 'light',
   showHud = true,
+  compactHud = false,
   showCameraPresets = true,
   cameraPreset,
   className,
@@ -138,7 +141,7 @@ export function BusDigitalTwin({
         </TwinContext.Provider>
       </Canvas>
 
-      {showHud && !cabinView && <TwinHud state={state} presentation={presentation} />}
+      {showHud && !cabinView && <TwinHud state={state} presentation={presentation} compact={compactHud} />}
 
       {showHud && cabinView && <div className="twin-cabin-summary glass" aria-live="polite">
         <span className="twin-cabin-eyebrow">B70A02 · SIMULATED CABIN</span>

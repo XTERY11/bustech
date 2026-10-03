@@ -63,8 +63,8 @@ export function VideoPanel({ onStatusChange, onReplay, replayBusy = false }: { o
   function apply() { const next = draft.trim().replace(/\/$/, ''); setBase(next); setBroken(false); setEpoch(e => e + 1); try { window.localStorage.setItem(KEY, next); } catch { /* ignore */ } }
   const labels = [...new Set((health?.detections ?? []).map(d => d.label))];
   return <section className="panel stagePanel videoPanel" aria-label="Live camera">
-    <div className="panelHeader"><div><p className="sectionKicker">Sense · Live camera</p><h2>YOLO region monitor</h2></div>
-      <span className={`simBadge ${health?.triggered ? 'triggered' : online ? 'online' : ''}`}>{health?.triggered ? 'TRIGGER · in region' : online ? 'Monitoring' : 'Bridge offline'}</span></div>
+    <div className="panelHeader"><div><h2>Sense: CV-Based Live Detection</h2></div>
+      <span className={`simBadge ${health?.triggered ? 'triggered' : online ? 'online' : ''}`}>{health?.triggered ? 'In Bus Stop' : online ? 'Monitoring' : 'Bridge offline'}</span></div>
     <div className="stageMedia">
       {online && !broken
         // eslint-disable-next-line @next/next/no-img-element -- MJPEG stream, not an optimisable image

@@ -13,7 +13,8 @@ import { DEFAULT_VEHICLE_STATE, type CameraPreset, type TwinAction, type Vehicle
  *
  * No MockBus, no control panel: the host (AccessRide dashboard) is the only
  * producer of vehicle state, so its frames are never overwritten.
- * Query options: theme=light|dark, hud=0, camera=overview|entrance|ramp, vehicle=<id>, destination=<text>.
+ * Query options: theme=light|dark, hud=0|dashboard, camera=overview|entrance|ramp, vehicle=<id>, destination=<text>.
+ * hud=dashboard omits the sequence and duplicate display already shown by the host.
  */
 export function EmbedApp() {
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
@@ -59,7 +60,7 @@ export function EmbedApp() {
 
   return (
     <div className="app embed" data-theme={theme} style={{ width: '100%', height: '100%' }}>
-      <BusDigitalTwin state={state} onAction={onAction} theme={theme} showHud={showHud} showCameraPresets cameraPreset={camera} />
+      <BusDigitalTwin state={state} onAction={onAction} theme={theme} showHud={showHud} compactHud={params.get('hud') === 'dashboard'} showCameraPresets cameraPreset={camera} />
     </div>
   );
 }

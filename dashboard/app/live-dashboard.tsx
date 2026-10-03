@@ -6,6 +6,7 @@ import { ACTIONS } from '../backend/planner/contracts.mjs';
 import { TwinPanel } from './components/TwinPanel';
 import { VideoPanel } from './components/VideoPanel';
 import { WordReveal } from './components/WordReveal';
+import { SignalPanel } from './components/SignalPanel';
 import { ACTION_LABELS } from './lib/actionLabels';
 import { postSignal, snapshotFromEvent, watchEvents } from './live-client';
 import type { Context, HubEvent, Journey, Mode, Navigation, Result, Snapshot, Summary } from './live-types';
@@ -272,9 +273,7 @@ export default function Dashboard() {
       <div className="topbarActions">
         <div className="topbarStatus">
           <span className={`connectionDot ${connected ? 'online' : ''}`} />
-          <span>{connected ? 'Signal server connected' : 'Signal server disconnected'}</span>
-          <span className="statusDivider" />
-          <span>{modeLabel}</span>
+          <span title="Signal-server connection. App booking details appear in Signal.">{connected ? 'Bus App Connected' : 'Bus App Disconnected'}</span>
         </div>
         <button className="detailsToggle" aria-expanded={showDetails} aria-controls="dashboard-details" onClick={() => setShowDetails(open => !open)}>
           <span>{showDetails ? 'Hide' : 'Show'} controls & details</span><span aria-hidden="true">{showDetails ? '−' : '+'}</span>
@@ -282,33 +281,38 @@ export default function Dashboard() {
       </div>
     </header>
 
-    <section className="intelligenceRow" aria-label="Reasoning and live communication">
+    <section className="presentationWorkspace" aria-label="App signals, live detection, digital twin and reasoning">
+      <SignalPanel snapshot={snapshot} connected={connected} />
       <section className="panel primaryThinking" aria-label="Live reasoning summary">
         <div className="thinkingHeader">
-          <div><p className="sectionKicker">Signals → reasoning → validated plan</p><h2>Thinking</h2></div>
+          <h2>LLM Agent: Thinking</h2>
           <div className="thinkingHeaderActions">
             <span className={`planStatus planStatus--${result?.plan_status.toLowerCase() ?? 'waiting'}`}>{running ? 'THINKING' : result?.plan_status ?? 'STANDBY'}</span>
-            <button className="primaryButton" disabled={running} onClick={() => void run()}>
-              <span className={running ? 'buttonSpinner' : 'buttonPlay'} aria-hidden="true" />
-              {running ? 'Generating…' : inputSource === 'external' ? 'Run current signals' : 'Send signals & run'}
-            </button>
           </div>
         </div>
         {error && <div className="errorNotice" role="alert">{error}</div>}
         <div className="thinkingLayout">
           <article className={`thinkingStage ${summary ? 'isComplete' : ''}`}>
-            <div className="thinkingStageLabel"><span>{running && !summary ? 'Reading' : summary ? 'Decision summary' : 'Ready'}</span><small>word-by-word live reveal</small></div>
+            <div className="thinkingStageLabel"><span>{running && !summary ? 'Reading' : summary ? 'Decision summary' : 'Ready'}</span></div>
             <WordReveal key={summary?.request_id ?? 'empty'} lines={summary?.decision_summary ?? []} running={running} />
           </article>
-          <aside className="decisionSnapshot">
-            <div><small>Input source</small><strong>{inputSource === 'demo' ? 'Demo preset' : 'App + camera'}</strong></div>
-            <div><small>Generator</small><strong>{result ? sources[result.meta.source] ?? result.meta.source : modeLabel}</strong></div>
-            <div><small>Validated actions</small><strong>{result?.action_plan.length ?? '—'}</strong></div>
-            <div><small>Latency</small><strong>{result ? `${result.meta.latency_ms} ms` : '—'}</strong></div>
-          </aside>
         </div>
       </section>
 
+      <section className="stageRow" aria-label="Camera and vehicle">
+        <VideoPanel onStatusChange={setVisionStatus} onReplay={connected ? replayFlow : undefined} replayBusy={inputSource === 'external' && (journey?.stage === 'BOOKED' || journey?.stage === 'AT_STOP')} />
+        <TwinPanel
+          result={result}
+          context={context}
+          running={running}
+          journey={inputSource === 'external' ? journey : null}
+          basePath={basePath}
+          onStatusChange={setTwinReady}
+        />
+      </section>
+    </section>
+
+    <div id="dashboard-details" className="detailsContent" hidden={!showDetails}>
       <section className="communicationStrip" aria-label="Live communication status">
         <div className="communicationTitle"><span className="livePulse" />Live channels</div>
         <div className="communicationItems">
@@ -318,7 +322,6 @@ export default function Dashboard() {
           </div>)}
         </div>
       </section>
-    </section>
 
     {inputSource === 'external' && journey && <section className="passengerNavigation" aria-label="Passenger journey guidance" aria-live="polite">
       <div className="passengerNavigationMessage"><p className="sectionKicker">Passenger guidance · shared with app</p><h2>{navigationTitle}</h2><p>{navigation?.instruction ?? (running ? 'Your assistance plan is being prepared. Please wait.' : journey.guidance.display_text)}</p></div>
@@ -328,20 +331,11 @@ export default function Dashboard() {
       {navigation && <strong className="navigationDestination">{navigation.destination.type === 'SEAT' ? `Seat ${navigation.destination.id}` : navigation.destination.type === 'WHEELCHAIR_BAY' ? 'Wheelchair bay' : `Stop ${navigation.destination.id.replaceAll('_', ' ')}`}</strong>}
     </section>}
 
-    <section className="stageRow" aria-label="Camera and vehicle">
-      <VideoPanel onStatusChange={setVisionStatus} onReplay={connected ? replayFlow : undefined} replayBusy={inputSource === 'external' && (journey?.stage === 'BOOKED' || journey?.stage === 'AT_STOP')} />
-      <TwinPanel
-        result={result}
-        context={context}
-        running={running}
-        journey={inputSource === 'external' ? journey : null}
-        basePath={basePath}
-        onStatusChange={setTwinReady}
-      />
-    </section>
-
-    <div id="dashboard-details" className="detailsContent" hidden={!showDetails}>
       <section className="connectionBar" aria-label="Connection and generation mode">
+        <button className="primaryButton" disabled={running} onClick={() => void run()}>
+          <span className={running ? 'buttonSpinner' : 'buttonPlay'} aria-hidden="true" />
+          {running ? 'Generating…' : inputSource === 'external' ? 'Run current signals' : 'Send signals & run'}
+        </button>
         <label>Generation mode
           <select value={mode} disabled={running} onChange={event => void changeMode(event.target.value as Mode)}>
             <option value="single">DeepSeek · Single call</option>

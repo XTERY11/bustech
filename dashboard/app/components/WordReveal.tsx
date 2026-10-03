@@ -6,13 +6,17 @@ type Line = { words: string[]; start: number };
 
 /** Client-side word reveal for a complete reasoning summary received over SSE. */
 export function WordReveal({ lines, running }: { lines: string[]; running: boolean }) {
+  // Heartbeat snapshots deserialize a new array without changing the summary.
+  // Keep the reveal timeline stable until the actual text changes.
+  const contents = JSON.stringify(lines);
   const prepared = useMemo<Line[]>(() => {
-    return lines.reduce<Line[]>((items, line) => {
+    const stableLines = JSON.parse(contents) as string[];
+    return stableLines.reduce<Line[]>((items, line) => {
       const words = line.trim().split(/\s+/).filter(Boolean);
       const start = items.reduce((count, item) => count + item.words.length, 0);
       return [...items, { words, start }];
     }, []);
-  }, [lines]);
+  }, [contents]);
   const total = prepared.reduce((count, line) => count + line.words.length, 0);
   const [shown, setShown] = useState(0);
 
@@ -39,7 +43,7 @@ export function WordReveal({ lines, running }: { lines: string[]; running: boole
       window.clearTimeout(start);
       if (cleanupTimer) window.clearInterval(cleanupTimer);
     };
-  }, [lines, total]);
+  }, [prepared, total]);
 
   if (!lines.length) {
     return <p className="thinkingWaiting">{running ? 'Reading the latest signals and checking safety constraints…' : 'Run a demo preset, or wait for camera and app signals.'}</p>;

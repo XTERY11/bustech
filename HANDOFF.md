@@ -228,20 +228,20 @@ cd twin && npm ci && npm test
 
 **具体要改什么**：
 
-- [ ] （待填充）
-- [ ] （待填充）
-- [ ] （待填充）
+- [x] `codex/main-ui-refresh`（基于 `main@15a764d`）：首屏左侧新增 Signal，只显示中枢实际收到的预约类别、坡道偏好、协助需求和预约状态，不用默认预设冒充 App 输入。
+- [x] 保留 LLM Agent: Thinking、Sense: CV-Based Live Detection 和 Bus digital twin；Camera 与孪生同行。移除多余标题说明和四个摘要指标，Live channels、重跑按钮及完整诊断归入 controls & details。
+- [x] 孪生外层只保留可滚动的 External display；`hud=dashboard` 只移除 iframe 内六步列表及重复显示条。独立孪生、动作/动画、后端与 App 接口不变。
 
 **已知问题，供参考**：
 
-- 乘客旅程在首屏只是通道状态条里的一格，四个阶段的进度不够醒目。
-- 思考面板的逐词显示会被视觉心跳（每 2 秒一次）重新触发，乘客在站台时常常只显示开头一两个词。
-- 车内座位指引只显示在孪生下方的"车外显示屏"里，没有单独的位置。
+- Signal 的状态随预约、到站、上车、取消或过期同步更新；取消/过期反馈留在 Signal，上车导航留在 External display，不重复占用左栏；完整三步进度保留在折叠区。
+- 逐词显示现在按摘要内容稳定计时，同内容心跳不再重启动画。
+- 顶栏按展示要求写为 Bus App Connected，实际反映 dashboard 与中枢的 SSE 连接，不是手机在线心跳。预约通道也可由 curl 或回放按钮模拟。
 
 **验收**（负责人可补充）：
 
-- `npm test` 与 `npm run lint` 通过。
-- 用 3.6 节的命令走一遍预约 → 到站 → 上车，页面各阶段显示正确。
+- Dashboard 123 项、构建后 HTML 渲染 1 项、Twin 16 项及类型检查、前端/后端/测试 ESLint 通过；Next 与 Vinext 构建通过。
+- 2026-10-03 使用录制视频 + 真实 DeepSeek Single 验证预约 → 到站 → 上车，`meta.source=llm`、`validation_passed=true`。浏览器确认红框两处和外层动作列表不存在，Live channels 只在展开折叠区后显示；不代表实物摄像头或手机重新验收。
 
 ---
 

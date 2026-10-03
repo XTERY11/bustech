@@ -128,10 +128,6 @@ export function TwinPanel({ result, context, running, journey = null, basePath =
       : result ? 'Please wait for the safety operator.' : null);
   const allActions = result?.action_plan ?? [];
   const activeAction = allActions.find(item => item.action === step?.action);
-  const firstActions = allActions.slice(0, 4);
-  const visibleActions = activeAction && !firstActions.some(item => item.step === activeAction.step)
-    ? [...firstActions.slice(0, 3), activeAction]
-    : firstActions;
   const statusLabel = boardingPose ? (step ? step.label : 'Passenger boarding')
     : stage === 'BOOKED' && result?.plan_status === 'READY' ? 'Plan ready · waiting for the passenger at the stop'
     : result?.plan_status === 'NEEDS_CONFIRMATION'
@@ -140,24 +136,19 @@ export function TwinPanel({ result, context, running, journey = null, basePath =
       ? 'Assistance paused · bus remains stationary'
       : step ? step.label : result ? 'Plan received' : running ? 'Generating plan…' : 'Idle · waiting for signals';
   return <section className="panel stagePanel twinPanel" aria-label="Bus digital twin">
-    <div className="panelHeader"><div><p className="sectionKicker">Vehicle · Digital twin</p><h2>Simulated bus response</h2></div>
+    <div className="panelHeader"><div><h2>Bus digital twin</h2></div>
       <span className={`simBadge ${ready ? 'online' : ''}`}>{ready ? 'Twin ready' : 'Loading twin…'}</span></div>
     <div className="stageMedia">
       <iframe ref={frame} title="Bus digital twin" onLoad={() => {
         setReady(false);
         setIframeEpoch(value => value + 1);
         frame.current?.contentWindow?.postMessage({ type: 'twin:hello' }, '*');
-      }} src={`${basePath}/twin/index.html?embed=1&destination=${encodeURIComponent(`${route === 'DEMO_ROUTE' ? '400' : route} Punggol Coast`)}`} />
+      }} src={`${basePath}/twin/index.html?embed=1&hud=dashboard&destination=${encodeURIComponent(`${route === 'DEMO_ROUTE' ? '400' : route} Punggol Coast`)}`} />
     </div>
     <div className="twinConsole" aria-label="Digital twin outputs">
       <div className="twinExternalDisplay">
         <div className="twinConsoleLabel"><span>External display</span><strong>{route === 'DEMO_ROUTE' ? '400' : route}</strong></div>
         <p tabIndex={0} aria-label="Scrollable external display message" style={{ display: 'block', WebkitLineClamp: 'unset', maxHeight: 92, overflowY: 'auto' }}>{passengerMessage ?? (running ? 'Preparing passenger guidance…' : 'Waiting for a validated passenger message.')}</p>
-      </div>
-      <div className="twinActions">
-        <div className="twinConsoleLabel"><span>Validated actions</span><strong>{result ? result.action_plan.length : 0}</strong></div>
-        {visibleActions.length ? <ol>{visibleActions.map(action => <li className={activeAction?.step === action.step ? 'isActive' : ''} key={action.step}><span>{String(action.step).padStart(2, '0')}</span>{actionLabel(action.action)}</li>)}</ol> : <p>{running ? 'Building the action sequence…' : 'No plan received yet.'}</p>}
-        {(result?.action_plan.length ?? 0) > visibleActions.length && <small>+{result!.action_plan.length - visibleActions.length} more in details</small>}
       </div>
     </div>
     <div className="stageFooter">

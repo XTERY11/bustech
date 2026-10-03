@@ -13,7 +13,7 @@
     "build": "vinext build",
     "build:pages": "next build",
     "start": "vinext start",
-    "test": "node --experimental-strip-types --test tests/planner.test.mjs tests/bridge.test.mjs tests/journey.test.mjs tests/twin-scenario.test.ts tests/cabin-route.test.ts",
+    "test": "node --experimental-strip-types --test tests/planner.test.mjs tests/bridge.test.mjs tests/journey.test.mjs tests/twin-scenario.test.ts tests/cabin-route.test.ts tests/app-signal.test.ts",
     "test:render": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"

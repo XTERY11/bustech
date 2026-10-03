@@ -71,7 +71,7 @@ function AutoScrollMessage({ text }: { text: string }) {
  *   top-left   compact status chips + boarding sequence (only while assisting)
  *   bottom     passenger information / announcement bar
  */
-export const TwinHud = memo(function TwinHud({ state, presentation }: { state: VehicleState; presentation: Presentation }) {
+export const TwinHud = memo(function TwinHud({ state, presentation, compact = false }: { state: VehicleState; presentation: Presentation; compact?: boolean }) {
   const assisting = state.boardingStatus !== 'idle';
   const ann = state.announcement;
   const info = state.passengerInfo;
@@ -96,17 +96,17 @@ export const TwinHud = memo(function TwinHud({ state, presentation }: { state: V
           {chip('Ramp', cap(state.ramp), state.ramp !== 'retracted')}
           {chip('Suspension', state.kneeling ? 'Kneeling' : 'Normal', state.kneeling)}
         </div>
-        <ol className={`twin-seq ${assisting ? 'show' : ''}`} aria-label="Boarding sequence">
+        {!compact && <ol className={`twin-seq ${assisting ? 'show' : ''}`} aria-label="Boarding sequence">
           {presentation.sequence.map((s) => (
             <li key={s.id} className={s.status}>
               <span className="mark" />
               {s.label}
             </li>
           ))}
-        </ol>
+        </ol>}
       </div>
 
-      <div className={`twin-bar twin-bar--display ${showDisplay ? 'show' : ''}`} aria-hidden={!showDisplay}>
+      {!compact && <div className={`twin-bar twin-bar--display ${showDisplay ? 'show' : ''}`} aria-hidden={!showDisplay}>
         <span className="twin-bar-icon">
           <IconAccessible size={16} />
         </span>
@@ -114,7 +114,7 @@ export const TwinHud = memo(function TwinHud({ state, presentation }: { state: V
           <span className="t">External display{info?.title ? ` · ${info.title}` : ''}</span>
           <AutoScrollMessage text={info?.message ?? ''} />
         </span>
-      </div>
+      </div>}
 
       <div className={`twin-bar twin-bar--announcement ${ann?.active ? 'show' : ''}`} aria-hidden={!ann?.active}>
         <span className="twin-bar-icon speaking"><IconSpeaker size={16} /></span>

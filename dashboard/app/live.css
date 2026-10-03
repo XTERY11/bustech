@@ -53,8 +53,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visi
 .simBadge.online { background:#e7f6ec; color:#1d6b3a; border-color:#bfe3cc; }.simBadge.triggered { background:#fde8e8; color:#9a1932; border-color:#f0bbc5; }
 @media(max-width:760px) { .stageRow { grid-template-columns:1fr; } }
 
-/* Focused live-demo layout: the always-visible layer contains only channels,
-   camera, twin and reasoning. Operational controls live in one drawer. */
+/* Presentation stays visible; operational controls live in one drawer. */
 .topbarActions { display:flex; align-items:center; gap:18px; }
 .topbarCompact { min-height:54px; padding-top:7px; padding-bottom:7px; justify-content:space-between; }
 .topbarCompact .topbarActions { width:auto; justify-content:flex-end; }
@@ -80,23 +79,58 @@ button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visi
 .communicationItem--waiting .communicationState { background:#aab5c2; }
 @keyframes channelPulse { 50% { opacity:.55; transform:scale(.84); } }
 
-.intelligenceRow { max-width:1740px; margin:14px auto 0; padding:0 clamp(18px,3vw,44px); display:grid; grid-template-columns:1fr; gap:10px; }
-.intelligenceRow .primaryThinking { max-width:none; margin:0; }
-.intelligenceRow .communicationStrip { max-width:none; margin:0; padding:0; display:flex; flex-direction:row; }
-.intelligenceRow .communicationTitle { min-width:128px; min-height:44px; flex:0 0 auto; }
-.intelligenceRow .communicationItems { flex:1; grid-template-columns:repeat(7,minmax(0,1fr)); }
-.intelligenceRow .communicationItem { min-height:48px; }
+.presentationWorkspace { max-width:1740px; margin:18px auto 0; padding:0 clamp(18px,3vw,44px); display:grid; grid-template-columns:minmax(220px,.6fr) minmax(0,1fr) minmax(0,1fr); grid-template-areas:"signal thinking thinking" "signal camera twin"; gap:16px; align-items:start; }
+.presentationWorkspace>.primaryThinking { grid-area:thinking; max-width:none; margin:0; min-width:0; }
+.presentationWorkspace>.stageRow { display:contents; }
+.presentationWorkspace .videoPanel { grid-area:camera; min-width:0; }
+.presentationWorkspace .twinPanel { grid-area:twin; min-width:0; }
+.presentationWorkspace .stagePanel>.panelHeader { min-height:52px; align-items:center; }
+.presentationWorkspace .stagePanel>.panelHeader h2 { font-size:17px; line-height:1.3; }
+.signalPanel { grid-area:signal; align-self:stretch; min-width:0; padding:18px; }
+.signalPanelHeader { align-items:center; }
+.signalPanelHeader .sectionKicker { font-size:10px; letter-spacing:.1em; }
+.signalPanelHeader h2 { font-size:22px; }
+.signalServerStatus { display:inline-flex; align-items:center; gap:6px; padding:5px 8px; border-radius:999px; background:#f1f4f7; color:var(--muted); font-size:11px; font-weight:750; }
+.signalServerStatus::before { content:""; width:6px; height:6px; border-radius:50%; background:#aab5c2; }
+.signalServerStatus.isOnline { background:var(--green-soft); color:var(--green); }
+.signalServerStatus.isOnline::before { background:var(--green); }
+.signalSource { margin:15px 0 12px; color:var(--muted); font-size:12px; }
+.signalHero { display:flex; flex-direction:column; align-items:flex-start; gap:9px; padding:16px; border:1px solid #cbded0; border-radius:13px; background:linear-gradient(135deg,#f1f9ec,#f4faf7); }
+.signalAidLabel { color:#58724b; font-size:10px; font-weight:750; letter-spacing:.07em; text-transform:uppercase; }
+.signalAid { color:#183c27; font-size:27px; line-height:1.18; letter-spacing:-.04em; overflow-wrap:anywhere; }
+.signalBookingStatus { padding:5px 8px; border-radius:7px; background:#e1f1e5; color:#236039; font-size:11px; font-weight:750; }
+.signalBookingStatus--at_stop { background:#fff0d1; color:#865500; }
+.signalBookingStatus--cancelled,.signalBookingStatus--expired { background:#f0e9e9; color:#905052; }
+.signalDetails { display:grid; gap:11px; margin:18px 0; }
+.signalDetails>div { display:grid; grid-template-columns:minmax(0,.9fr) minmax(0,1fr); gap:12px; font-size:12px; line-height:1.45; }
+.signalDetails dt { color:var(--muted); }
+.signalDetails dd { margin:0; color:#31475e; font-weight:700; text-align:right; overflow-wrap:anywhere; }
+.signalAssistance { padding-top:15px; border-top:1px solid var(--line); }
+.signalAssistance h3 { margin:0 0 9px; color:var(--muted); font-size:10px; font-weight:750; text-transform:uppercase; letter-spacing:.07em; }
+.signalAssistance ul { margin:0; padding:0; list-style:none; display:flex; flex-wrap:wrap; gap:6px; }
+.signalAssistance li { padding:6px 8px; border:1px solid #d9e4df; border-radius:7px; background:#f7faf8; color:#395849; font-size:11px; line-height:1.4; }
+.signalGuidance { margin:18px 0 0; padding:12px 0 0; border-top:1px solid var(--line); color:#405269; font-size:12px; line-height:1.65; overflow-wrap:anywhere; }
+.signalReceipt { margin:12px 0 0; color:#829082; font-size:10px; }
+.signalConnectionNote { color:#996523; font-size:11px; line-height:1.5; }
+.signalEmpty { display:flex; flex-direction:column; justify-content:center; min-height:220px; padding:18px; border:1px dashed #cad9cf; border-radius:13px; background:#f8fbf9; text-align:center; }
+.signalEmpty p { margin:0 0 10px; font-weight:750; font-size:16px; }
+.signalEmpty span { color:var(--muted); font-size:12px; line-height:1.65; }
+.detailsContent .communicationItems { grid-template-columns:repeat(4,minmax(0,1fr)); }
+.detailsContent .communicationItem strong { white-space:normal; overflow-wrap:anywhere; }
 
 .stageRow { margin-top:14px; align-items:start; }
 .stagePanel { padding:15px; }
 .stagePanel .panelHeader { padding-bottom:11px; }
-.twinConsole { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr); gap:10px; margin-top:10px; }
+.twinConsole { display:grid; grid-template-columns:1fr; gap:10px; margin-top:10px; }
 .twinExternalDisplay,.twinActions { min-width:0; min-height:108px; border-radius:12px; padding:11px 12px; }
 .twinExternalDisplay { position:relative; overflow:hidden; background:#101820; color:#efffa6; border:3px solid #2d3844; box-shadow:inset 0 0 24px rgba(166,255,67,.08); }
 .twinExternalDisplay::after { content:""; position:absolute; inset:0; pointer-events:none; background:repeating-linear-gradient(180deg,transparent 0,transparent 3px,rgba(255,255,255,.025) 4px); }
 .twinConsoleLabel { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:10px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
 .twinExternalDisplay .twinConsoleLabel { color:#92ad6d; }
 .twinExternalDisplay .twinConsoleLabel strong { color:#efffa6; font-family:var(--font-geist-mono); font-size:14px; }
+.twinExternalDisplay>p { margin:8px 0 0; color:#efffa6; font-family:var(--font-geist-mono); font-size:12px; line-height:1.6; overflow-wrap:anywhere; scrollbar-width:thin; scrollbar-color:#7fa14f #1c2832; overscroll-behavior:contain; }
+.twinPanel .stageFooter { flex-wrap:wrap; }
+.twinPanel .stageFooterControls { flex-wrap:wrap; max-width:100%; }
 .twinDisplayScroll { position:relative; z-index:1; max-height:56px; margin-top:8px; overflow:hidden; }
 .twinDisplayScroll.isOverflowing { padding-right:7px; overflow-x:hidden; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; scrollbar-width:thin; scrollbar-color:#7fa14f #1c2832; }
 .twinDisplayScroll::-webkit-scrollbar { width:6px; }
@@ -120,8 +154,8 @@ button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visi
 .thinkingHeader { display:flex; justify-content:space-between; align-items:center; gap:18px; padding-bottom:13px; border-bottom:1px solid var(--line); }
 .thinkingHeader h2 { margin:0; font-size:22px; letter-spacing:-.03em; }
 .thinkingHeaderActions { display:flex; align-items:center; gap:10px; }
-.thinkingLayout { display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:14px; margin-top:13px; }
-.thinkingStage { min-height:128px; padding:15px 17px; border:1px solid #d8d0e8; border-radius:13px; background:linear-gradient(135deg,#faf7ff,#f6f9fd); }
+.thinkingLayout { display:grid; grid-template-columns:minmax(0,1fr); margin-top:13px; }
+.thinkingStage { min-height:96px; padding:12px 15px; border:1px solid #d8d0e8; border-radius:13px; background:linear-gradient(135deg,#faf7ff,#f6f9fd); }
 .thinkingStage.isComplete { border-color:#c8dfd0; background:linear-gradient(135deg,#f5fbf7,#f8fafc); }
 .thinkingStageLabel { display:flex; align-items:center; justify-content:space-between; gap:12px; color:var(--purple); font-size:12px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }
 .thinkingStageLabel small { color:var(--muted); font-size:10px; font-weight:600; letter-spacing:.03em; text-transform:none; }
@@ -133,11 +167,6 @@ button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visi
 .thinkingWord { animation:wordReveal 210ms cubic-bezier(.2,.8,.2,1) both; }
 .thinkingCursor { display:inline-block; width:2px; height:1em; margin-left:3px; vertical-align:-.12em; border-radius:2px; background:var(--purple); animation:cursorBlink .72s step-end infinite; }
 .thinkingWaiting { margin:20px 0 0; color:var(--muted); font-size:15px; line-height:1.65; }
-.decisionSnapshot { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.decisionSnapshot>div { min-width:0; padding:12px; border:1px solid var(--line); border-radius:12px; background:#f8fafc; }
-.decisionSnapshot small,.decisionSnapshot strong { display:block; }
-.decisionSnapshot small { color:var(--muted); font-size:10px; letter-spacing:.05em; text-transform:uppercase; }
-.decisionSnapshot strong { margin-top:7px; overflow-wrap:anywhere; color:#31475e; font-size:13px; }
 .srOnly { position:absolute !important; width:1px !important; height:1px !important; padding:0 !important; margin:-1px !important; overflow:hidden !important; clip:rect(0,0,0,0) !important; white-space:nowrap !important; border:0 !important; }
 @keyframes wordReveal { from { opacity:0; filter:blur(3px); transform:translateY(3px); } to { opacity:1; filter:none; transform:none; } }
 @keyframes cursorBlink { 50% { opacity:0; } }
@@ -161,11 +190,9 @@ button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visi
 }
 
 @media(max-width:1000px) {
-  .intelligenceRow .communicationItems { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .presentationWorkspace { grid-template-columns:minmax(190px,.65fr) minmax(0,1fr) minmax(0,1fr); gap:12px; padding:0 18px; }
   .communicationStrip { align-items:stretch; }
   .thinkingLayout { grid-template-columns:1fr; }
-  .decisionSnapshot { grid-template-columns:repeat(4,minmax(0,1fr)); }
-  .twinConsole { grid-template-columns:1fr 1fr; }
   .detailWorkspace { grid-template-columns:1fr; }
   .outputPanel { grid-column:auto; }
 }
@@ -177,16 +204,13 @@ button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visi
   .detailsToggle span:first-child { font-size:0; }
   .detailsToggle span:first-child::after { content:"Details"; font-size:13px; }
   .communicationStrip { display:block; }
-  .intelligenceRow .communicationStrip { display:block; }
-  .intelligenceRow { padding-left:12px; padding-right:12px; }
-  .intelligenceRow .communicationItems { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .presentationWorkspace { padding:0 12px; grid-template-columns:1fr; grid-template-areas:"signal" "thinking" "camera" "twin"; }
   .communicationTitle { min-height:38px; margin-bottom:8px; }
   .communicationItems { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .communicationItem { min-height:50px; }
   .thinkingHeader { align-items:flex-start; }
   .thinkingHeaderActions { flex-direction:column; align-items:flex-end; }
   .thinkingLayout { display:block; }
-  .decisionSnapshot { grid-template-columns:1fr 1fr; margin-top:10px; }
   .twinConsole { grid-template-columns:1fr; }
   .twinActions ol { grid-template-columns:1fr 1fr; }
   .detailWorkspace { padding:0 18px; }
@@ -207,7 +231,6 @@ button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visi
   .thinkingHeaderActions .primaryButton { width:auto; min-height:40px; position:static; }
   .thinkingStageLabel small { display:none; }
   .thinkingReveal li { font-size:14px; }
-  .decisionSnapshot { grid-template-columns:1fr 1fr; }
   .twinActions ol { grid-template-columns:1fr; }
 }
 
@@ -215,7 +238,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visi
   .livePulse,.communicationItem--active .communicationState,.thinkingCursor,.twinActions li.isActive { animation:none !important; }
   .thinkingWord { animation:none !important; }
 }
-.replayFlow { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; padding:8px 12px; border:1px solid var(--line); border-radius:12px; background:#f6faf7; }
+.replayFlow { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; padding:8px 12px; border:1px solid var(--line); border-radius:12px; background:#f6faf7; }
 .replayFlow > span:first-child { display:flex; flex-direction:column; gap:2px; min-width:0; }
 .replayFlow strong { color:var(--ink); font-size:12px; font-weight:750; }
 .replayFlow small { color:var(--muted); font-size:10px; }

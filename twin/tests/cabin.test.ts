@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { CABIN, SEATS, createSeatOccupancy, getCabinSnapshot } from '../src/data/cabinLayout';
 import { createVehicleStore } from '../src/state/vehicleState';
 import { connectTelemetry, normalizeArrival, normalizePassengerJourney, normalizeTelemetry } from '../src/adapters/telemetryAdapter';
@@ -7,8 +9,26 @@ import { MockBusSimulator } from '../src/simulation/mockBus';
 import { buildPassengerPath, buildStrollerJourneyPath, journeyStageTarget, journeyVisibility, samplePassengerPath, sampleStrollerJourney, STROLLER_FORWARD_OFFSET } from '../src/simulation/passengerPath';
 import { advanceArrivalProgress, arrivalPosition, ARRIVAL_SECONDS, wheelRotationForTravel } from '../src/simulation/arrival';
 import { BUS } from '../src/components/BusDigitalTwin/dimensions';
+import { TwinHud } from '../src/components/BusDigitalTwin/TwinHud';
+import { DEFAULT_VEHICLE_STATE } from '../src/types/vehicle';
+import { derivePresentation } from '../src/state/presentation';
 
 globalThis.window = globalThis as unknown as Window & typeof globalThis;
+
+test('dashboard HUD hides only sequence and duplicate display; standalone and accessible feedback remain', () => {
+  const state = { ...DEFAULT_VEHICLE_STATE, boardingStatus: 'ready' as const,
+    passengerInfo: { title: 'Passenger guidance', message: 'Please wait at the entrance.' },
+    announcement: { active: true, text: 'Route 400 is ready.' } };
+  const props = { state, presentation: derivePresentation(state) };
+  const normal = renderToStaticMarkup(createElement(TwinHud, props));
+  assert.match(normal, /aria-label="Boarding sequence"/);
+  assert.match(normal, /twin-bar--display/);
+  const compact = renderToStaticMarkup(createElement(TwinHud, { ...props, compact: true }));
+  assert.doesNotMatch(compact, /aria-label="Boarding sequence"|twin-bar--display/);
+  for (const kept of ['Door', 'Ramp', 'Suspension', 'twin-bar--announcement', 'aria-live="polite"', 'Please wait at the entrance.']) {
+    assert.ok(compact.includes(kept), `${kept} must remain in the dashboard HUD`);
+  }
+});
 
 test('photo layout has 16 fixed seats, seven raised, five low-entry priority, and one extra fold-up seat', () => {
   assert.equal(new Set(SEATS.map((s) => s.id)).size, 17);
