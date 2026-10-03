@@ -232,7 +232,8 @@ cd twin && npm ci && npm test
 - [x] 保留 LLM Agent: Thinking、Sense: CV-Based Live Detection 和 Bus digital twin；Camera 与孪生同行。移除多余标题说明和四个摘要指标，Live channels、重跑按钮及完整诊断归入 controls & details。
 - [x] 孪生外层只保留可滚动的 External display；`hud=dashboard` 只移除 iframe 内六步列表及重复显示条。独立孪生 HUD、动作/动画、后端与 App 接口不变。
 - [x] 按框架分为 Signal（橙色）、Sense（蓝色）、Support（粉色），使用深色侧边栏。Overview 中 Camera 与孪生同行、Signal 与简短推理在下方；App booking、Live detection、LLM Agent、Digital twin 可切换独立大视图。
-- [x] 预约使用图标和短标签，Route/Stop 等默认折叠；Overview 仅显示首条真实决策摘要，Full reasoning 展示全部摘要。回放、重播、视频连接设置随 controls & details 展开；视图切换只改 CSS，不重新挂载 iframe 或请求模型。
+- [x] 预约使用图标和短标签，Route/Stop 等默认折叠；Overview 仅显示前两条真实决策摘要，Full reasoning 展示全部摘要。回放、重播、视频连接设置随 controls & details 展开；视图切换只改 CSS，不重新挂载 iframe 或请求模型。
+- [x] 紧凑布局：Overview 两列各自堆叠，不再用等高行撑出空隙；文字卡按内容自然高度。Signal 页同时显示公交与 CV，Thinking 页同时显示 Signal 与公交，避免单张短文字卡独占整窗；增强 2px 卡片边界、4px 分类顶边和文字层级。
 - [x] 孪生宽屏取景（宽高比 > 2.4）适度靠近整车，最多 28%；常规比例和 Interior 取景不变。
 
 **已知问题，供参考**：

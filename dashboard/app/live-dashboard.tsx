@@ -289,25 +289,11 @@ export default function Dashboard() {
     </header>
 
     <section className={`presentationWorkspace view--${view}`} data-view={view} aria-label="App signals, live detection, digital twin and reasoning">
-      <SignalPanel snapshot={snapshot} connected={connected} />
-      <section className="panel primaryThinking" aria-label="Live reasoning summary">
-        <div className="thinkingHeader">
-          <h2>LLM Agent: Thinking</h2>
-          <div className="thinkingHeaderActions">
-            <span className={`planStatus planStatus--${result?.plan_status.toLowerCase() ?? 'waiting'}`}>{running ? 'THINKING' : result?.plan_status ?? 'STANDBY'}</span>
-          </div>
-        </div>
-        {error && <div className="errorNotice" role="alert">{error}</div>}
-        <div className="thinkingLayout">
-          <article className={`thinkingStage ${summary ? 'isComplete' : ''}`}>
-            <WordReveal key={summary?.request_id ?? 'empty'} lines={summary?.decision_summary ?? []} running={running} />
-          </article>
-        </div>
-        <button className="workspaceInlineLink" onClick={() => setView('thinking')}>Full reasoning <span aria-hidden="true">↗</span></button>
-      </section>
-
-      <section className="stageRow" aria-label="Camera and vehicle">
+      <div className="workspaceStack workspaceSenseStack" role="group" aria-label="Live detection and app signals">
         <VideoPanel showControls={showDetails} onStatusChange={setVisionStatus} onReplay={connected ? replayFlow : undefined} replayBusy={inputSource === 'external' && (journey?.stage === 'BOOKED' || journey?.stage === 'AT_STOP')} />
+        <SignalPanel snapshot={snapshot} connected={connected} />
+      </div>
+      <div className="workspaceStack workspaceSupportStack" role="group" aria-label="Digital twin and reasoning">
         <TwinPanel
           result={result}
           context={context}
@@ -317,7 +303,22 @@ export default function Dashboard() {
           onStatusChange={setTwinReady}
           showControls={showDetails}
         />
-      </section>
+        <section className="panel primaryThinking" aria-label="Live reasoning summary">
+          <div className="thinkingHeader">
+            <h2>LLM Agent: Thinking</h2>
+            <div className="thinkingHeaderActions">
+              <span className={`planStatus planStatus--${result?.plan_status.toLowerCase() ?? 'waiting'}`}>{running ? 'THINKING' : result?.plan_status ?? 'STANDBY'}</span>
+            </div>
+          </div>
+          {error && <div className="errorNotice" role="alert">{error}</div>}
+          <div className="thinkingLayout">
+            <article className={`thinkingStage ${summary ? 'isComplete' : ''}`}>
+              <WordReveal key={summary?.request_id ?? 'empty'} lines={summary?.decision_summary ?? []} running={running} />
+            </article>
+          </div>
+          <button className="workspaceInlineLink" onClick={() => setView('thinking')}>Full reasoning <span aria-hidden="true">↗</span></button>
+        </section>
+      </div>
     </section>
 
     <div id="dashboard-details" className="detailsContent" hidden={!showDetails}>

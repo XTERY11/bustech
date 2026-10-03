@@ -16,6 +16,9 @@ test('server renders the NUSNextBus classified sidebar workspace', async () => {
   assert.match(html, /aria-label="Workspaces"/);
   assert.match(html, /aria-label="Digital twin"/);
   assert.match(html, /data-view="overview"/);
+  assert.match(html, /workspaceStack workspaceSenseStack/);
+  assert.match(html, /workspaceStack workspaceSupportStack/);
+  assert.equal((html.match(/title="Bus digital twin"/g) ?? []).length, 1);
   assert.match(html, /sidebar-group-signal/);
   assert.match(html, /sidebar-group-sense/);
   assert.match(html, /sidebar-group-support/);
