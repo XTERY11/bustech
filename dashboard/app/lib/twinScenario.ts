@@ -212,8 +212,10 @@ export function boardingScenario(result: Result | null, context: Context, journe
 export function buildScenario(result: Result | null, context: Context, running: boolean, journey: Journey | null): ScenarioStep[] {
   if (journey) {
     const active = context.request?.active === true && context.request?.intent === 'BOARDING';
+    // No journey under way (ended, reset or cancelled): the empty idle bus. Only someone the camera sees at the
+    // stop right now is drawn; the ended journey's need (or a stale booking channel) never keeps an actor there.
     if (!active || journey.stage === 'IDLE') return [{ at: 0, label: 'Idle', camera: 'overview',
-      frame: { ...IDLE_FRAME, passengerJourney: waitingPassenger(null, context, journey),
+      frame: { ...IDLE_FRAME, passengerJourney: waitingPassenger(null, { ...context, request: undefined }, null),
         ...(cabinSeatOccupancy(context) ? { seatOccupancy: cabinSeatOccupancy(context) } : {}) } }];
     if (!running && result?.plan_status === 'READY' && journey.matched) {
       if (journey.stage === 'ON_BOARD' && journey.animation?.phase === 'boarding') return boardingScenario(result, context, journey);

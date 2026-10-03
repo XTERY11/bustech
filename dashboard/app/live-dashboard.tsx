@@ -305,7 +305,8 @@ export default function Dashboard() {
       : actions.includes('KEEP_RAMPS_STOWED')
         ? 'Keep stowed'
         : 'Awaiting plan';
-  const bookingActive = Boolean(request.active);
+  // The booking channel keeps its last payload after a journey ends (Finish / Reset); the journey decides.
+  const bookingActive = Boolean(request.active) && !(inputSource === 'external' && journey?.stage === 'IDLE');
   const detectionActive = Boolean(detection?.label && detection.label !== 'NONE' && (detection.confidence ?? 0) >= 0.75);
   const modeLabel = mode === 'single' ? 'DeepSeek · Single' : mode === 'two_turn' ? 'DeepSeek · Two turns' : 'Offline rules';
   // Waiting-list hubs list every booking; the rest of the page follows the journey in progress (`journey`).

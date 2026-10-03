@@ -45,6 +45,11 @@ export function VideoPanel({ onStatusChange, onReplay, replayBusy = false }: { o
   }, [base]);
   useEffect(() => { if (!broken) return; const t = window.setTimeout(() => { setBroken(false); setEpoch(e => e + 1); }, 3000); return () => window.clearTimeout(t); }, [broken]);
 
+  // An <img> showing an MJPEG stream keeps its connection open after it is removed; browsers allow only
+  // about six per host, so every reconnect (and every other open dashboard tab) would use one up until
+  // the picture stays black. Close the old stream before the next one opens and when the panel goes away.
+  const stream = useRef<HTMLImageElement | null>(null);
+  useEffect(() => { const img = stream.current; return () => { if (img) img.src = ''; }; }, [epoch, base]);
   const online = Boolean(health?.ok);
   // A bridge that was restarted (or came up after this page) leaves the old <img> stream frozen without
   // an error event, so reconnect when the bridge comes online or its frame counter starts over.
@@ -69,7 +74,7 @@ export function VideoPanel({ onStatusChange, onReplay, replayBusy = false }: { o
     <div className="stageMedia">
       {online && !broken
         // eslint-disable-next-line @next/next/no-img-element -- MJPEG stream, not an optimisable image
-        ? <img key={epoch} src={`${base}/stream.mjpg?e=${epoch}`} alt="Live annotated camera stream" onError={() => setBroken(true)} />
+        ? <img key={epoch} ref={stream} src={`${base}/stream.mjpg?e=${epoch}`} alt="Live annotated camera stream" onError={() => setBroken(true)} />
         : <div className="stagePlaceholder"><strong>No video stream</strong><p>Start the bridge on the vision computer:<br /><code>bash vision/start_bridge.sh 0</code><br />then check <code>{base || '…'}/health</code>.</p></div>}
     </div>
     {online && health?.device === 'replay' && onReplay && <div className="replayFlow" aria-label="Replay the full flow from a recorded session">

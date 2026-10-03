@@ -65,7 +65,8 @@ export function TwinPanel({ result, context, running, journey = null, basePath =
   const [preview, setPreview] = useState<string | null>(null);
   const previewing = !boarded && preview === previewAnchor;
   const previewTarget = journey?.boarding_target ?? result?.boarding_target;
-  const canPreview = !boarded && !running && result?.plan_status === 'READY' && Boolean(previewTarget);
+  // A live journey that has ended (IDLE) has no plan to preview, even if an older result is still shown.
+  const canPreview = !boarded && !running && stage !== 'IDLE' && result?.plan_status === 'READY' && Boolean(previewTarget);
   const boardingPose = boarded || previewing;
   const steps = useMemo(() => {
     if (previewing) return boardingScenario(result, context, journey && { ...journey, animation: null });

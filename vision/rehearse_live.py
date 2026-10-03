@@ -407,6 +407,10 @@ class Rehearsal:
             snapshot = self.expect('reset: IDLE, journey finished', lambda r, s: r['id'] == journey_id and r['stage'] == 'IDLE'
                                    and r['reason'] == 'completed' and r['phase'] is None)
             assert snapshot['journey']['guidance']['title'] == 'No active booking', snapshot['journey']['guidance']
+            request = snapshot['context'].get('request') or {}
+            assert snapshot['result'] is None and snapshot['summary'] is None and request.get('active') is False \
+                and 'accessibility_need' not in request, f'clean idle screen: result={snapshot["result"]} request={request}'
+            self.hold('no replanning on the idle screen', lambda r, s: s['result'] is None and s['running'] is None, 1)
             cabin = snapshot['context']['vehicle_context']['cabin']
             assert cabin['wheelchair_bay_occupied'] is False, f'the bus is fresh again: {cabin}'
         again = self.cancel(journey_id)

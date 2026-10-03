@@ -199,6 +199,7 @@ test('TTL is real, including a booking expiring while the model is responding', 
   h.send('booking', booking()); const pending = h.hub.run();
   h.add(300000); release(); assert.equal((await pending).discarded, true);
   assert.equal(h.hub.result, null); assert.equal(h.hub.snapshot().journey.reason, 'expired');
+  assert.equal(h.hub.summary, null); assert.equal(h.hub.context().request.accessibility_need, undefined);
   assert.equal(h.hub.snapshot().navigation, null); assert.equal(h.hub.context().request.active, false);
 });
 
@@ -303,8 +304,16 @@ test('CV-only confirmation and cancellation never spend an additional model call
   assert.equal(h.modes[0], 'rules');
   h.send('booking', booking()); await h.hub.run();
   assert.equal(h.modes[1], 'single');
-  h.send('booking', { active: false }); await h.hub.run();
-  assert.equal(h.modes[2], 'rules'); assert.equal(h.hub.snapshot().navigation, null);
+  // The last booking ends: a clean idle screen, no replanning (before the waiting list a cancel replanned by the rules).
+  h.send('booking', { active: false }); assert.deepEqual(await h.hub.run(), { skipped: true });
+  let snap = h.hub.snapshot();
+  assert.deepEqual([h.calls(), snap.result, snap.summary, snap.navigation, snap.journey.stage, snap.journey.reason, snap.journey.need],
+    [2, null, null, null, 'IDLE', 'cancelled', null]);
+  assert.equal(snap.context.request.active, false); assert.equal(snap.context.request.accessibility_need, undefined);
+  // Camera-only input afterwards is planned by the rules, as before.
+  h.send('perception', enter('STROLLER', 'visit-2')); await h.hub.run();
+  assert.equal(h.modes[2], 'rules'); assert.equal(h.hub.result.plan_status, 'NEEDS_CONFIRMATION');
+  snap = h.hub.snapshot(); assert.equal(snap.navigation, null); assert.equal(snap.journey.stage, 'IDLE');
 });
 
 test('cancellation in the safety-revalidation microtask cannot publish an old READY result', async t => {
@@ -681,6 +690,8 @@ test('single phone: book, board, reset, next passenger, each on a fresh bus with
     assert.deepEqual([s.journey.journey_id, s.journey.stage, s.journey.reason, s.journey.completed, s.journey.animation, s.navigation, s.journey.guidance.title],
       [id, 'IDLE', 'completed', true, null, null, 'No active booking'], `${id}: reset`);
     assert.deepEqual([h.entry(id).stage, h.entry(id).reason], ['IDLE', 'completed']);
+    assert.deepEqual([s.result, s.summary, s.running, s.context.request.active, s.context.request.accessibility_need], [null, null, null, false, undefined], `${id}: clean idle screen`);
+    assert.deepEqual(await h.hub.run(), { skipped: true }, 'the reset does not replan');
     assert.deepEqual([h.hub.cabin.wheelchair_bay_occupied, h.hub.cabin.occupied_seat_ids], [false, fixtureSeats], `${id}: the bus is fresh again`);
   };
   await ride('WHEELCHAIR', 'b-1'); await ride('STROLLER', 'b-2'); await ride('CANE', 'b-3'); await ride('WHEELCHAIR', 'b-4');

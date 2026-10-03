@@ -95,14 +95,16 @@ export class SignalHub extends EventEmitter {
     // Presentation snapshots stay on screen until the next signal. Vehicle and
     // geometry values belong to the simulator; no vehicle telemetry is required.
     const context = { request_id: 'snapshot', presentation_mode: 'WEB_DEMO' };
-    const booking = rec ? { payload: rec.payload, observedAt: rec.observedAt, eventId: rec.id } : this.channels.booking;
+    // An ended booking (cancelled, expired, reset) leaves an idle request: inactive, without its need.
+    const idle = rec?.endedAt != null && rec.journey.stage === 'IDLE';
+    const booking = idle ? { payload: { active: false }, observedAt: rec.observedAt, eventId: null }
+      : rec ? { payload: rec.payload, observedAt: rec.observedAt, eventId: rec.id } : this.channels.booking;
     // A live booking is within its TTL by definition (frozen while matched at the stop), so its age never exceeds it:
     // otherwise a passenger who waited more than 5 minutes at the stop would lose the plan when leaving to board.
     const age = booking ? Math.max(0, this.now() - booking.observedAt) : 0;
     if (booking) context.request = { ...structuredClone(booking.payload), observation_age_ms: rec?.endedAt === null ? Math.min(age, BOOKING_TTL_MS) : age };
     if (this.channels.perception) context.perception = { ...structuredClone(this.channels.perception.payload), observation_age_ms: 0 };
-    if (booking) context.booking_event_id = booking.eventId;
-    if (context.request && rec && rec.endedAt !== null && !rec.journey.completed) context.request.active = false;
+    if (booking?.eventId) context.booking_event_id = booking.eventId;
     context.vehicle_context = { ...structuredClone(fixture.vehicle_context), observation_age_ms: 0,
       cabin: this.cabinFor(rec),
       route_id: context.request?.route_id ?? 'DEMO_ROUTE', stop_id: context.request?.stop_id ?? 'DEMO_STOP' };
@@ -167,13 +169,22 @@ export class SignalHub extends EventEmitter {
    */
   finish(rec, reason) {
     if (reason) {
-      this.applyJourney(rec, { ...rec.journey, stage: 'IDLE', reason, matched: false, pending_exit: false, animation: null, boarding_target: null, equipment_target: null, seat: null });
+      this.applyJourney(rec, { ...rec.journey, stage: 'IDLE', reason, need: null, matched: false, pending_exit: false, animation: null, boarding_target: null, equipment_target: null, seat: null });
       rec.result = null; rec.summary = null; this.loose.result = null; this.loose.summary = null;
     }
     rec.endedAt = this.now(); rec.planRevision++; rec.needsPlan = false;
     if (this.activeTarget === rec) this.dropActiveRun();
     if (rec.id === this.currentId) { this.currentId = null; this.presence = null; }
     this.lastEnded = rec;
+    if (reason && !this.live().length) this.idleScreen();
+  }
+  /**
+   * The last booking ended and nobody waits: a clean idle screen between passengers. No plan is shown and the end
+   * itself does not replan; a later camera report of an aid is planned by the rules as camera-only input.
+   */
+  idleScreen() {
+    this.loose.result = null; this.loose.summary = null; this.loose.rulesNext = false;
+    this.loose.lastKey = this.looseOpen() ? this.looseKey() : null;
   }
   /** Feed one camera report to one booking (the state machine of journey.mjs); AT_STOP binds it to the stop. */
   feed(rec, report) {
@@ -364,7 +375,7 @@ export class SignalHub extends EventEmitter {
     else if (channel === 'booking') {
       changed = Boolean(cancelled) || !this.live().length && !this.lastEnded;
       if (cancelled) this.endBooking(cancelled);
-      if (changed) { this.loose.result = null; this.loose.summary = null; this.loose.rulesNext = true; }
+      if (changed && !this.live().length) this.idleScreen();
     } else changed = this.perceive(entry, before, seenBefore !== hash(withoutAge(payload)));
     this.tick();
     this.publish('signal', { channel, event_id: eventId, changed, snapshot: this.snapshot() });
