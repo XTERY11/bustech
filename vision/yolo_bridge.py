@@ -390,7 +390,18 @@ def main():
                     cap.release(); cap = open_capture(source); scene.reset(); active, since, last_seen, position = False, None, None, 0; held, visit_id = [], None; continue
                 if is_file:
                     print('Video finished.', flush=True); break
-                raise RuntimeError('Camera/stream stopped delivering frames.')
+                # A phone camera drops out when its app goes to the background or the screen locks.
+                # Keep the hub, dashboard and stream up and reconnect instead of stopping the demo.
+                print(json.dumps({'event': 'CAMERA_LOST', 'retry_seconds': 2}), flush=True)
+                cap.release()
+                while True:
+                    time.sleep(2)
+                    try:
+                        cap = LatestFrame(open_capture(source)); break
+                    except RuntimeError:
+                        print(json.dumps({'event': 'CAMERA_RETRY'}), flush=True)
+                print(json.dumps({'event': 'CAMERA_BACK'}), flush=True)
+                continue
             if args.rotate != 'none':
                 frame = cv2.rotate(frame, {'cw': cv2.ROTATE_90_CLOCKWISE, 'ccw': cv2.ROTATE_90_COUNTERCLOCKWISE, '180': cv2.ROTATE_180}[args.rotate])
             if frame.shape[1] > args.width:

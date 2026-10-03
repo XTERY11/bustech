@@ -34,6 +34,7 @@ if [ "${LAN:-0}" = "1" ]; then
   export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-${DEFAULT_ORIGINS}}"
   echo "LAN mode: dashboard http://${IP}:${DASHBOARD_PORT}  hub http://${IP}:${BRIDGE_PORT}  camera http://${IP}:${VISION_PORT}"
   echo "Access token (App / dashboard Connection settings): ${BRIDGE_TOKEN}"
+  echo "Dashboard with token: http://127.0.0.1:${DASHBOARD_PORT}/#token=${BRIDGE_TOKEN}"
 else
   DEFAULT_ORIGINS="http://127.0.0.1:${DASHBOARD_PORT},http://localhost:${DASHBOARD_PORT}"
   [ -z "${APP_ORIGINS:-}" ] || DEFAULT_ORIGINS="${DEFAULT_ORIGINS},${APP_ORIGINS}"
@@ -71,6 +72,12 @@ else
   (cd "$ROOT/vision" && RIDE_BRIDGE_URL="http://127.0.0.1:${BRIDGE_PORT}" BRIDGE_TOKEN="${BRIDGE_TOKEN:-}" exec bash start_bridge.sh "$SRC" $WINDOW_FLAG --snapshots "$ROOT/vision/trigger_snapshots" $RECORD_FLAG --mjpeg-port "$VISION_PORT") &
 fi
 PIDS+=("$!")
+
+# Open the dashboard once it answers (LAN mode passes the token in the fragment). NO_BROWSER=1 skips it.
+if [ -z "${NO_BROWSER:-}" ] && command -v open >/dev/null; then
+  ( for _ in $(seq 1 60); do curl -s -o /dev/null "http://127.0.0.1:${DASHBOARD_PORT}/" && break; sleep 1; done
+    open "http://127.0.0.1:${DASHBOARD_PORT}/${BRIDGE_TOKEN:+#token=${BRIDGE_TOKEN}}" ) &
+fi
 
 # macOS still ships Bash 3.2, so use a portable fail-fast monitor instead of
 # `wait -n`: if either long-running service exits, stop the other one too.

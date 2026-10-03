@@ -178,6 +178,14 @@ export default function Dashboard() {
       .then(health => {
         if (!health) return;
         setConfigured(health.llm_configured);
+        // LAN mode: the hub wants a token. Take it from the address (start_demo.sh opens
+        // .../#token=…, the fragment never reaches a server), else ask once.
+        if (health.token_required && !token) {
+          const fromUrl = new URLSearchParams(window.location.hash.slice(1)).get('token') ?? '';
+          const entered = fromUrl || window.prompt('Signal hub access token (printed in the terminal as "Access token")')?.trim() || '';
+          if (fromUrl) window.history.replaceState(null, '', window.location.pathname + window.location.search);
+          if (entered) { setDraftToken(entered); setToken(entered); }
+        }
       })
       .catch(() => {});
     void watchEvents(apiBase, token, abort.signal, onEvent, online => {
