@@ -308,6 +308,7 @@ export default function Dashboard() {
             <h2>LLM Agent: Thinking</h2>
             <div className="thinkingHeaderActions">
               <span className={`planStatus planStatus--${result?.plan_status.toLowerCase() ?? 'waiting'}`}>{running ? 'THINKING' : result?.plan_status ?? 'STANDBY'}</span>
+              <button className="workspaceInlineLink" onClick={() => setView('thinking')}>Full reasoning <span aria-hidden="true">↗</span></button>
             </div>
           </div>
           {error && <div className="errorNotice" role="alert">{error}</div>}
@@ -316,7 +317,6 @@ export default function Dashboard() {
               <WordReveal key={summary?.request_id ?? 'empty'} lines={summary?.decision_summary ?? []} running={running} />
             </article>
           </div>
-          <button className="workspaceInlineLink" onClick={() => setView('thinking')}>Full reasoning <span aria-hidden="true">↗</span></button>
         </section>
       </div>
     </section>
