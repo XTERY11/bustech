@@ -2,6 +2,11 @@ import { ACTIONS, INPUT_SCHEMA, MODEL_OUTPUT_SCHEMA } from './contracts.mjs';
 import { project, validate } from './schema.mjs';
 
 export const THRESHOLDS = Object.freeze({ vehicle_age_ms: 1500, perception_age_ms: 1500, app_age_ms: 300000, yolo_confidence: 0.75, geometry_confidence: 0.85 });
+const SEAT_PREFERENCE = Object.freeze([
+  'S03', 'S02', 'S09', 'S01', 'S06',
+  'S04', 'S05', 'S07', 'S08',
+  'S10', 'S11', 'S12', 'S13', 'S14', 'S15', 'S16',
+]);
 const available = x => x === 'AVAILABLE' || x === 'AVAILABLE_FOR_DEMO';
 const fresh = (age, max) => typeof age === 'number' && age >= 0 && age <= max;
 const number = x => typeof x === 'number' && Number.isFinite(x);
@@ -12,16 +17,37 @@ export function normalizeInput(raw) {
   return project(raw, INPUT_SCHEMA);
 }
 
+/** Select one trusted cabin destination. Missing cabin data is intentionally not treated as empty. */
+export function boardingTargetFor(context) {
+  const r = context.request ?? {}, v = context.vehicle_context ?? {}, cabin = v.cabin;
+  if (!cabin) return null;
+  const requests = r.assistance_requested ?? [];
+  const wheelchair = r.accessibility_need === 'WHEELCHAIR' || requests.includes('WHEELCHAIR_RAMP') || v.wheelchair_button_pressed === true;
+  if (wheelchair) return cabin.wheelchair_bay_occupied === false && !(cabin.occupied_seat_ids ?? []).includes('F01')
+    ? { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' }
+    : null;
+  const occupied = new Set(cabin.occupied_seat_ids ?? []);
+  const seat = SEAT_PREFERENCE.find(id => !occupied.has(id));
+  return seat ? { type: 'SEAT', id: seat } : null;
+}
+
 export function buildPolicy(context) {
   const r = context.request ?? {}, p = context.perception ?? {}, v = context.vehicle_context ?? {};
   const h = v.hardware_capabilities ?? {}, g = p.geometry ?? {};
   const flags = [], facts = [], required = [], optional = [];
-  let status = 'READY', scenario = 'general';
+  let status = 'READY', scenario = 'general', boardingTarget = null;
   const add = (...actions) => { for (const a of actions) if (!required.includes(a)) required.push(a); };
   const needs = (flag, fact) => { status = 'NEEDS_CONFIRMATION'; flags.push(flag); facts.push(fact); add('REQUEST_ONBOARD_SAFETY_OPERATOR'); };
   const finish = () => {
+    const target = status === 'READY' ? boardingTarget : null;
+    if (target) {
+      add('GUIDE_PASSENGER_TO_ASSIGNED_PLACE');
+      facts.push(target.type === 'SEAT'
+        ? `Seat ${target.id} is unoccupied and assigned for this passenger.`
+        : 'The wheelchair bay is unoccupied and assigned for this passenger.');
+    }
     const allowed = [...new Set([...required, ...optional])].sort((a, b) => ACTIONS.indexOf(a) - ACTIONS.indexOf(b));
-    return { plan_status: status, scenario, required_actions: allowed.filter(a => required.includes(a)), allowed_actions: allowed, facts, safety_flags: flags };
+    return { plan_status: status, scenario, boarding_target: target, required_actions: allowed.filter(a => required.includes(a)), allowed_actions: allowed, facts, safety_flags: flags };
   };
   if (v.emergency_stop_active === true) {
     status = 'CANNOT_EXECUTE'; scenario = 'emergency'; flags.push('EMERGENCY_STOP');
@@ -74,6 +100,14 @@ export function buildPolicy(context) {
   const declined = appFresh && r.ramp_preference === 'DECLINED';
   const rampRequested = requests.includes('WHEELCHAIR_RAMP') || r.ramp_preference === 'REQUESTED' && appFresh || button;
   const wheelchair = need === 'WHEELCHAIR' || requests.includes('WHEELCHAIR_RAMP') || button;
+  boardingTarget = boardingTargetFor(context);
+  if (v.cabin && !boardingTarget) {
+    scenario = 'wait';
+    needs('NO_ACCESSIBLE_PLACE_AVAILABLE', wheelchair
+      ? 'The wheelchair bay is occupied. Keep the bus stopped and ask the safety operator to assist.'
+      : 'No unoccupied passenger seat is available. Keep the bus stopped and ask the safety operator to assist.');
+    return finish();
+  }
   add('CHECK_SINGLE_ENTRANCE_CLEARANCE', 'KEEP_SINGLE_ENTRANCE_CLEAR', 'EXTEND_DWELL_TIME', 'WAIT_FOR_BOARDING_CONFIRMATION', 'WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION');
   if (wheelchair) add('PREPARE_WHEELCHAIR_AREA');
 
@@ -127,7 +161,7 @@ export function buildPolicy(context) {
 }
 
 export function ruleProposal(context, policy) {
-  return { request_id: context.request_id, plan_status: policy.plan_status, decision_summary: policy.facts.slice(0, 3), actions: policy.required_actions };
+  return { request_id: context.request_id, plan_status: policy.plan_status, decision_summary: policy.facts.slice(0, 3), actions: policy.required_actions, boarding_target: policy.boarding_target };
 }
 
 export function validateProposal(proposal, context, policy) {
@@ -135,6 +169,11 @@ export function validateProposal(proposal, context, policy) {
   if (errors.length) return errors;
   if (proposal.request_id !== context.request_id) errors.push('REQUEST_ID_MISMATCH');
   if (proposal.plan_status !== policy.plan_status) errors.push('STATUS_MISMATCH');
+  const targetMatches = proposal.boarding_target === null && policy.boarding_target === null ||
+    proposal.boarding_target?.type === policy.boarding_target?.type && proposal.boarding_target?.id === policy.boarding_target?.id;
+  if (!targetMatches) errors.push('BOARDING_TARGET_MISMATCH');
+  if (proposal.boarding_target?.type === 'SEAT' && proposal.boarding_target.id === 'WHEELCHAIR_BAY') errors.push('BOARDING_TARGET_INVALID');
+  if (proposal.boarding_target?.type === 'WHEELCHAIR_BAY' && proposal.boarding_target.id !== 'WHEELCHAIR_BAY') errors.push('BOARDING_TARGET_INVALID');
   for (const a of proposal.actions) if (!policy.allowed_actions.includes(a)) errors.push(`FORBIDDEN_ACTION:${a}`);
   for (const a of policy.required_actions) if (!proposal.actions.includes(a)) errors.push(`MISSING_REQUIRED_ACTION:${a}`);
   const order = proposal.actions.map(a => policy.allowed_actions.indexOf(a));
@@ -151,6 +190,10 @@ export function parametersFor(action, context) {
     measured_slope_deg: context.perception.geometry.measured_slope_deg,
   };
   if (action === 'CONFIRM_ROUTE_IDENTITY') return { route_id: context.vehicle_context.route_id };
+  if (action === 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE') {
+    const target = boardingTargetFor(context);
+    return target ? { target_type: target.type, target_id: target.id } : {};
+  }
   if (action === 'WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION') return { source: 'ONBOARD_SAFETY_OPERATOR', wheelchair_securement: 'IF_APPLICABLE_OPERATOR_CONFIRMED' };
   return {};
 }
@@ -160,9 +203,15 @@ export function passengerCommunication(context, policy, actions) {
   const route = context.vehicle_context?.route_id;
   const passengerRoute = route === 'DEMO_ROUTE' ? '400' : route?.replaceAll('_', ' ');
   const identity = actions.includes('CONFIRM_ROUTE_IDENTITY') && passengerRoute ? `Route ${passengerRoute}. ` : '';
+  const target = actions.includes('GUIDE_PASSENGER_TO_ASSIGNED_PLACE') ? policy.boarding_target : null;
+  const guidance = target?.type === 'SEAT'
+    ? ` Proceed to seat ${target.id} when the safety operator invites you to board.`
+    : target?.type === 'WHEELCHAIR_BAY'
+      ? ' Proceed to the wheelchair bay and follow the safety operator\'s securement instructions.'
+      : '';
   const message = identity + (policy.scenario === 'emergency'
     ? 'Please wait for the safety operator. Boarding assistance is paused.'
-    : 'Please keep clear of the entrance. Board only when the safety operator gives the signal.');
+    : 'Please keep clear of the entrance. Board only when the safety operator gives the signal.') + guidance;
   const audio = actions.includes('ACTIVATE_EXTERNAL_SPEAKER');
   const display = actions.includes('SHOW_EXTERNAL_DISPLAY');
   return { channel: audio && display ? 'BOTH' : audio ? 'EXTERNAL_AUDIO' : display ? 'EXTERNAL_DISPLAY' : 'NONE', language: 'en-SG', audio_text: audio ? message : null, display_text: display ? message : null };
@@ -172,5 +221,5 @@ export function safeFallback(context, errorCode) {
   const emergency = context.vehicle_context?.emergency_stop_active === true;
   const actions = emergency ? ['ABORT_ASSISTANCE_SEQUENCE', 'REQUEST_ONBOARD_SAFETY_OPERATOR'] : ['REQUEST_ONBOARD_SAFETY_OPERATOR'];
   if (!emergency && context.vehicle_context?.motion_state === 'STOPPED' && fresh(context.vehicle_context?.observation_age_ms, THRESHOLDS.vehicle_age_ms)) actions.unshift('HOLD_AT_STOP');
-  return { proposal: { request_id: context.request_id ?? 'invalid-request', plan_status: emergency ? 'CANNOT_EXECUTE' : 'NEEDS_CONFIRMATION', decision_summary: ['Input or model output failed validation. Await operator assistance.'], actions }, flags: [errorCode] };
+  return { proposal: { request_id: context.request_id ?? 'invalid-request', plan_status: emergency ? 'CANNOT_EXECUTE' : 'NEEDS_CONFIRMATION', decision_summary: ['Input or model output failed validation. Await operator assistance.'], actions, boarding_target: null }, flags: [errorCode] };
 }

@@ -133,6 +133,7 @@ def parse_args():
     p.add_argument('--events', type=Path, help='Optional JSONL log of trigger transitions and hub posts')
     p.add_argument('--record', type=Path, help='Also save the raw frames that were processed to this MP4, for replaying the session later')
     p.add_argument('--snapshots', type=Path, help='Folder for an annotated JPEG at every trigger, label change and clear (plus events.jsonl), for review afterwards')
+    p.add_argument('--capture', type=Path, help='Folder for annotated.mp4 + signals.jsonl (every hub post with its time), which replay_bridge.py plays back without YOLO')
     return p.parse_args()
 
 
@@ -244,6 +245,10 @@ def main():
         args.events.parent.mkdir(parents=True, exist_ok=True)
     log = args.events.open('a', encoding='utf-8') if args.events else None
     pending = []  # snapshot names waiting for the frame to be fully drawn
+    if args.capture:
+        args.capture.mkdir(parents=True, exist_ok=True)
+    signals = (args.capture / 'signals.jsonl').open('w', encoding='utf-8') if args.capture else None
+    captured = None  # annotated.mp4 writer, opened on the first frame
 
     def record(event):
         if is_file:
@@ -256,19 +261,22 @@ def main():
             log.write(json.dumps(event) + '\n'); log.flush()
 
     def post(detections, reason, left=None):
+        # Same envelope as integrations/ride_signal_client.py; zone is informational for the dashboard.
+        # target_match_confirmed: a verified aid is standing in the drawn boarding region. The hub ignores
+        # camera detections without it; it still never authorises a ramp without a booking.
+        # zone.event tells the dashboard what happened at the stop: 'enter', 'present' (heartbeat) or
+        # 'exit'. On exit, zone.left names what was there, so the twin can show that passenger boarding.
+        zone = {'triggered': bool(detections), 'roi_id': roi_id, 'event': {'heartbeat': 'present'}.get(reason, reason)}
+        if left:
+            zone['left'] = left
+        payload = {'yolo_detections': detections[:20], 'target_match_confirmed': bool(detections), 'zone': zone}
+        if signals:  # replay_bridge.py posts the same payload at the same point of annotated.mp4
+            signals.write(json.dumps({'t': round(captured_frames / capture_fps, 2), 'channel': 'perception', 'payload': payload}) + '\n')
+            signals.flush()
         if client is None:
             return
         try:
-            # Same envelope as integrations/ride_signal_client.py; zone is informational for the dashboard.
-            # target_match_confirmed: a verified aid is standing in the drawn boarding region. The hub ignores
-            # camera detections without it; it still never authorises a ramp without a booking.
-            # zone.event tells the dashboard what happened at the stop: 'enter', 'present' (heartbeat) or
-            # 'exit'. On exit, zone.left names what was there, so the twin can show that passenger boarding.
-            zone = {'triggered': bool(detections), 'roi_id': roi_id, 'event': {'heartbeat': 'present'}.get(reason, reason)}
-            if left:
-                zone['left'] = left
-            client.signal('perception', {'yolo_detections': detections[:20], 'target_match_confirmed': bool(detections), 'zone': zone},
-                          observed_at=datetime.now(timezone.utc).isoformat())
+            client.signal('perception', payload, observed_at=datetime.now(timezone.utc).isoformat())
             shared.status['last_signal'] = {'at': time.time(), 'reason': reason, 'labels': [d['label'] for d in detections]}
             record({'event': 'SIGNAL', 'reason': reason, 'detections': detections})
         except Exception as failure:  # keep streaming even if the hub is down
@@ -280,6 +288,9 @@ def main():
     fps_src = cap.get(cv2.CAP_PROP_FPS)
     fps_src = fps_src if np.isfinite(fps_src) and 0 < fps_src <= 240 else 30
     processed = position = 0
+    # The capture keeps the clock of the source: one frame per source frame for a recording, 15 fps of
+    # wall-clock time for a live camera (frames are repeated or skipped to hold that rate).
+    capture_fps, capture_start, captured_frames = (fps_src if is_file else 15), time.monotonic(), 0
     writer = None
     last_heartbeat = 0.0
     tick_fps = time.monotonic(); fps_count = 0
@@ -293,6 +304,9 @@ def main():
             position += 1
             if not ok:
                 if is_file and args.loop:
+                    if signals:  # the capture covers one pass of the recording
+                        signals.close(); captured.release(); signals = captured = None
+                        print(f'Capture saved: {args.capture}', flush=True)
                     cap.release(); cap = open_capture(source); scene.reset(); active, since, last_seen, position = False, None, None, 0; continue
                 if is_file:
                     print('Video finished.', flush=True); break
@@ -372,6 +386,15 @@ def main():
             state = 'TRIGGER  ' + ' + '.join(sorted({d['label'].lower() for d in held})) if active else 'MONITORING'
             cv2.putText(view, state, (12, 36), cv2.FONT_HERSHEY_SIMPLEX, .95, (0, 70, 255) if active else (255, 255, 255), 2)
             cv2.putText(view, f'inside {len(inside_detections)} | {device} | {shared.fps:.0f} fps', (width - 290, 36), cv2.FONT_HERSHEY_SIMPLEX, .55, (200, 200, 200), 1)
+            if signals:
+                if captured is None:  # H.264 when this OpenCV build has it (about 5x smaller), else MPEG-4
+                    for codec in ('avc1', 'mp4v'):
+                        captured = cv2.VideoWriter(str(args.capture / 'annotated.mp4'), cv2.VideoWriter_fourcc(*codec), capture_fps, (width, height))
+                        if captured.isOpened():
+                            break
+                due = position if is_file else round((time.monotonic() - capture_start) * capture_fps) + 1
+                for _ in range(due - captured_frames):
+                    captured.write(view); captured_frames += 1
             ok_jpeg, buf = cv2.imencode('.jpg', view, [cv2.IMWRITE_JPEG_QUALITY, args.jpeg_quality])
             while ok_jpeg and pending:
                 (args.snapshots / pending.pop()).write_bytes(buf.tobytes())
@@ -395,6 +418,11 @@ def main():
         cap.release(); server.shutdown()
         if writer is not None:
             writer.release()
+        if signals:
+            signals.close()
+            if captured is not None:
+                captured.release()
+            print(f'Capture saved: {args.capture}', flush=True)
         if log:
             log.close()
         if not args.no_window:

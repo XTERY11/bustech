@@ -71,7 +71,7 @@ export class SignalHub extends EventEmitter {
     if (this.source === 'demo') { this.channels = {}; this.demoContext = null; this.lastKey = null; }
     this.source = 'external';
     this.channels[channel] = { payload: normalized[KEYS[channel]], observedAt, receivedAt: this.now(), eventId };
-    this.journey = advance(this.journey, channel, normalized[KEYS[channel]], this.result?.plan_status);
+    this.journey = advance(this.journey, channel, normalized[KEYS[channel]], this.result?.plan_status, this.result?.boarding_target);
     let changed = before !== this.decisionKey();
     if (changed && channel === 'perception') {
       // The plan is made when the booking arrives. What the camera sees afterwards is only checked

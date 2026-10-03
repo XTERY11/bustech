@@ -2,8 +2,8 @@
 //
 //   IDLE ──booking──► BOOKED ──aid enters the stop region──► AT_STOP ──leaves after READY──► ON_BOARD
 //
-// The App sends the booking; the camera bridge reports the stop region (perception.zone). Nothing
-// here authorises vehicle motion: it only says which part of the story to show and tell.
+// The App sends the booking; the camera bridge reports the stop region (perception.zone). ON_BOARD lasts
+// until the next booking. Nothing here authorises vehicle motion: it only says which part of the story to show and tell.
 
 export const STAGES = ['IDLE', 'BOOKED', 'AT_STOP', 'ON_BOARD'];
 
@@ -13,13 +13,16 @@ const VISIBLE = {
   WHEELCHAIR: ['WHEELCHAIR'], STROLLER: ['STROLLER'], WALKER: ['WALKER'],
   CANE: ['CANE', 'CRUTCH'], CRUTCH: ['CRUTCH', 'CANE'], VISUAL_ASSISTANCE: ['CANE'],
 };
-// Free priority seats in the twin's default cabin (twin/src/data/cabinLayout.ts), nearest the entrance first.
+// Used only when the plan has no boarding_target (no cabin snapshot): priority seats nearest the entrance.
 const PRIORITY_SEATS = ['S02', 'S03', 'S09'];
 
 export const matches = (need, labels) => Boolean(need) && (!VISIBLE[need] || labels.some(label => VISIBLE[need].includes(label)));
 
-/** Next journey state after one accepted signal. `planStatus` is the plan in force before the signal. */
-export function advance(journey, channel, payload, planStatus) {
+/**
+ * Next journey state after one accepted signal. `planStatus` and `target` (its boarding_target, the empty
+ * seat or wheelchair bay the planner assigned) belong to the plan in force before the signal.
+ */
+export function advance(journey, channel, payload, planStatus, target = null) {
   const next = { ...journey };
   if (channel === 'booking') {
     const active = payload?.active === true && payload?.intent !== 'ALIGHTING';
@@ -30,7 +33,9 @@ export function advance(journey, channel, payload, planStatus) {
   if (channel === 'perception') {
     const zone = payload?.zone ?? {};
     const labels = (payload?.yolo_detections ?? []).map(d => d.label).filter(Boolean);
-    if (zone.triggered === true) {
+    // Once the booked passenger is on board the journey is finished: other people at the stop are not
+    // part of it, and only a new booking starts the next one.
+    if (zone.triggered === true && next.stage !== 'ON_BOARD') {
       next.stage = 'AT_STOP'; next.labels = [...new Set(labels)]; next.seat = null;
     } else if (next.stage === 'AT_STOP' && zone.triggered === false) {
       // Leaving the stop after a READY plan for a matching passenger is taken as boarding.
@@ -38,7 +43,8 @@ export function advance(journey, channel, payload, planStatus) {
       next.stage = boarded ? 'ON_BOARD' : next.need ? 'BOOKED' : 'IDLE';
       if (boarded) {
         next.boarded = (next.boarded ?? 0) + 1;
-        next.seat = next.need === 'WHEELCHAIR' ? 'WHEELCHAIR_BAY' : PRIORITY_SEATS[(next.boarded - 1) % PRIORITY_SEATS.length];
+        next.seat = target?.id ?? (next.need === 'WHEELCHAIR' ? 'WHEELCHAIR_BAY' : PRIORITY_SEATS[(next.boarded - 1) % PRIORITY_SEATS.length]);
+        next.need = null;  // the booking is used up: the next person at the stop is not matched against it
       }
     }
   }
@@ -64,7 +70,7 @@ export function guidance(journey, context, result) {
   if (journey.stage === 'ON_BOARD') {
     return journey.seat === 'WHEELCHAIR_BAY'
       ? say('Welcome on board', 'The wheelchair space is next to the entrance. The safety operator will help secure the wheelchair.')
-      : say('Welcome on board', `Priority seat ${journey.seat} in the low-floor area near the entrance is reserved for you.`);
+      : say('Welcome on board', `Seat ${journey.seat} is reserved for you. Follow the highlighted route inside the bus.`);
   }
   return say('No active booking', 'Book assistance in the app before you travel.');
 }

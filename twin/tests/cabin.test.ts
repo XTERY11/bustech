@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SEATS, createSeatOccupancy, getCabinSnapshot } from '../src/data/cabinLayout';
 import { createVehicleStore } from '../src/state/vehicleState';
-import { connectTelemetry, normalizeTelemetry } from '../src/adapters/telemetryAdapter';
+import { connectTelemetry, normalizePassengerJourney, normalizeTelemetry } from '../src/adapters/telemetryAdapter';
 import { MockBusSimulator } from '../src/simulation/mockBus';
+import { buildPassengerPath, journeyStageTarget, samplePassengerPath } from '../src/simulation/passengerPath';
 
 globalThis.window = globalThis as unknown as Window & typeof globalThis;
 
@@ -81,4 +82,62 @@ test('read snapshots cannot mutate layout positions and occupancy commands isola
   const before = a.snapshot;
   a.setSeatOccupied('not-a-seat', true);
   assert.equal(a.snapshot, before);
+});
+
+test('passenger journey telemetry validates known seats, remains optional, and null clears it', () => {
+  const valid = {
+    journeyId: 'run-42:passenger-1', aid: 'cane', stage: 'navigating', progress: 0.55,
+    destination: { type: 'SEAT', id: 'S03' },
+  };
+  assert.deepEqual(normalizePassengerJourney(valid), valid);
+  assert.equal(normalizePassengerJourney({ ...valid, journeyId: 'j'.repeat(200) })?.journeyId.length, 200);
+  assert.deepEqual(normalizePassengerJourney({
+    ...valid, aid: 'wheelchair', stage: 'secured',
+    destination: { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' },
+  }), {
+    ...valid, aid: 'wheelchair', stage: 'secured',
+    destination: { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' },
+  });
+  assert.equal(normalizePassengerJourney(null), null);
+
+  const store = createVehicleStore();
+  store.setVehicleState(normalizeTelemetry({ passengerJourney: valid }));
+  assert.deepEqual(store.getState().passengerJourney, valid);
+  store.setVehicleState(normalizeTelemetry({ door: 'open' }));
+  assert.deepEqual(store.getState().passengerJourney, valid, 'an old frame without the optional field must preserve it');
+  store.setVehicleState(normalizeTelemetry({ passengerJourney: null }));
+  assert.equal(store.getState().passengerJourney, null);
+});
+
+test('malformed passenger journeys are ignored instead of replacing valid state', () => {
+  const invalid = [
+    {},
+    { journeyId: 'bad id', aid: 'cane', stage: 'boarding', destination: { type: 'SEAT', id: 'S03' } },
+    { journeyId: 'j1', aid: 'jetpack', stage: 'boarding', destination: { type: 'SEAT', id: 'S03' } },
+    { journeyId: 'j1', aid: 'cane', stage: 'flying', destination: { type: 'SEAT', id: 'S03' } },
+    { journeyId: 'j1', aid: 'cane', stage: 'boarding', destination: { type: 'SEAT', id: 'F01' } },
+    { journeyId: 'j1', aid: 'cane', stage: 'boarding', destination: { type: 'SEAT', id: 'S99' } },
+    { journeyId: 'j1', aid: 'wheelchair', stage: 'boarding', destination: { type: 'WHEELCHAIR_BAY', id: 'wheelchair-bay' } },
+    { journeyId: 'j1', aid: 'cane', stage: 'boarding', destination: { type: 'SEAT', id: 'S03' }, progress: 1.2 },
+    { journeyId: 'j'.repeat(201), aid: 'cane', stage: 'boarding', destination: { type: 'SEAT', id: 'S03' } },
+  ];
+  for (const value of invalid) {
+    assert.equal(normalizePassengerJourney(value), undefined);
+    assert.equal('passengerJourney' in normalizeTelemetry({ passengerJourney: value }), false);
+  }
+});
+
+test('passenger paths begin outside, pass the doorway, and terminate at their validated destination', () => {
+  const seatPath = buildPassengerPath({ type: 'SEAT', id: 'S03' });
+  assert.ok(seatPath);
+  assert.ok(seatPath[0][2] > 2.3, 'the passenger begins outside the kerb-side door');
+  assert.deepEqual(samplePassengerPath(seatPath, 0).position, seatPath[0]);
+  assert.deepEqual(samplePassengerPath(seatPath, 1).position, [-0.66, 0.36, 0.77]);
+
+  const bayPath = buildPassengerPath({ type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' });
+  assert.ok(bayPath);
+  assert.deepEqual(samplePassengerPath(bayPath, 1).position, [-1.55, 0.36, -0.54]);
+  assert.equal(buildPassengerPath({ type: 'SEAT', id: 'F01' }), null);
+  assert.ok(journeyStageTarget('boarding') < journeyStageTarget('navigating'));
+  assert.equal(journeyStageTarget('secured'), 1);
 });

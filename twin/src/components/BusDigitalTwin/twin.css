@@ -27,7 +27,6 @@
   color: var(--tw-text);
   -webkit-font-smoothing: antialiased;
   user-select: none;
-  touch-action: none;
 }
 
 .twin-root[data-theme='dark'] {
@@ -51,6 +50,7 @@
   position: absolute !important;
   inset: 0;
   cursor: grab;
+  touch-action: none;
 }
 .twin-canvas:active { cursor: grabbing; }
 
@@ -180,6 +180,7 @@
   z-index: 30;
 }
 .twin-bar.show { opacity: 1; transform: translate(-50%, 0); }
+.twin-bar--display { width: min(560px, calc(100% - 28px)); pointer-events: auto; }
 .twin-bar--announcement { bottom: 66px; }
 .twin-bar-icon {
   flex: none;
@@ -202,6 +203,28 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.twin-bar--display .twin-bar-text { flex: 1; }
+.twin-bar--display .twin-message-scroll {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: clip;
+  user-select: text;
+}
+.twin-bar--display .twin-message-scroll.isOverflowing {
+  padding-bottom: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(143, 184, 255, 0.72) rgba(255, 255, 255, 0.08);
+}
+.twin-bar--display .twin-message-scroll::-webkit-scrollbar { height: 4px; }
+.twin-bar--display .twin-message-scroll::-webkit-scrollbar-track { border-radius: 8px; background: rgba(255, 255, 255, 0.08); }
+.twin-bar--display .twin-message-scroll::-webkit-scrollbar-thumb { border-radius: 8px; background: rgba(143, 184, 255, 0.72); }
+.twin-bar--display .twin-message-scroll:focus-visible { outline: 1px solid var(--tw-neutral); outline-offset: 1px; }
+.twin-sr-status { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 
 /* ── anchored callouts ──────────────────────────── */
 .twin-anchor { position: relative; width: 0; height: 0; transition: opacity 0.25s; }

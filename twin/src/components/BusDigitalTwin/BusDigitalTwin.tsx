@@ -126,6 +126,7 @@ export function BusDigitalTwin({
           <BusModel
             cutaway={preset === 'cutaway'}
             occupancy={state.seatOccupancy}
+            passengerJourney={state.passengerJourney}
             selectedSeatId={selectedSeatId}
             destination={state.destination}
             announcementActive={!!state.announcement?.active}

@@ -28,6 +28,38 @@ export interface PassengerInfo {
   message?: string;
 }
 
+export type PassengerAid =
+  | 'wheelchair'
+  | 'cane'
+  | 'crutch'
+  | 'walker'
+  | 'stroller'
+  | 'visual'
+  | 'hearing'
+  | 'none';
+
+export type PassengerJourneyStage = 'hidden' | 'boarding' | 'navigating' | 'seated' | 'secured';
+
+type SeatNumber = '01' | '02' | '03' | '04' | '05' | '06' | '07' | '08' | '09' | '10' | '11' | '12' | '13' | '14' | '15' | '16';
+export type FixedSeatId = `S${SeatNumber}`;
+
+export type PassengerDestination =
+  | { type: 'SEAT'; id: FixedSeatId }
+  | { type: 'WHEELCHAIR_BAY'; id: 'WHEELCHAIR_BAY' };
+
+/**
+ * Semantic state for one simulated passenger moving through the cabin.
+ * `progress`, when supplied, is a normalised host hint; rendering remains
+ * smooth when the host only sends the discrete `stage` transitions.
+ */
+export interface PassengerJourney {
+  journeyId: string;
+  aid: PassengerAid;
+  stage: PassengerJourneyStage;
+  destination: PassengerDestination;
+  progress?: number;
+}
+
 export interface VehicleState {
   vehicleId?: string;
   /** Epoch ms of the last update applied (telemetry or local). */
@@ -42,6 +74,8 @@ export interface VehicleState {
   passengerInfo?: PassengerInfo;
   /** Stable seat IDs mapped to simulated occupancy. Missing map means no supplied occupancy. */
   seatOccupancy?: SeatOccupancy;
+  /** Optional presentation-only passenger route. Old telemetry may omit it. */
+  passengerJourney?: PassengerJourney | null;
 }
 
 /** A partial update, as produced by commands or telemetry messages. */
@@ -57,6 +91,7 @@ export const DEFAULT_VEHICLE_STATE: VehicleState = {
   announcement: { active: false, text: '' },
   passengerInfo: undefined,
   seatOccupancy: createSeatOccupancy(),
+  passengerJourney: null,
 };
 
 /** Continuous animation parameters, all normalised 0 → 1. */

@@ -7,8 +7,10 @@ test('server renders the actual AccessRide signal dashboard', async () => {
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /Live channels/);
+  assert.match(html, /NUSNextBus/);
   assert.match(html, /Thinking/);
   assert.match(html, /Action/);
+  assert.match(html, /Preview boarding/);
   assert.match(html, /YOLO/);
   assert.match(html, /<html lang="en"/);
   assert.doesNotMatch(html, /Your site is taking shape|Building your site|Run simulated agent/);
