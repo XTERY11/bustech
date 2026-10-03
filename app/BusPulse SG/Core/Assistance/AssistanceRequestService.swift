@@ -13,6 +13,7 @@ final class AssistanceRequestService {
     private var refreshingRequests: Set<UUID> = []
     private var announcedTriggers: Set<UUID> = []
     private var observingRequests: Set<UUID> = []
+    private var announcedJourneys: [UUID: String] = [:]
 
     init(vehicleCloud: any VehicleCloudServing = MockVehicleCloudService()) {
         vehicleCloudProvider = { vehicleCloud }
@@ -104,7 +105,8 @@ final class AssistanceRequestService {
         defer { refreshingRequests.remove(request.id) }
         // Do not keep presenting a READY result after its five-minute lifetime,
         // including when this version of the hub preserves presentation snapshots.
-        guard now.timeIntervalSince(receipt.submittedAt) < 300 else {
+        // A completed hub journey (ON_BOARD) no longer expires at the hub, so it does not expire here either.
+        guard now.timeIntervalSince(receipt.submittedAt) < 300 || session.journey?.isCompleted == true else {
             setFeedback(.expired, for: request)
             return
         }
@@ -115,6 +117,7 @@ final class AssistanceRequestService {
                   sessions[request.context.id]?.hubFeedback?.isTerminal != true,
                   sessions[request.context.id]?.hubFeedback != .cancelling,
                   !failedCancellations.contains(request.id) else { return }
+            if applyJourney(snapshot, for: request, receipt: receipt) { return }
             setFeedback(snapshot.feedback(for: request, eventID: receipt.providerReference, now: now), for: request)
             sessions[request.context.id]?.busAtStop = snapshot.busIsAtStop(
                 for: request, eventID: receipt.providerReference, now: now)
@@ -149,7 +152,8 @@ final class AssistanceRequestService {
               session.phase != .cancelled, session.phase != .completed,
               session.hubFeedback?.isTerminal != true, session.hubFeedback != .cancelling,
               !failedCancellations.contains(request.id), let receipt = session.receipt,
-              now.timeIntervalSince(receipt.submittedAt) < 300 else { return }
+              now.timeIntervalSince(receipt.submittedAt) < 300 || session.journey?.isCompleted == true else { return }
+        if applyJourney(snapshot, for: request, receipt: receipt) { return }
         if session.triggeredAt == nil, snapshot.hasTrigger(for: request, receipt: receipt, now: now) {
             sessions[request.context.id]?.triggeredAt = now
             sessions[request.context.id]?.triggerObservedAt = snapshot.perceptionObservedAt
@@ -159,6 +163,48 @@ final class AssistanceRequestService {
                                           roiID: session.triggerROI, now: now) {
             sessions[request.context.id]?.exitTriggeredAt = now
         }
+    }
+
+    /// v0.5 hubs publish one passenger journey. When the snapshot has one, it replaces the legacy
+    /// trigger latching, vehicle telemetry check, freshness window and ROI correlation, and the
+    /// stage may move back (AT_STOP → BOOKED) exactly as the hub decides. Returns false for older hubs.
+    private func applyJourney(_ snapshot: HubSnapshot, for request: AssistanceRequest,
+                              receipt: VehicleSubmissionReceipt) -> Bool {
+        guard snapshot.journey != nil else { return false }
+        guard isCurrent(request), let session = sessions[request.context.id] else { return true }
+        if let journey = snapshot.ownJourney(eventID: receipt.providerReference) {
+            // Polling and the event stream can arrive out of order; never step back to an older revision.
+            if let current = session.journey, current.journey_id == journey.journey_id,
+               (journey.revision ?? 0) < (current.revision ?? 0) { return true }
+            sessions[request.context.id]?.journey = journey
+            sessions[request.context.id]?.navigation = snapshot.navigation
+        }
+        setFeedback(snapshot.feedback(for: request, eventID: receipt.providerReference), for: request)
+        return true
+    }
+
+    /// The hub's journey for this request, or nil when the hub predates v0.5.
+    func journey(for request: AssistanceRequest) -> HubJourney? {
+        guard isCurrent(request) else { return nil }
+        return sessions[request.context.id]?.journey
+    }
+
+    func navigation(for request: AssistanceRequest) -> HubNavigation? {
+        guard isCurrent(request) else { return nil }
+        return sessions[request.context.id]?.navigation
+    }
+
+    /// Announces new hub guidance once, across view instances. Stale revisions never reach the
+    /// session (see applyJourney); a newer revision with the same words (e.g. pending_exit) is not
+    /// repeated, while returning to earlier guidance (AT_STOP → BOOKED) is announced again.
+    func takeJourneyFeedback(for request: AssistanceRequest) -> HubJourney? {
+        guard let journey = journey(for: request), journey.guidanceTitle != nil,
+              let feedback = sessions[request.context.id]?.hubFeedback,
+              !feedback.isTerminal, feedback != .cancelling,
+              !failedCancellations.contains(request.id),
+              announcedJourneys[request.id] != journey.announcementKey else { return nil }
+        announcedJourneys[request.id] = journey.announcementKey
+        return journey
     }
 
     func hasTriggered(for request: AssistanceRequest) -> Bool {

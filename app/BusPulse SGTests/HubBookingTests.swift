@@ -164,7 +164,7 @@ struct HubBookingTests {
         #expect(AssistanceRequest.arrivalMessage(estimatedArrival: now, now: now) == "The bus is arriving.")
     }
 
-    @Test("Trigger latches across false, lost connection and repeat events, and resets for a new request")
+    @Test("Legacy hub without journey: trigger latches across false, lost connection and repeat events, and resets for a new request")
     @MainActor
     func triggerLifecycle() async throws {
         let request = booking()
@@ -197,7 +197,7 @@ struct HubBookingTests {
         #expect(!service.takeTriggerFeedback(for: replacement))
     }
 
-    @Test("Old or unrelated triggers cannot confirm a request; SSE snapshots preserve short pulses")
+    @Test("Legacy hub without journey: old or unrelated triggers cannot confirm a request; SSE snapshots preserve short pulses")
     func triggerOwnershipAndStream() throws {
         // Use an exact second: epoch-millisecond serialization can round a live Date below its receipt.
         let request = booking(), now = Date(timeIntervalSince1970: 1_700_000_000)
@@ -215,7 +215,7 @@ struct HubBookingTests {
         #expect(try HubStreamEvent.snapshot(from: Data(#"{"type":"result","data":{}}"#.utf8)) == nil)
     }
 
-    @Test("Arrival needs matching fresh stopped vehicle telemetry")
+    @Test("Legacy hub without journey: arrival needs matching fresh stopped vehicle telemetry")
     func boardingArrivalContract() throws {
         let request = booking(), now = Date.now
         func state(_ vehicle: [String: Any]?) throws -> HubSnapshot {
@@ -245,7 +245,7 @@ struct HubBookingTests {
         #expect(result.passengerMessage == "Please wait for the safety operator.")
     }
 
-    @Test("Boarding follows trigger and clears on disconnect, movement and cancellation")
+    @Test("Legacy hub without journey: boarding follows trigger and clears on disconnect, movement and cancellation")
     @MainActor
     func boardingLifecycle() async throws {
         let request = booking(), event = "app-booking-\(request.id.uuidString)"
@@ -283,7 +283,7 @@ struct HubBookingTests {
         #expect(!service.busIsAtStop(for: request))
     }
 
-    @Test("Signal 2 requires a fresh explicit exit for the same booking and ROI after entry")
+    @Test("Legacy hub without journey: signal 2 requires a fresh explicit exit for the same booking and ROI after entry")
     func exitContractAndStream() throws {
         let request = booking(), now = Date(timeIntervalSince1970: 1_700_000_000)
         let receipt = VehicleSubmissionReceipt(requestID: request.id, providerReference: "ours",
@@ -313,7 +313,7 @@ struct HubBookingTests {
         }
     }
 
-    @Test("Signal 2 latches after entry, preserves guidance, deduplicates audio and clears with the session")
+    @Test("Legacy hub without journey: signal 2 latches after entry, preserves guidance, deduplicates audio and clears with the session")
     @MainActor
     func exitLifecycle() async throws {
         let request = booking(), event = "app-booking-\(request.id.uuidString)"
@@ -350,6 +350,225 @@ struct HubBookingTests {
         #expect(!service.hasExitTriggered(for: request))
     }
 
+
+    // MARK: v0.5 hub journey
+
+    @Test("Journey and navigation decode from a v0.5 snapshot; older or malformed journeys fall back")
+    func journeyDecoding() throws {
+        let request = booking(), now = Date(timeIntervalSince1970: 1_800_000_000)
+        let onBoard = try decode(snapshotJSON(request: request, eventID: "ours", time: now,
+            journey: journeyJSON("ours", revision: 8, stage: "ON_BOARD", matched: true, labels: ["WHEELCHAIR"],
+                                 completed: true, reason: "boarding_preview",
+                                 title: "Follow the wheelchair-space guidance", text: "From the entrance, face into the bus.",
+                                 animation: ["id": "ours:boarding", "phase": "boarding", "aid": "wheelchair",
+                                             "started_at": 1_800_000_000_000.0, "duration_ms": 16000,
+                                             "target": ["type": "WHEELCHAIR_BAY", "id": "WHEELCHAIR_BAY"]]),
+            navigation: navigationJSON(phase: "TO_WHEELCHAIR_BAY", destination: ["type": "WHEELCHAIR_BAY", "id": "WHEELCHAIR_BAY"],
+                                       steps: true)))
+        let journey = try #require(onBoard.journey)
+        #expect(journey.journeyStage == .onBoard)
+        #expect(journey.isMatched && journey.isCompleted)
+        #expect(journey.revision == 8)
+        #expect(journey.labels == ["WHEELCHAIR"])
+        #expect(journey.boarding_target?.title == "Wheelchair bay")
+        #expect(journey.animation?.duration_ms == 16000)
+        #expect(journey.guidanceTitle == "Follow the wheelchair-space guidance")
+        let navigation = try #require(onBoard.navigation)
+        #expect(navigation.visibleSteps.map(\.maneuver) == ["START", "STRAIGHT", "TURN_RIGHT", "ARRIVE"])
+        #expect(navigation.visibleSteps.first?.distance_m == nil)
+        #expect(navigation.visibleSteps[1].distance_m == 0.9)
+        #expect(navigation.cabin_route?.steps?.count == 4)
+        #expect(onBoard.ownJourney(eventID: "ours") != nil)
+        #expect(onBoard.ownJourney(eventID: "other") == nil)
+        #expect(HubBoardingTarget(type: "SEAT", id: "S03").title == "Seat S03")
+        #expect(HubBoardingTarget(type: "BUS_STOP", id: "09048").title == nil)
+
+        let legacy = try decode(snapshotJSON(request: request, eventID: "ours", time: now))
+        #expect(legacy.journey == nil && legacy.navigation == nil)
+        var payload = try JSONSerialization.jsonObject(with: Data(snapshotJSON(request: request, eventID: "ours", time: now).utf8)) as! [String: Any]
+        payload["journey"] = ["stage": 3, "revision": "x"]
+        payload["navigation"] = NSNull()
+        let malformed = try JSONDecoder().decode(HubSnapshot.self, from: JSONSerialization.data(withJSONObject: payload))
+        #expect(malformed.journey == nil)
+        #expect(malformed.result?.plan_status == .ready)
+    }
+
+    @Test("Journey feedback follows the hub: ownership, cancel, expiry, and no local expiry once completed")
+    func journeyFeedback() throws {
+        let request = booking(), now = Date(timeIntervalSince1970: 1_800_000_000)
+        func state(_ id: String, stage: String, reason: String, completed: Bool = false, title: String = "Title",
+                   running: String? = nil) throws -> HubSnapshot {
+            try decode(snapshotJSON(request: request, eventID: "ours", time: now, running: running,
+                journey: journeyJSON(id, revision: 2, stage: stage, completed: completed, reason: reason,
+                                     title: title, text: "Text")))
+        }
+        #expect(try state("ours", stage: "BOOKED", reason: "booked").feedback(for: request, eventID: "ours", now: now).result != nil)
+        #expect(try state("ours", stage: "BOOKED", reason: "booked", running: "run-1").feedback(for: request, eventID: "ours", now: now) == .planning)
+        #expect(try state("someone-else", stage: "BOOKED", reason: "booked").feedback(for: request, eventID: "ours", now: now) == .replaced)
+        #expect(try state("ours", stage: "IDLE", reason: "cancelled", title: "Booking cancelled").feedback(for: request, eventID: "ours", now: now) == .cancelled)
+        #expect(try state("ours", stage: "IDLE", reason: "expired", title: "Booking expired").feedback(for: request, eventID: "ours", now: now) == .expired)
+        // The legacy path expired at 300 s from the booking's observed_at; a completed journey does not.
+        let boarded = try state("ours", stage: "ON_BOARD", reason: "boarding_preview", completed: true)
+        #expect(boarded.feedback(for: request, eventID: "ours", now: now.addingTimeInterval(900)).result != nil)
+    }
+
+    @Test("Venue: a mismatching stroller enters and leaves, then the matching wheelchair enters, leaves and is ON_BOARD")
+    @MainActor
+    func venueJourney() async throws {
+        let request = booking(), event = "app-booking-\(request.id.uuidString)"
+        let t = Date.now
+        let wheelchairBay: [String: Any] = ["type": "WHEELCHAIR_BAY", "id": "WHEELCHAIR_BAY"]
+        func state(_ journey: [String: Any], navigation: [String: Any]? = nil, triggered: Bool = false,
+                   zoneEvent: String? = nil) -> String {
+            snapshotJSON(request: request, eventID: event, time: t, triggered: triggered, zoneEvent: zoneEvent,
+                         roiID: "stop-a", journey: journey, navigation: navigation)
+        }
+        let toStop = navigationJSON(phase: "TO_STOP", destination: ["type": "BUS_STOP", "id": "DEMO_STOP"], steps: false)
+        let booked = state(journeyJSON(event, revision: 2, stage: "BOOKED", reason: "booked",
+                                       title: "Go to the bus stop", text: "Please go to the marked boarding point at the demo bus stop for route 400. Your assistance plan is ready."),
+                           navigation: toStop)
+        let stroller = state(journeyJSON(event, revision: 3, stage: "AT_STOP", labels: ["STROLLER"], reason: "unmatched",
+                                         title: "Please wait at the stop", text: "The detected assistance does not match the booking. Please wait for the safety operator."),
+                             navigation: navigationJSON(phase: "WAIT_AT_STOP", destination: ["type": "BUS_STOP", "id": "DEMO_STOP"], steps: false),
+                             triggered: true, zoneEvent: "enter")
+        let strollerLeft = state(journeyJSON(event, revision: 4, stage: "BOOKED", reason: "unmatched",
+                                             title: "Go to the bus stop", text: "Please go to the marked boarding point at the demo bus stop for route 400. Your assistance plan is ready."),
+                                 navigation: toStop, zoneEvent: "exit")
+        let wheelchair = state(journeyJSON(event, revision: 6, stage: "AT_STOP", matched: true, labels: ["WHEELCHAIR"], reason: "entered",
+                                           title: "Bus arriving", text: "We have recognised you at the bus stop. The bus is arriving; please stay behind the marked boarding line.",
+                                           animation: ["id": "\(event):legacy:5:arrival", "phase": "arrival", "aid": "wheelchair",
+                                                       "started_at": t.timeIntervalSince1970 * 1000, "duration_ms": 10000, "target": wheelchairBay]),
+                               triggered: true, zoneEvent: "enter")
+        let preparing = state(journeyJSON(event, revision: 6, stage: "AT_STOP", matched: true, labels: ["WHEELCHAIR"], reason: "entered",
+                                          title: "Preparing to board", text: "The bus has stopped and is preparing the entrance. Please wait for the safety operator to signal."),
+                              triggered: true, zoneEvent: "present")
+        let leaving = state(journeyJSON(event, revision: 7, stage: "AT_STOP", matched: true, labels: ["WHEELCHAIR"], pendingExit: true,
+                                        reason: "left_stop", title: "Preparing to board",
+                                        text: "The bus has stopped and is preparing the entrance. Please wait for the safety operator to signal."),
+                            zoneEvent: "exit")
+        let onBoard = state(journeyJSON(event, revision: 8, stage: "ON_BOARD", matched: true, labels: ["WHEELCHAIR"], completed: true,
+                                        reason: "boarding_preview", title: "Follow the wheelchair-space guidance",
+                                        text: "From the entrance, face into the bus. Continue straight for 0.9 metres. Turn right. Arrive at the wheelchair space."),
+                            navigation: navigationJSON(phase: "TO_WHEELCHAIR_BAY", destination: wheelchairBay, steps: true))
+        HubURLProtocol.fixture.reset([.response(202, #"{"accepted":true}"#), .response(200, booked),
+            .response(200, stroller), .response(200, strollerLeft), .response(200, wheelchair), .response(200, preparing),
+            .response(200, leaving), .response(200, onBoard), .response(200, onBoard)])
+        let service = AssistanceRequestService(vehicleCloud: client())
+        await service.send(request)
+
+        // Round 1: booked, go to the stop.
+        #expect(service.journey(for: request)?.journeyStage == .booked)
+        #expect(service.takeJourneyFeedback(for: request)?.guidanceTitle == "Go to the bus stop")
+        #expect(service.takeJourneyFeedback(for: request) == nil)
+
+        // The stroller does not match: wait, and never the legacy "bus is here".
+        await service.refreshFeedback(for: request)
+        #expect(service.journey(for: request)?.journeyStage == .atStop)
+        #expect(service.journey(for: request)?.isMatched == false)
+        #expect(service.journey(for: request)?.reason == "unmatched")
+        #expect(!service.hasTriggered(for: request))
+        #expect(!service.busIsAtStop(for: request))
+        #expect(service.takeJourneyFeedback(for: request)?.guidanceTitle == "Please wait at the stop")
+
+        // It leaves: back to round 1 instead of latching.
+        await service.refreshFeedback(for: request)
+        #expect(service.journey(for: request)?.journeyStage == .booked)
+        #expect(!service.hasExitTriggered(for: request))
+        #expect(service.takeJourneyFeedback(for: request)?.guidanceTitle == "Go to the bus stop")
+
+        // Round 2: the wheelchair matches.
+        await service.refreshFeedback(for: request)
+        #expect(service.journey(for: request)?.journeyStage == .atStop)
+        #expect(service.journey(for: request)?.isMatched == true)
+        #expect(service.journey(for: request)?.animation?.phase == "arrival")
+        #expect(service.takeJourneyFeedback(for: request)?.guidanceTitle == "Bus arriving")
+        await service.refreshFeedback(for: request)
+        #expect(service.takeJourneyFeedback(for: request)?.guidanceTitle == "Preparing to board") // Same revision, new title.
+
+        // A matching exit before the arrival animation ends is not boarding yet.
+        await service.refreshFeedback(for: request)
+        #expect(service.journey(for: request)?.journeyStage == .atStop)
+        #expect(service.journey(for: request)?.pending_exit == true)
+        #expect(service.takeJourneyFeedback(for: request) == nil)
+
+        // Round 3: on board with the assigned place and step-by-step guidance.
+        await service.refreshFeedback(for: request)
+        let boarded = try #require(service.journey(for: request))
+        #expect(boarded.journeyStage == .onBoard)
+        #expect(boarded.boarding_target?.title == "Wheelchair bay")
+        #expect(service.navigation(for: request)?.visibleSteps.count == 4)
+        #expect(service.takeJourneyFeedback(for: request)?.guidanceTitle == "Follow the wheelchair-space guidance")
+        #expect(service.takeJourneyFeedback(for: request) == nil)
+
+        // The hub keeps a completed journey; the App's local five-minute expiry must not override it.
+        await service.refreshFeedback(for: request, now: .now.addingTimeInterval(400))
+        #expect(service.session(for: request.context)?.hubFeedback?.isTerminal == false)
+        #expect(service.journey(for: request)?.journeyStage == .onBoard)
+    }
+
+    @Test("An older journey revision delivered late never replaces a newer one; another booking replaces ours")
+    @MainActor
+    func journeyOrderingAndReplacement() async throws {
+        let request = booking(), event = "app-booking-\(request.id.uuidString)"
+        let atStop = snapshotJSON(request: request, eventID: event, journey: journeyJSON(event, revision: 6, stage: "AT_STOP",
+            matched: true, labels: ["WHEELCHAIR"], reason: "entered", title: "Bus arriving", text: "Text"))
+        let stale = snapshotJSON(request: request, eventID: event, journey: journeyJSON(event, revision: 2, stage: "BOOKED",
+            reason: "booked", title: "Go to the bus stop", text: "Text"))
+        let other = snapshotJSON(request: request, eventID: "app-booking-other", journey: journeyJSON("app-booking-other",
+            revision: 9, stage: "BOOKED", reason: "booked", title: "Go to the bus stop", text: "Text"))
+        HubURLProtocol.fixture.reset([.response(202, #"{"accepted":true}"#), .response(200, atStop),
+            .response(200, stale), .response(200, other)])
+        let service = AssistanceRequestService(vehicleCloud: client())
+        await service.send(request)
+        #expect(service.journey(for: request)?.revision == 6)
+        await service.refreshFeedback(for: request)
+        #expect(service.journey(for: request)?.revision == 6)
+        #expect(service.journey(for: request)?.journeyStage == .atStop)
+        await service.refreshFeedback(for: request)
+        #expect(service.session(for: request.context)?.hubFeedback == .replaced)
+        #expect(service.takeJourneyFeedback(for: request) == nil)
+    }
+
+    @Test("Cancelling from the App ends the journey screen; the hub's cancelled journey is terminal")
+    @MainActor
+    func journeyCancellation() async throws {
+        let request = booking(), event = "app-booking-\(request.id.uuidString)"
+        let booked = snapshotJSON(request: request, eventID: event, journey: journeyJSON(event, revision: 2, stage: "BOOKED",
+            reason: "booked", title: "Go to the bus stop", text: "Text"))
+        HubURLProtocol.fixture.reset([.response(202, #"{"accepted":true}"#), .response(200, booked),
+            .response(200, booked), .response(202, #"{"accepted":true}"#)])
+        let service = AssistanceRequestService(vehicleCloud: client())
+        await service.send(request)
+        #expect(service.journey(for: request)?.journeyStage == .booked)
+        await service.cancel(request)
+        #expect(service.session(for: request.context)?.phase == .cancelled)
+        #expect(service.session(for: request.context)?.hubFeedback == .cancelled)
+        #expect(service.takeJourneyFeedback(for: request) == nil)
+        let posts = HubURLProtocol.fixture.calls.filter { $0.body != nil }
+        let cancellation = try JSONDecoder().decode(HubBookingEnvelope.self, from: #require(posts.last?.body))
+        #expect(!cancellation.payload.active)
+
+        // Hub-side end of this booking (e.g. expiry) uses the hub's wording and stops the journey screen.
+        let cancelled = try decode(snapshotJSON(request: request, eventID: event, active: false,
+            journey: journeyJSON(event, revision: 3, stage: "IDLE", reason: "cancelled", title: "Booking cancelled",
+                                 text: "Your assistance request has been cancelled.", target: nil)))
+        #expect(cancelled.feedback(for: request, eventID: event).isTerminal)
+        #expect(cancelled.journey?.guidanceText == "Your assistance request has been cancelled.")
+    }
+
+    @Test("The passenger twin URL keeps the token in the fragment")
+    func passengerTwinURL() throws {
+        let receiver = AssistanceReceiverConfiguration(isEnabled: true, scheme: .http, host: " 192.168.1.20 ", port: "8787")
+        #expect(try receiver.passengerTwinURL(token: "abc123").absoluteString == "http://192.168.1.20:3000/passenger-twin#token=abc123")
+        #expect(try receiver.passengerTwinURL(token: "", dashboardPort: 3105).absoluteString == "http://192.168.1.20:3105/passenger-twin")
+        let url = try receiver.passengerTwinURL(token: "a b&c")
+        #expect(url.query == nil)
+        #expect(url.fragment(percentEncoded: true) == "token=a%20b%26c")
+        #expect(throws: AssistanceReceiverConfigurationError.invalidHost) {
+            try AssistanceReceiverConfiguration(isEnabled: true, host: "").passengerTwinURL(token: "x")
+        }
+    }
+
     private func booking(actions: [AssistanceAction] = [.deployWheelchairRamp, .additionalBoardingTime],
                          ramp: RampPreference = .requested, interaction: InteractionMode = .visual) -> AssistanceRequest {
         AssistanceRequest(context: AssistanceContext(stopCode: "DEMO_STOP", stopName: "Demo", roadName: "",
@@ -368,18 +587,46 @@ struct HubBookingTests {
 
     private func snapshotJSON(request: AssistanceRequest, eventID: String, time: Date = .now,
                               status: String = "READY", running: String? = nil, active: Bool = true, source: String = "external", triggered: Bool = false,
-                              zoneEvent: String? = nil, roiID: String? = nil) -> String {
+                              zoneEvent: String? = nil, roiID: String? = nil,
+                              journey: [String: Any]? = nil, navigation: [String: Any]? = nil) -> String {
         var zone: [String: Any] = ["triggered": triggered]
         zone["event"] = zoneEvent
         zone["roi_id"] = roiID
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "source": source, "channels": ["booking": ["event_id": eventID, "observed_at": time.timeIntervalSince1970 * 1000], "perception": ["event_id": "sense-1", "observed_at": time.timeIntervalSince1970 * 1000]],
             "context": ["request": ["active": active, "route_id": request.busService, "stop_id": request.context.stopCode], "perception": ["zone": zone]],
             "running": running as Any? ?? NSNull(),
             "result": ["request_id": "run-1", "plan_status": status, "simulated": true, "execution_authorized": false,
                        "passenger_communication": ["channel": "BOTH", "language": "en-SG", "display_text": "Wait for guidance.", "audio_text": "Wait for guidance."]]
         ]
+        // v0.5 hubs always send both keys; the legacy tests above model an older hub without them.
+        if let journey { payload["journey"] = journey; payload["navigation"] = navigation ?? NSNull() }
         return String(data: try! JSONSerialization.data(withJSONObject: payload), encoding: .utf8)!
+    }
+
+    /// Shaped like dashboard/backend/journey.mjs output (see app/docs/hub-v05-gap.md section 5).
+    private func journeyJSON(_ id: String, revision: Int, stage: String, matched: Bool = false, labels: [String] = [],
+                             pendingExit: Bool = false, completed: Bool = false, reason: String,
+                             title: String, text: String, animation: [String: Any]? = nil,
+                             target: [String: Any]? = ["type": "WHEELCHAIR_BAY", "id": "WHEELCHAIR_BAY"]) -> [String: Any] {
+        [
+            "journey_id": id, "revision": revision, "stage": stage, "need": "WHEELCHAIR", "labels": labels,
+            "matched": matched, "pending_exit": pendingExit, "completed": completed, "reason": reason,
+            "seat": (target?["id"] as Any?) ?? NSNull(), "boarding_target": (target as Any?) ?? NSNull(),
+            "animation": (animation as Any?) ?? NSNull(), "visit_id": NSNull(), "roi_id": "stop-a", "updated_at": 1_800_000_000_000.0,
+            "guidance": ["title": title, "display_text": text, "audio_text": text]
+        ]
+    }
+
+    private func navigationJSON(phase: String, destination: [String: Any], steps: Bool) -> [String: Any] {
+        let route: [[String: Any]] = [
+            ["step": 1, "maneuver": "START", "distance_m": NSNull(), "text": "From the entrance, face into the bus."],
+            ["step": 2, "maneuver": "STRAIGHT", "distance_m": 0.9, "text": "Continue straight for 0.9 metres."],
+            ["step": 3, "maneuver": "TURN_RIGHT", "distance_m": NSNull(), "text": "Turn right."],
+            ["step": 4, "maneuver": "ARRIVE", "distance_m": NSNull(), "text": "Arrive at the wheelchair space."]
+        ]
+        return ["id": "journey", "revision": 1, "phase": phase, "destination": destination, "instruction": "Text",
+                "simulated": true, "steps": steps ? route : [], "cabin_route": ["steps": route, "simulated": true]]
     }
 }
 

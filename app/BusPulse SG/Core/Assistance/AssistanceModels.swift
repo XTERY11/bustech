@@ -333,6 +333,9 @@ struct AssistanceSession: Codable, Equatable, Hashable, Sendable {
     var triggerROI: String? = nil
     var exitTriggeredAt: Date? = nil
     var busAtStop: Bool? = nil
+    /// v0.5 hub journey for this booking. When present it drives the status screen instead of the triggers above.
+    var journey: HubJourney? = nil
+    var navigation: HubNavigation? = nil
 }
 
 struct AssistantInterpretation: Equatable, Hashable, Sendable {

@@ -122,12 +122,152 @@ struct HubResult: Codable, Hashable, Sendable {
     }
 }
 
+enum HubJourneyStage: String, Codable, Hashable, Sendable {
+    case idle = "IDLE"
+    case booked = "BOOKED"
+    case atStop = "AT_STOP"
+    case onBoard = "ON_BOARD"
+}
+
+struct HubBoardingTarget: Codable, Hashable, Sendable {
+    let type: String?
+    let id: String?
+
+    var isWheelchairBay: Bool { type == "WHEELCHAIR_BAY" }
+
+    /// "Wheelchair bay" or "Seat S03", as the dashboard labels the assigned place; nil for a bus stop.
+    var title: String? {
+        if isWheelchairBay { return "Wheelchair bay" }
+        guard type == "SEAT", let id, !id.isEmpty else { return nil }
+        return "Seat \(id)"
+    }
+}
+
+/// The hub's single passenger journey (dashboard/backend/journey.mjs). Every field is optional so
+/// an older or newer hub still decodes; `guidance` is the exact English text the dashboard shows.
+struct HubJourney: Codable, Hashable, Sendable {
+    var journey_id: String? = nil
+    var revision: Int? = nil
+    var stage: String? = nil
+    var matched: Bool? = nil
+    var pending_exit: Bool? = nil
+    var completed: Bool? = nil
+    var reason: String? = nil
+    var need: String? = nil
+    var labels: [String]? = nil
+    var seat: String? = nil
+    var boarding_target: HubBoardingTarget? = nil
+    var animation: Animation? = nil
+    var guidance: Guidance? = nil
+
+    struct Animation: Codable, Hashable, Sendable {
+        let id: String?
+        let phase: String?
+        let aid: String?
+        let started_at: Double?
+        let duration_ms: Double?
+    }
+
+    struct Guidance: Codable, Hashable, Sendable {
+        let title: String?
+        let display_text: String?
+        let audio_text: String?
+    }
+
+    var journeyStage: HubJourneyStage? { stage.flatMap(HubJourneyStage.init(rawValue:)) }
+    var isMatched: Bool { matched == true }
+    var isCompleted: Bool { completed == true }
+
+    var guidanceTitle: String? { guidance?.title?.nonEmptyTrimmed }
+    var guidanceText: String? { guidance?.display_text?.nonEmptyTrimmed ?? guidance?.audio_text?.nonEmptyTrimmed }
+    var spokenText: String? { guidance?.audio_text?.nonEmptyTrimmed ?? guidance?.display_text?.nonEmptyTrimmed }
+
+    /// What the passenger is currently told. The arrival guidance ("Bus arriving" → "Preparing to board"
+    /// → "Ready to board") changes on hub timers without a new revision, and a new revision can repeat
+    /// the same words, so announcements compare this rather than the revision alone.
+    var announcementKey: String {
+        "\(journey_id ?? "")|\(stage ?? "")|\(guidanceTitle ?? "")|\(guidanceText ?? "")"
+    }
+
+    /// Hub-side outcome for the booking that `eventID` identifies. The journey replaces the
+    /// App's own trigger latching, vehicle telemetry check and local freshness window.
+    func feedback(eventID: String, source: String, running: String?, result: HubResult?) -> HubFeedback {
+        guard source == "external", journey_id == eventID else { return .replaced }
+        switch journeyStage {
+        case .idle?:
+            switch reason {
+            case "expired": return .expired
+            case "cancelled": return .cancelled
+            default: return .replaced
+            }
+        case .booked?, .atStop?, .onBoard?, nil:
+            if !isCompleted, running != nil { return .planning }
+            guard let result else { return .waiting }
+            return .result(result)
+        }
+    }
+}
+
+struct HubNavigation: Codable, Hashable, Sendable {
+    var phase: String? = nil
+    var destination: HubBoardingTarget? = nil
+    var instruction: String? = nil
+    var steps: [Step]? = nil
+    var cabin_route: CabinRoute? = nil
+
+    struct Step: Codable, Hashable, Sendable {
+        let step: Int?
+        let maneuver: String?
+        let distance_m: Double?
+        let text: String?
+    }
+
+    struct CabinRoute: Codable, Hashable, Sendable {
+        let steps: [Step]?
+    }
+
+    /// Steps that carry text, in hub order.
+    var visibleSteps: [Step] { (steps ?? []).filter { $0.text?.nonEmptyTrimmed != nil } }
+}
+
+extension String {
+    var nonEmptyTrimmed: String? {
+        let value = trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+}
+
 struct HubSnapshot: Decodable, Sendable {
     let source: String
     let channels: [String: Channel]
     let running: String?
     let result: HubResult?
     let context: Context
+    /// v0.5+: absent on older hubs and null for dashboard demo presets.
+    let journey: HubJourney?
+    let navigation: HubNavigation?
+
+    private enum CodingKeys: String, CodingKey {
+        case source, channels, running, result, context, journey, navigation
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        source = try container.decode(String.self, forKey: .source)
+        channels = try container.decode([String: Channel].self, forKey: .channels)
+        running = try container.decodeIfPresent(String.self, forKey: .running)
+        result = try container.decodeIfPresent(HubResult.self, forKey: .result)
+        context = try container.decode(Context.self, forKey: .context)
+        // A malformed journey must not break the legacy fields; fall back to the older path instead.
+        journey = try? container.decodeIfPresent(HubJourney.self, forKey: .journey)
+        navigation = try? container.decodeIfPresent(HubNavigation.self, forKey: .navigation)
+    }
+
+    /// The journey when it belongs to this booking; nil for another booking or an older hub.
+    func ownJourney(eventID: String) -> HubJourney? {
+        guard source == "external", let journey, journey.journey_id == eventID else { return nil }
+        return journey
+    }
 
     struct Channel: Decodable, Sendable {
         let event_id: String
@@ -205,6 +345,9 @@ struct HubSnapshot: Decodable, Sendable {
     }
 
     func feedback(for request: AssistanceRequest, eventID: String, now: Date = .now) -> HubFeedback {
+        if let journey {
+            return journey.feedback(eventID: eventID, source: source, running: running, result: result)
+        }
         guard source == "external", channels["booking"]?.event_id == eventID,
               context.request?.route_id == request.busService,
               context.request?.stop_id == request.context.stopCode else { return .replaced }

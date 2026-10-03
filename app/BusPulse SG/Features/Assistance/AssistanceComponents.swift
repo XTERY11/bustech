@@ -82,6 +82,70 @@ struct AssistanceRequestSummaryCard: View {
     }
 }
 
+/// The hub journey's three rounds, labelled as on the dashboard: Request received → At the stop → On board.
+struct AssistanceJourneyProgress: View {
+    let stage: HubJourneyStage?
+    let matched: Bool
+
+    private static let titles = ["Request received", "At the stop", "On board"]
+
+    /// Index of the current round, or -1 when no booking is active.
+    private var reached: Int {
+        switch stage {
+        case .booked?: 0
+        case .atStop?: 1
+        case .onBoard?: 2
+        case .idle?, nil: -1
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 4) {
+            ForEach(Self.titles.indices, id: \.self) { index in
+                if index > 0 {
+                    Rectangle()
+                        .fill(index <= reached ? Color.pulseTeal : Color.secondary.opacity(0.25))
+                        .frame(height: 2)
+                        .padding(.top, 9)
+                        .accessibilityHidden(true)
+                }
+                VStack(spacing: 6) {
+                    Image(systemName: symbol(for: index))
+                        .font(.headline)
+                        .foregroundStyle(colour(for: index))
+                    Text(Self.titles[index])
+                        .font(.caption2.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(index > reached ? .secondary : .primary)
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(.horizontal, 4)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+        .accessibilityIdentifier("assistance.journey.progress")
+    }
+
+    private var accessibilityText: String {
+        guard reached >= 0 else { return "No active booking" }
+        let waiting = stage == .atStop && !matched ? ", waiting for the safety operator" : ""
+        return "Step \(reached + 1) of 3, \(Self.titles[reached])\(waiting)"
+    }
+
+    private func symbol(for index: Int) -> String {
+        if index < reached || (index == reached && stage == .onBoard) { return "checkmark.circle.fill" }
+        if index == reached { return stage == .atStop && !matched ? "exclamationmark.circle.fill" : "circle.dotted" }
+        return "circle"
+    }
+
+    private func colour(for index: Int) -> Color {
+        if index < reached || (index == reached && stage == .onBoard) { return .pulseGreen }
+        if index == reached { return stage == .atStop && !matched ? .pulseAmber : .pulseTeal }
+        return .secondary
+    }
+}
+
 struct AssistanceStatusRail: View {
     let phase: AssistanceRequestPhase
 

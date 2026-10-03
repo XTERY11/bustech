@@ -72,6 +72,28 @@ struct AssistanceReceiverConfiguration: Codable, Equatable, Sendable {
         }
         return url
     }
+
+    /// The dashboard's passenger twin page (dashboard/app/passenger-twin) on the hub machine.
+    /// It reaches the hub through the dashboard's same-origin /api proxy, so only the token is passed,
+    /// in the fragment: browsers never send a fragment to a server or write it to access logs.
+    func passengerTwinURL(token: String, dashboardPort: Int = 3000) throws -> URL {
+        _ = try endpointURL()
+        var components = URLComponents()
+        components.scheme = scheme.rawValue
+        components.host = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        components.port = dashboardPort
+        components.path = "/passenger-twin"
+        let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedToken.isEmpty {
+            var allowed = CharacterSet.alphanumerics
+            allowed.insert(charactersIn: "-._~")
+            components.percentEncodedFragment = "token=" + (trimmedToken.addingPercentEncoding(withAllowedCharacters: allowed) ?? "")
+        }
+        guard let url = components.url else {
+            throw AssistanceReceiverConfigurationError.invalidHost
+        }
+        return url
+    }
 }
 
 enum AssistanceReceiverConfigurationError: Error, LocalizedError, Equatable, Sendable {

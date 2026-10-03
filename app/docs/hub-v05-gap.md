@@ -6,6 +6,28 @@
 > 行号以提交 `9fc80ee` 为准。dashboard 正在修改 `journey.mjs`，新增规则：`exit` 带 `zone.boarding:false`（人没有朝车走）时
 > 回到 BOOKED，而不是 `pending_exit`。修改后 `journey.mjs` 第 37 行之后的行号会后移 2 行，App 侧结论不变。
 
+## 实施状态（2026-10-03 更新）
+
+本文第 1–5 节是改动前的分析，保留作对照。App 侧已按第 4 节实现，**本机无 Xcode，未在模拟器/真机编译运行**；
+`Core/` 与改动的视图在 macOS SDK 上以 Swift 6 做了类型检查（UIKit 专有 API 用替身），`HubBookingTests` 22 个用例在 macOS 上用
+SwiftPM 实际跑通，真实中枢的 `/api/state` 也能解码。
+
+| 清单项 | 状态 | 位置 |
+|---|---|---|
+| P0 解码 `journey` / `navigation` | 已完成；全部可选，`journey` 格式异常时退回旧逻辑 | `HubBookingContract.swift`（`HubJourney`、`HubNavigation`、`HubSnapshot.init(from:)`） |
+| P0 以 stage 驱动 | 已完成：`journey.journey_id == 本单 event_id` 时按 `stage+matched` 显示，可从 AT_STOP 回到 BOOKED；不再用 trigger 锁存、`busIsAtStop`、10 s 窗口、ROI；轮询与 SSE 乱序时不回退到旧 revision | `AssistanceRequestService.applyJourney` |
+| P0 文案统一 | 已完成：标题/正文为 `journey.guidance`，播报 `title. audio_text`；同一单的同一句话只播一次（新 revision 但文案不变不重播，回到旧文案会再播） | `AssistanceStatusView.announceHubFeedback`、`takeJourneyFeedback` |
+| P1 座位/轮椅位、分步导航 | 已完成：第 3 轮大字显示 `Wheelchair bay` / `Seat S03`，列出 `navigation.steps`（为空时显示 guidance 正文）；第 1 轮显示 "Reserved for you" | `AssistanceStatusView.journeyContent` |
+| P1 动画 | 已完成（方式改为内嵌 dashboard 数字孪生）：AT_STOP+matched 与 ON_BOARD 时用 WKWebView 加载 `http://<中枢 IP>:3000/passenger-twin#token=<token>`，加载失败只显示文字 | `PassengerTwinView.swift`、`dashboard/app/passenger-twin/page.tsx` |
+| P2 过期/取消 | 已完成：`IDLE+cancelled/expired` 显示中枢文案并结束；`completed` 后不再做本地 300 s 过期；`not_boarding` 回到第 1 轮并加一句提示 | 同上 |
+| P2 测试 | 已完成：`HubBookingTests`（旧用例改名为 Legacy，新增场馆场景、乱序、取消、URL）；`boarding_ui_fixture.py` 输出 journey；`SignalTwoUITests` 改为按三轮断言 | — |
+| 仍未做 | 中文文案（中枢只有英文）；按 `aid` 选本地动画（改用孪生）；`scripts/test-bustech-integration.mjs` 写死的 Xcode 路径；没有 journey 的旧中枢仍走旧逻辑 | — |
+
+**LAN 阻塞点**：Next 16 开发服务器默认拦截非 localhost 来源的开发资源（HMR websocket），用局域网 IP 打开页面时
+**React 不会完成 hydration**（孪生 iframe 能显示，但不会连中枢、不会动）。本机实测：`http://localhost:3106/passenger-twin` 正常跟随中枢，
+`http://<LAN IP>:3106/passenger-twin` 停在 "Loading twin…"。需要集成方在 `dashboard/next.config.ts` 加
+`allowedDevOrigins: ['192.168.*.*', '10.*.*.*', '172.*.*.*']`（或具体 IP）后重启。手机浏览器打开主 dashboard 也受同样影响。
+
 ## 0. 结论
 
 - **预约能通**：App 发送的字段全部在 v0.5 schema 内（见第 1 节），`POST /api/booking` 返回 202；`/api/state` 和 SSE
@@ -121,7 +143,7 @@
 
 动画 id 中的 `legacy` 表示该感知没有带 `zone.visit_id`。带上以后，这一段会换成访问编号。
 
-## 6. 联调怎么接
+## 6. 联调怎么接（改动前、旧录像 venue_live_172729；现行步骤见第 7 节）
 
 集成方在另一台 Mac 上运行 `LAN=1 bash start_demo.sh demos/captures/venue_live_172729`，终端会打印
 `hub http://<IP>:8787` 和 `Access token`。手机连同一个 Wi-Fi，进入 **Settings → BusTech signal hub**：启用，选 HTTP，
@@ -158,3 +180,35 @@
 - **单预约**：dashboard 的预设场景或其他人的预约会替换手机的预约（`journey.journey_id` 改变），联调时不要点 dashboard 预设。
 - SSE 每 15 s 发一次 `: keep-alive` 注释行，App 的 60 s 请求超时足够；断线后 App 每秒轮询 `/api/state`，也会补上状态。
 - 文案目前只有英文；App 选 zh-CN 时，中枢仍返回英文 guidance。
+
+## 7. 第一次在真机上运行
+
+给仓库负责人（不是 App 原作者）。手机和 Mac 连同一个 Wi‑Fi。
+
+1. **装 Xcode**（App Store，含 iOS 18+ SDK），打开一次让它装完组件；终端运行 `sudo xcode-select -s /Applications/Xcode.app`。
+2. **打开工程**：双击 `app/BusPulse SG.xcodeproj`。工程用"文件夹同步"，新文件自动包含，不用手动添加。
+   如果提示缺 `Config/Secrets.xcconfig`，按 `app/README.md` 从示例复制一份（LTA key 可留空，会用模拟数据）。
+3. **签名**：左侧选工程 → TARGETS 里的 `BusPulse SG` → Signing & Capabilities：勾 Automatically manage signing，
+   Team 选你自己的 Apple ID（没有就在 Xcode → Settings → Accounts 里登录），Bundle Identifier 改成你自己的，如
+   `com.<你的名字>.buspulse`（原来的 ID 属于原作者，不改会报错）。测试 target 若报签名错误，同样改 Team。
+4. **装到手机**：手机用线连 Mac，信任电脑；iPhone 打开 设置 → 隐私与安全性 → 开发者模式；Xcode 顶部选你的手机，按 ⌘R。
+   第一次启动要在手机 设置 → 通用 → VPN与设备管理 里信任你的开发者证书。
+5. **Mac 上启动演示**：`LAN=1 bash start_demo.sh demos/captures/venue`。终端打印 `hub http://<IP>:8787` 和 `Access token`。
+   先确认 `dashboard/next.config.ts` 已加 `allowedDevOrigins`（见上文"LAN 阻塞点"），否则手机上的孪生动画不会动（文字流程不受影响）。
+   dashboard 生成模式选 **Offline rules**，或配好 `DEEPSEEK_API_KEY`。
+6. **手机上填中枢**：App → Settings → BusTech signal hub：打开开关，选 HTTP，填 IP、端口 `8787`、Bridge token（只存在内存，App 重启后要重填）。
+   第一次连接时系统会问"本地网络"权限，选允许。可先用手机 Safari 打开 `http://<IP>:8787/api/health` 看到 `ok:true`。
+   孪生页地址由 App 自动生成：`http://<同一 IP>:3000/passenger-twin#token=<token>`（端口固定 3000）。
+7. **预约**：Assistant → Demo Booking，需求选 Wheelchair、Stroller、Cane 或 Crutches（回放只有轮椅/婴儿车/手杖三段，Walker 会被判不匹配），发送。
+
+手机上应看到（时间相对于预约）：
+
+| 时间 | 中枢 | 手机 |
+|---|---|---|
+| 0 s | BOOKED | 进度第 1 步 "Request received"；标题 "Go to the bus stop"（LLM 模式先显示 "Booking received"）；站牌；"Reserved for you: Wheelchair bay / Seat Sxx" |
+| ≈5 s | 信号 1：AT_STOP，matched | 第 2 步 "At the stop"；"Bus arriving" → 约 4 s 后 "Preparing to board"；下方出现公交孪生动画；触感 + 播报/VoiceOver 通告 |
+| 中途 | 信号 2：pending_exit | 文案不变（不提前说上车） |
+| ≈15 s | ON_BOARD | 第 3 步 "On board"；大字 "Wheelchair bay" 或 "Seat Sxx"；孪生播放上车动画；下方 "Step by step" 编号步骤；按钮变为 Done |
+
+不匹配时（例如 dashboard 上换了别的预约或回放的辅具与预约不符）会显示 "Please wait at the stop" 和黄色提示，人离开后回到第 1 轮。
+点 Cancel Request 后显示 "Booking cancelled"。孪生页加载失败时只显示一行"The live bus view is unavailable"，文字流程照常。
