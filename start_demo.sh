@@ -31,7 +31,9 @@ if [ "${LAN:-0}" = "1" ]; then
   export BRIDGE_HOST=0.0.0.0
   # The same token on every start of this machine, so the phone app and the dashboard keep working
   # across restarts. It is derived, not stored anywhere; set BRIDGE_TOKEN yourself to use another one.
-  export BRIDGE_TOKEN="${BRIDGE_TOKEN:-$(python3 -c 'import hashlib,uuid,getpass;print(hashlib.sha256(f"bustech-demo:{uuid.getnode()}:{getpass.getuser()}".encode()).hexdigest()[:32])')}"
+  MACHINE_ID="$(ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | awk -F'"' '/IOPlatformUUID/{print $4}')"
+  [ -n "$MACHINE_ID" ] || MACHINE_ID="$(cat /etc/machine-id 2>/dev/null || hostname)"
+  export BRIDGE_TOKEN="${BRIDGE_TOKEN:-$(printf 'bustech-demo:%s:%s' "$MACHINE_ID" "$(id -un)" | shasum -a 256 | cut -c1-32)}"
   DEFAULT_ORIGINS="http://${IP}:${DASHBOARD_PORT},http://127.0.0.1:${DASHBOARD_PORT},http://localhost:${DASHBOARD_PORT}"
   [ -z "${APP_ORIGINS:-}" ] || DEFAULT_ORIGINS="${DEFAULT_ORIGINS},${APP_ORIGINS}"
   export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-${DEFAULT_ORIGINS}}"

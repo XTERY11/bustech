@@ -92,6 +92,16 @@ bash vision/draw_region.sh classroom "http://172.20.10.4:4747/video" down
 
 ### 第 4 步：启动（实时摄像头 + 大模型 + 允许手机连接）
 
+最快的方式是一条命令（场景默认 `classroom`，摄像头地址只在第一次或变化时给）：
+
+```bash
+bash live.sh 172.20.10.4          # 之后直接 bash live.sh
+```
+
+它会依次：检查端口 → 需要时询问 DeepSeek key（不显示、不保存；直接回车就用规则模式）→ 等摄像头可达 → 打印手机 B 要填的主机和端口 → 启动并自动打开 dashboard。换场景：`SCENE=venue bash live.sh <地址>`。
+
+下面是它展开后的等价命令，需要单独调整参数时使用。
+
 在**同一个终端窗口**里：
 
 ```bash

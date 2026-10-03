@@ -17,3 +17,4 @@ vision/weights/yolov8*-worldv2.pt
 vision/weights/yolov8x-world-aids.pt
 vision/trigger_snapshots/
 vision/recordings/
+/vision/scenes/.last_camera
