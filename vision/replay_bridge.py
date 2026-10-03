@@ -88,10 +88,12 @@ def main():
             if args.after_booking:
                 ok, frame = cap.read()
                 cap.set(cv2.CAP_PROP_POS_FRAMES, first)
-                if ok:
-                    shared.set(cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, args.jpeg_quality])[1].tobytes(), {'frames': first})
+                still = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, args.jpeg_quality])[1].tobytes() if ok else b''
                 print('Waiting for a booking (journey stage BOOKED) ...', flush=True)
+                shared.fps = 2
                 while not booked():
+                    if still:  # keep sending the frame: a browser only draws an MJPEG part once the next one arrives
+                        shared.set(still, {'frames': first})
                     time.sleep(0.5)
                 print('Booking seen, playing.', flush=True)
             start, frame_index = time.monotonic(), first
