@@ -5,7 +5,31 @@
 > **「我负责模块 X，请先读第 1–3 节了解全局和契约，再只按第 4 节里模块 X 的内容执行。」**
 > 第 2 节的接口契约是全队共同的上层接口，任何人不得单方面修改；要改先看第 5 节。
 
-状态：v0.3（2026-10-01）· 契约负责人：模块 C 负责人（集成负责人）
+状态：v0.5（2026-10-03）· 契约负责人：模块 C 负责人（集成负责人）
+
+### v0.5 车内导航补充
+
+手机 App 在独立项目内，本仓库只下发导航数据。LLM 在生成已校验动作和座位目标的同一次响应中生成 `navigation_steps` 英文指引，不另外发起一次推理。服务端先按模拟车厢布局计算从单入口内侧、面朝车内开始的路线；模型不得更换目标、左右转顺序或距离。距离是模型几何的近似水平米数，不是真实定位测量。
+
+`Result.cabin_navigation` 新增为 `null` 或 `{layout_id,origin:{type:'ENTRANCE',id:'SINGLE_ENTRANCE',facing:'INTO_BUS'},target,steps,mode:'map_based',simulated:true,requires_operator:true}`。每个 step 为 `{step:number,maneuver:'START'|'STRAIGHT'|'TURN_LEFT'|'TURN_RIGHT'|'ARRIVE',distance_m:number|null,text:string}`；非直行步骤的距离为 null。方向相对于乘客当前面向，不是地图北向；首步明确入口和朝向，末步要求安全员确认，不声明已固定或可发车。
+
+上车阶段的 `Snapshot.navigation.steps` 携带这份路线，`instruction` 为步骤文字；`cabin_route` 携带原始车内导航对象，供 App 提前获知路径。预约/等候阶段的 steps 为空，不提示乘客提前往车内走。仍通过既有 `navigation` SSE 和 `/api/state` 下发。没有乘客实时坐标或逐步完成回执，因此不声称实时转弯纠偏，也不按播放时间自动确认真实乘客已走到某一步。
+
+### v0.4 联调补充（保留；车内导航以 v0.5 为准，旧客户端可忽略新增字段）
+
+- 手机导航：`Snapshot.navigation` 为 `null` 或 `{id, revision, phase, destination, instruction, simulated:true, animation}`。`phase` 为 `TO_STOP / WAIT_AT_STOP / BOARD_BUS / TO_SEAT / TO_WHEELCHAIR_BAY`，`destination` 为 `{type:'BUS_STOP'|'SEAT'|'WHEELCHAIR_BAY',id}`；只提供已知站点 ID 和文字指引，不伪造 GPS 路线。LLM 生成并通过校验后立即推送，不必等下一条 CV 心跳。SSE 新增 `navigation`，data 为 `{navigation,snapshot}`；`result` 的 data 新增 `snapshot`。旧客户端可继续读 `snapshot` 或轮询 `/api/state`。取消/过期时导航为 null。
+- 手机端为独立项目，本仓库不实现手机 UI。中枢只按 HTTP/SSE 契约下发 navigation、journey.guidance 和 animation 时钟，手机端自行呈现；dashboard 同步展示这份数据。
+
+- 保留 `/api/booking`、`/api/perception`、`/api/state`、`/api/events` 和原输入信封。CV 的 `enter/present/exit` 仍是观察事实；`exit` 只表示已经离开 ROI，不表示已坐好或已固定轮椅。暂不新增“即将离开”事件。
+- 每条新预约的 `event_id` 成为中枢生成的 `journey.journey_id`，重试不得生成新 ID。中枢向 planner 注入只读 `booking_event_id`，App 无需增加请求字段。
+- 模拟 `vehicle_context.cabin` 可包含 `{layout_id:'byd-b70a02-photo-v1', occupied_seat_ids:string[], wheelchair_bay_occupied:boolean}`。座位由可信策略根据空位及预约 ID 稳定分配；轮椅只分配轮椅区，普通乘客请求坡道不改变其座位类别。
+- Result 新增 `boarding_target: null | {type:'SEAT',id:'S01'…'S16'} | {type:'WHEELCHAIR_BAY',id:'WHEELCHAIR_BAY'}`。新增动作 `GUIDE_PASSENGER_TO_ASSIGNED_PLACE`，其服务端参数为 `{target_type,target_id}`，位于等待上车与等待就座确认之间。LLM 必须原样返回策略指定的目标。
+- `journey` 保留 `stage/need/labels/matched/seat/guidance`，新增 `journey_id/revision/completed/pending_exit/boarding_target` 及 `animation`。`animation` 为 `null` 或 `{id,phase:'arrival'|'boarding',aid,started_at,duration_ms,target}`；时间为中枢 epoch ms。App 与 dashboard 使用同一份指引、目标和动画描述，心跳不重播动画。
+- CV 进入握手要求 `target_match_confirmed=true`、置信度 ≥0.75、类别符合当前有效预约。信号 1启动模拟公交进站（4200 ms）与车辆准备，总时长10000 ms；不匹配时车保持不动。信号 2必须是明确 `exit` 且 `left` 匹配此次到站类别；规划或准备尚未完成时保留待处理退出。
+- 中枢每次旅程转换、规划完成和预约取消/过期均广播完整 `snapshot`。首次预约可调用 LLM，CV 心跳及两次触发不重复调用 LLM；必要的安全复验只使用规则。
+- `ON_BOARD` 是开环上车展示：保持已分配位置，当前预约不再被后续 CV 输入复用。占用只更新模拟客舱；不能据动画完成宣称真实坐好、轮椅固定完成或允许发车。
+- Twin 新增可选 `arrival:{id:string,progress:number}|null` 及 `passengerJourney:{journeyId,aid,stage,destination,progress}|null` 帧字段。旧帧可省略；null 清除，进度范围0–1。车辆进站和乘客运动都是展示动画。
+
 
 ---
 

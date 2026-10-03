@@ -1,8 +1,15 @@
-import type { HubEvent } from './live-types';
+import type { HubEvent, Snapshot } from './live-types';
+const endpoint = (base: string, path: string) => `${base.trim().replace(/\/+$/, '')}${path}`;
 export async function postSignal(base: string, token: string, path: string, body: unknown) {
-  const response = await fetch(`${base}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body), signal: AbortSignal.timeout(10000) });
+  const response = await fetch(endpoint(base, path), { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body), signal: AbortSignal.timeout(10000) });
   if (!response.ok) { const error = await response.json().catch(() => ({})); throw new Error(error.error || `HTTP_${response.status}`); }
   return response.json();
+}
+
+/** Every journey transition and completed plan can carry the same authoritative state. */
+export function snapshotFromEvent(event: HubEvent): Snapshot | null {
+  if (event.type === 'snapshot') return event.data as unknown as Snapshot;
+  return event.data.snapshot ? event.data.snapshot as Snapshot : null;
 }
 
 // SSE over fetch supports an Authorization header without putting the token in a URL.
@@ -10,7 +17,7 @@ export async function postSignal(base: string, token: string, path: string, body
 export async function watchEvents(base: string, token: string, signal: AbortSignal, onEvent: (event: HubEvent) => void, onConnection: (connected: boolean) => void) {
   while (!signal.aborted) {
     try {
-      const response = await fetch(`${base}/api/events`, { headers: { Accept: 'text/event-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, signal });
+      const response = await fetch(endpoint(base, '/api/events'), { headers: { Accept: 'text/event-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, signal });
       if (!response.ok || !response.body) throw new Error('EVENT_CONNECTION_FAILED');
       onConnection(true);
       const reader = response.body.getReader(), decoder = new TextDecoder(); let pending = '';

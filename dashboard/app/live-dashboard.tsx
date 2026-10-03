@@ -7,8 +7,8 @@ import { TwinPanel } from './components/TwinPanel';
 import { VideoPanel } from './components/VideoPanel';
 import { WordReveal } from './components/WordReveal';
 import { ACTION_LABELS } from './lib/actionLabels';
-import { postSignal, watchEvents } from './live-client';
-import type { Context, HubEvent, Journey, Mode, Result, Snapshot, Summary } from './live-types';
+import { postSignal, snapshotFromEvent, watchEvents } from './live-client';
+import type { Context, HubEvent, Journey, Mode, Navigation, Result, Snapshot, Summary } from './live-types';
 import { offlinePlan } from './offline';
 
 const choices = [
@@ -52,6 +52,7 @@ const labels: Record<string, string> = {
   planning: 'Generation started',
   summary: 'Summary received',
   result: 'Actions received',
+  navigation: 'Passenger guidance updated',
   cancelled: 'Previous run cancelled',
   failure: 'Generation failed',
   discarded: 'Previous result discarded',
@@ -79,6 +80,7 @@ export default function Dashboard() {
   const [visionStatus, setVisionStatus] = useState({ online: false, triggered: false, fps: 0 });
   const [twinReady, setTwinReady] = useState(false);
   const [journey, setJourney] = useState<Journey | null>(null);
+  const [navigation, setNavigation] = useState<Navigation | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
 
@@ -87,6 +89,7 @@ export default function Dashboard() {
     const applySnapshot = (next: Snapshot) => {
       setSnapshot(next);
       setJourney(next.journey ?? null);
+      setNavigation(next.navigation ?? null);
       setRunning(Boolean(next.running));
       setSummary(next.summary);
       setResult(next.result);
@@ -98,12 +101,13 @@ export default function Dashboard() {
     };
     const onEvent = (event: HubEvent) => {
       const data = event.data;
-      if (event.type === 'snapshot') applySnapshot(data as unknown as Snapshot);
+      const authoritative = snapshotFromEvent(event);
+      if (authoritative) applySnapshot(authoritative);
       if (event.type === 'settings') setMode(data.mode as Mode);
       if (event.type === 'signal') {
-        applySnapshot(data.snapshot as Snapshot);
         if (data.changed === false) return;
       }
+      if (event.type === 'navigation' && !authoritative) setNavigation(data.navigation as Navigation | null);
       if (event.type === 'planning') {
         setRunning(true);
         setResult(null);
@@ -232,6 +236,7 @@ export default function Dashboard() {
   const bookingActive = Boolean(request.active);
   const detectionActive = Boolean(detection?.label && detection.label !== 'NONE' && (detection.confidence ?? 0) >= 0.75);
   const modeLabel = mode === 'single' ? 'DeepSeek · Single' : mode === 'two_turn' ? 'DeepSeek · Two turns' : 'Offline rules';
+  const navigationTitle = navigation ? ({ TO_STOP: 'Go to the boarding point', WAIT_AT_STOP: 'Wait at the boarding point', BOARD_BUS: 'Your bus is ready', TO_SEAT: 'Your assigned seat', TO_WHEELCHAIR_BAY: 'Your wheelchair space' })[navigation.phase] : running ? 'Preparing passenger guidance' : journey?.guidance.title ?? 'Waiting for an app booking';
 
   const communication = [
     { label: 'Signal hub', value: connected ? 'Connected' : 'Offline', tone: connected ? 'online' : 'offline' },
@@ -299,6 +304,14 @@ export default function Dashboard() {
         </div>
       </section>
     </section>
+
+    {inputSource === 'external' && journey && <section className="passengerNavigation" aria-label="Passenger journey guidance" aria-live="polite">
+      <div className="passengerNavigationMessage"><p className="sectionKicker">Passenger guidance · shared with app</p><h2>{navigationTitle}</h2><p>{navigation?.instruction ?? (running ? 'Your assistance plan is being prepared. Please wait.' : journey.guidance.display_text)}</p></div>
+      <ol className="journeyProgress" aria-label="Booking, arrival and boarding progress">{[
+        ['BOOKED', 'Request received'], ['AT_STOP', 'At the stop'], ['ON_BOARD', 'On board'],
+      ].map(([stage, label], index) => <li key={stage} className={['BOOKED', 'AT_STOP', 'ON_BOARD'].indexOf(journey.stage) >= index ? 'isReached' : ''} aria-current={journey.stage === stage ? 'step' : undefined}><span>{index + 1}</span>{label}</li>)}</ol>
+      {navigation && <strong className="navigationDestination">{navigation.destination.type === 'SEAT' ? `Seat ${navigation.destination.id}` : navigation.destination.type === 'WHEELCHAIR_BAY' ? 'Wheelchair bay' : `Stop ${navigation.destination.id.replaceAll('_', ' ')}`}</strong>}
+    </section>}
 
     <section className="stageRow" aria-label="Camera and vehicle">
       <VideoPanel onStatusChange={setVisionStatus} />

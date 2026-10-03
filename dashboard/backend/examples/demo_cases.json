@@ -50,6 +50,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -121,6 +134,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -177,6 +203,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": true,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -247,6 +286,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -325,6 +377,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -394,6 +459,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -462,6 +540,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -532,6 +623,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -606,6 +710,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -680,6 +797,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -753,6 +883,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -829,6 +972,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -890,6 +1046,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -949,6 +1118,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -1007,6 +1189,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -1080,6 +1275,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -1154,6 +1362,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -1229,6 +1450,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -1303,6 +1537,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -1378,6 +1625,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -1453,6 +1713,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -1526,6 +1799,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -1600,6 +1886,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": true,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -1674,6 +1973,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",
@@ -1748,6 +2060,19 @@
         "safety_operator_available": true,
         "safety_operator_approval": true,
         "wheelchair_button_pressed": false,
+        "cabin": {
+          "layout_id": "byd-b70a02-photo-v1",
+          "occupied_seat_ids": [
+            "S01",
+            "S04",
+            "S06",
+            "S08",
+            "S10",
+            "S13",
+            "S15"
+          ],
+          "wheelchair_bay_occupied": false
+        },
         "hardware_capabilities": {
           "automatic_short_ramp": "AVAILABLE_FOR_DEMO",
           "manual_ramp": "AVAILABLE_FOR_DEMO",

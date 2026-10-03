@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { plan, revalidateForSimulation } from '../backend/planner/agent.mjs';
 import { DeepSeekClient, DeepSeekError } from '../backend/planner/deepseek.mjs';
-import { normalizeInput, buildPolicy, ruleProposal } from '../backend/planner/policy.mjs';
+import { normalizeInput, buildPolicy, ruleProposal, boardingTargetFor } from '../backend/planner/policy.mjs';
+import { SEAT_IDS } from '../backend/planner/contracts.mjs';
 const cases = JSON.parse(readFileSync(new URL('../backend/examples/demo_cases.json', import.meta.url), 'utf8'));
 const base = () => structuredClone(cases[0].input);
 const mock = value => ({ model: 'mock', usage: { total_tokens: 10 }, value });
@@ -28,7 +29,7 @@ test('passenger audio uses the public demo route and natural boarding guidance',
   assert.equal(result.passenger_communication.channel, 'EXTERNAL_AUDIO');
   assert.equal(
     result.passenger_communication.audio_text,
-    'Route 400. Please keep clear of the entrance. Board only when the safety operator gives the signal.',
+    'Route 400. Please keep clear of the entrance. Board only when the safety operator gives the signal. Proceed to seat S03 when the safety operator invites you to board.',
   );
   assert.equal(result.passenger_communication.display_text, null);
 });
@@ -169,7 +170,7 @@ test('real transport shape disables thinking, caps output, and refuses redirects
     const body = JSON.parse(options.body);
     assert.deepEqual(body.thinking, { type: 'disabled' });
     assert.deepEqual(body.response_format, { type: 'json_object' });
-    assert.equal(body.max_tokens, 800);
+    assert.equal(body.max_tokens, 1400);
     return new Response(JSON.stringify({ model: 'test', choices: [{ finish_reason: 'stop', message: { content: '{}', reasoning_content: 'not retained' } }], usage: { total_tokens: 3 } }));
   } });
   const result = await client.complete([]);
@@ -188,6 +189,243 @@ test('fresh-state revalidation rejects new obstruction, changed geometry and wro
   ]) {
     const changed = base(); mutate(changed);
     assert.equal(revalidateForSimulation(result, changed).valid, false);
+  }
+});
+
+test('all fixtures use the same mixed cabin occupancy as the twin', () => {
+  const expected = { layout_id: 'byd-b70a02-photo-v1', occupied_seat_ids: ['S01', 'S04', 'S06', 'S08', 'S10', 'S13', 'S15'], wheelchair_bay_occupied: false };
+  const fixture = JSON.parse(readFileSync(new URL('../backend/examples/input.json', import.meta.url), 'utf8'));
+  for (const input of [fixture, ...cases.map(c => c.input)]) assert.deepEqual(input.vehicle_context.cabin, expected);
+});
+
+test('trusted cabin destinations are echoed in the result, guidance action and short summary', async () => {
+  for (const [name, target] of [['wheelchair_auto', { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' }], ['crutch', { type: 'SEAT', id: 'S03' }]]) {
+    const result = await plan(cases.find(c => c.name === name).input, { mode: 'rules' });
+    assert.equal(result.schema_version, '2.2');
+    assert.deepEqual(result.boarding_target, target);
+    assert.deepEqual(result.action_plan.find(a => a.action === 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE').parameters, { target_type: target.type, target_id: target.id });
+    assert.ok(result.decision_summary.length <= 3);
+    assert.match(result.decision_summary.join(' '), target.type === 'SEAT' ? /Seat S03/ : /wheelchair bay/);
+  }
+});
+
+test('one booking keeps its seat across reruns and all planner modes, while new bookings can vary', async () => {
+  const input = structuredClone(cases.find(c => c.name === 'crutch').input);
+  input.booking_event_id = 'stable-booking';
+  const expected = boardingTargetFor(input);
+  for (const mode of ['rules', 'single', 'two_turn']) {
+    input.request_id = `rerun-${mode}`;
+    const result = await plan(input, { mode, client: { async complete(messages, { phase }) {
+      const { context, policy } = JSON.parse(messages[1].content);
+      return mock(phase === 'summary' ? { request_id: context.request_id, decision_summary: ['A low-floor place is assigned.'] } : ruleProposal(context, policy));
+    } } });
+    assert.equal(result.meta.validation_passed, true);
+    assert.deepEqual(result.boarding_target, expected);
+  }
+  const destinations = new Set();
+  for (let i = 0; i < 24; i++) {
+    input.booking_event_id = `booking-${i}`;
+    const target = boardingTargetFor(input);
+    assert.ok(['S03', 'S02', 'S09'].includes(target.id));
+    destinations.add(target.id);
+  }
+  assert.ok(destinations.size > 1, 'New booking IDs should not always receive the same seat');
+  delete input.booking_event_id;
+  assert.deepEqual(boardingTargetFor(input), { type: 'SEAT', id: 'S03' }, 'Legacy demos keep their deterministic destination');
+});
+
+test('seat assignment stays in the highest available safe tier and fails closed when that area is full', async () => {
+  const input = structuredClone(cases.find(c => c.name === 'crutch').input);
+  input.vehicle_context.cabin.occupied_seat_ids = [];
+  assert.equal(boardingTargetFor(input).id, 'S03');
+  input.vehicle_context.cabin.occupied_seat_ids = ['S03', 'S02', 'S09', 'S06'];
+  assert.equal(boardingTargetFor(input).id, 'S05');
+  input.vehicle_context.cabin.occupied_seat_ids.push('S05');
+  assert.equal(boardingTargetFor(input).id, 'S08');
+  input.vehicle_context.cabin.occupied_seat_ids.push('S08');
+  const unsuitable = await plan(input, { mode: 'rules' });
+  assert.equal(unsuitable.plan_status, 'NEEDS_CONFIRMATION');
+  assert.equal(unsuitable.boarding_target, null);
+  assert.ok(unsuitable.safety_flags.includes('NO_ACCESSIBLE_PLACE_AVAILABLE'));
+  assert.ok(!unsuitable.action_plan.some(a => a.action === 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE'));
+  input.vehicle_context.cabin.occupied_seat_ids = [...SEAT_IDS];
+  assert.equal((await plan(input, { mode: 'rules' })).plan_status, 'NEEDS_CONFIRMATION');
+});
+
+test('missing cabin and occupied wheelchair bay or foldable seat cannot yield an assigned place', async () => {
+  for (const mutate of [
+    x => { delete x.vehicle_context.cabin; },
+    x => { x.vehicle_context.cabin.wheelchair_bay_occupied = true; },
+    x => { x.vehicle_context.cabin.occupied_seat_ids.push('F01'); },
+  ]) {
+    const input = base(); mutate(input);
+    const result = await plan(input, { mode: 'rules' });
+    assert.equal(result.plan_status, 'NEEDS_CONFIRMATION');
+    assert.equal(result.boarding_target, null);
+    assert.ok(!result.action_plan.some(a => a.action === 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE'));
+  }
+});
+
+test('ramp assistance for a cane or stroller does not assign a wheelchair bay', async () => {
+  for (const need of ['CANE', 'STROLLER']) {
+    const input = base();
+    input.request.accessibility_need = need;
+    const result = await plan(input, { mode: 'rules' });
+    assert.equal(result.plan_status, 'READY');
+    assert.deepEqual(result.boarding_target, { type: 'SEAT', id: 'S03' });
+    assert.ok(result.action_plan.some(a => a.action === 'DEPLOY_AUTOMATIC_SHORT_RAMP'));
+    assert.ok(!result.action_plan.some(a => a.action === 'PREPARE_WHEELCHAIR_AREA'));
+  }
+});
+
+test('cabin and booking/visit identities are schema checked before any model call', async () => {
+  for (const mutate of [
+    x => { x.booking_event_id = 'invalid booking'; },
+    x => { x.perception.zone = { visit_id: 'invalid visit' }; },
+    x => { x.vehicle_context.cabin.layout_id = 'unknown-layout'; },
+    x => { x.vehicle_context.cabin.occupied_seat_ids.push('S99'); },
+    x => { x.vehicle_context.cabin.occupied_seat_ids.push('S01'); },
+    x => { x.vehicle_context.cabin.wheelchair_bay_occupied = 'false'; },
+    x => { delete x.vehicle_context.cabin.occupied_seat_ids; },
+  ]) {
+    const input = base(); mutate(input);
+    const result = await plan(input, { client: { complete() { assert.fail('Invalid cabin or identity must not reach the model'); } } });
+    assert.equal(result.meta.error, 'INPUT_INVALID');
+    assert.equal(result.boarding_target, null);
+    assert.equal(result.meta.api_calls, 0);
+  }
+  const input = base(); input.booking_event_id = 'booking:stable-01'; input.perception.zone = { triggered: true, event: 'enter', visit_id: 'visit:01' };
+  assert.equal(normalizeInput(input).perception.zone.visit_id, 'visit:01');
+});
+
+test('missing, invented, occupied or semantically invalid model destinations are rejected', async () => {
+  const input = structuredClone(cases.find(c => c.name === 'crutch').input);
+  for (const mutate of [
+    p => { delete p.boarding_target; },
+    p => { p.boarding_target = null; },
+    p => { p.boarding_target = { type: 'SEAT', id: 'S01' }; },
+    p => { p.boarding_target = { type: 'SEAT', id: 'S99' }; },
+    p => { p.boarding_target = { type: 'SEAT', id: 'F01' }; },
+    p => { p.boarding_target = { type: 'SEAT', id: 'WHEELCHAIR_BAY' }; },
+    p => { p.boarding_target = { type: 'WHEELCHAIR_BAY', id: 'S03' }; },
+    p => { p.boarding_target.extra = 'select-this'; },
+  ]) {
+    const bad = proposal(input); mutate(bad);
+    const result = await plan(input, { client: { async complete() { return mock(bad); } } });
+    assert.equal(result.meta.error, 'MODEL_OUTPUT_REJECTED');
+    assert.equal(result.boarding_target, null);
+    assert.ok(!result.action_plan.some(a => a.action === 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE'));
+  }
+  const reordered = proposal(input); reordered.boarding_target = { id: 'S03', type: 'SEAT' };
+  const accepted = await plan(input, { client: { async complete() { return mock(reordered); } } });
+  assert.equal(accepted.meta.validation_passed, true, 'Target equality is semantic, not JSON property order');
+});
+
+test('revalidation rejects occupied destinations and tampered guidance parameters', async () => {
+  const input = structuredClone(cases.find(c => c.name === 'crutch').input);
+  input.booking_event_id = 'stable-seat';
+  const result = await plan(input, { mode: 'rules' });
+  const occupied = structuredClone(input); occupied.vehicle_context.cabin.occupied_seat_ids.push(result.boarding_target.id);
+  assert.equal(revalidateForSimulation(result, occupied).valid, false);
+  const tampered = structuredClone(result); tampered.action_plan.find(a => a.action === 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE').parameters.target_id = 'S01';
+  assert.equal(revalidateForSimulation(tampered, input).valid, false);
+  const wrongTarget = structuredClone(result); wrongTarget.boarding_target = { type: 'SEAT', id: 'S01' };
+  assert.equal(revalidateForSimulation(wrongTarget, input).valid, false);
+});
+
+test('the model verbalises a trusted route in English for a passenger requesting visual assistance', async () => {
+  const input = structuredClone(cases.find(c => c.name === 'visual').input);
+  input.request.language = 'zh-CN';
+  let called = 0;
+  const result = await plan(input, { client: { async complete(messages) {
+    called++;
+    const { context, policy } = JSON.parse(messages[1].content);
+    assert.equal(policy.navigation_route.origin.facing, 'INTO_BUS');
+    const value = ruleProposal(context, policy);
+    value.navigation_steps = value.navigation_steps.map(step => ({ ...step, text: step.maneuver === 'START'
+      ? 'At the entrance, face into the bus.'
+      : step.maneuver === 'STRAIGHT' ? `Move straight ahead for ${step.distance_m} metres.`
+      : step.maneuver === 'TURN_LEFT' ? 'Please turn left.'
+      : step.maneuver === 'TURN_RIGHT' ? 'Please turn right.'
+      : `Arrive at seat ${policy.boarding_target.id}. Please wait for the safety operator.` }));
+    return mock(value);
+  } } });
+  assert.equal(called, 1);
+  assert.equal(result.meta.source, 'llm');
+  assert.equal(result.meta.validation_passed, true);
+  assert.equal(result.schema_version, '2.2');
+  assert.equal(result.cabin_navigation.mode, 'map_based');
+  assert.equal(result.cabin_navigation.simulated, true);
+  assert.equal(result.cabin_navigation.requires_operator, true);
+  assert.deepEqual(result.cabin_navigation.target, result.boarding_target);
+  assert.deepEqual(result.cabin_navigation.origin, { type: 'ENTRANCE', id: 'SINGLE_ENTRANCE', facing: 'INTO_BUS' });
+  assert.match(result.cabin_navigation.steps.find(step => step.maneuver === 'STRAIGHT').text, /straight ahead/);
+});
+
+test('invented route fields, reversed instructions, altered distances and unsupported navigation language fail closed', async () => {
+  const input = structuredClone(cases.find(c => c.name === 'crutch').input);
+  const firstStraight = p => p.navigation_steps.find(step => step.maneuver === 'STRAIGHT');
+  const firstTurn = p => p.navigation_steps.find(step => step.maneuver === 'TURN_RIGHT');
+  const arrive = p => p.navigation_steps.at(-1);
+  for (const mutate of [
+    p => { delete p.navigation_steps; },
+    p => { p.navigation_steps = null; },
+    p => { p.navigation_steps.shift(); },
+    p => { p.navigation_steps.pop(); },
+    p => { p.navigation_steps.reverse(); },
+    p => { const turn = firstTurn(p); turn.maneuver = 'TURN_LEFT'; turn.text = 'Turn left.'; },
+    p => { firstTurn(p).text = 'Turn left.'; },
+    p => { firstTurn(p).text = 'Do not turn right.'; },
+    p => { firstStraight(p).distance_m += 1; },
+    p => { firstStraight(p).text = 'Continue straight for 100 metres.'; },
+    p => { firstStraight(p).text = `Continue straight for ${firstStraight(p).distance_m} metres, then turn left.`; },
+    p => { p.navigation_steps[0].text = 'From the entrance, face out of the bus.'; },
+    p => { arrive(p).text = 'Arrive at seat S02 and wait for the operator.'; },
+    p => { arrive(p).text = 'Arrive at seat S03. Your belt is secure; the bus may depart.'; },
+    p => { firstTurn(p).text = 'Turn right at the rear window.'; },
+    p => { firstTurn(p).text = 'Turn right through 90 degrees.'; },
+    p => { firstTurn(p).text = '向右转 Turn right.'; },
+    p => { firstStraight(p).text = 'x'.repeat(201); },
+  ]) {
+    const bad = proposal(input); mutate(bad);
+    const result = await plan(input, { client: { async complete() { return mock(bad); } } });
+    assert.equal(result.meta.error, 'MODEL_OUTPUT_REJECTED');
+    assert.equal(result.meta.source, 'safe_fallback');
+    assert.equal(result.cabin_navigation, null);
+    assert.equal(result.boarding_target, null);
+    assert.ok(!result.action_plan.some(action => action.action === 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE'));
+  }
+});
+
+test('a plan without an assigned target has no route, and an invented route is forbidden', async () => {
+  const input = structuredClone(cases.find(c => c.name === 'yolo_only').input);
+  const expected = proposal(input);
+  assert.equal(expected.navigation_steps, null);
+  const legitimate = await plan(input, { mode: 'rules' });
+  assert.equal(legitimate.cabin_navigation, null);
+  const bad = structuredClone(expected); bad.navigation_steps = proposal(base()).navigation_steps;
+  const result = await plan(input, { client: { async complete() { return mock(bad); } } });
+  assert.equal(result.meta.error, 'MODEL_OUTPUT_REJECTED');
+  assert.equal(result.cabin_navigation, null);
+});
+
+test('fresh-state revalidation checks map origin, target, maneuvers, distances and spoken directions', async () => {
+  const input = structuredClone(cases.find(c => c.name === 'crutch').input);
+  const result = await plan(input, { mode: 'rules' });
+  assert.equal(revalidateForSimulation(result, input).valid, true);
+  for (const mutate of [
+    r => { r.cabin_navigation.layout_id = 'different-map'; },
+    r => { r.cabin_navigation.origin.facing = 'OUT_OF_BUS'; },
+    r => { r.cabin_navigation.origin.id = 'UNKNOWN_DOOR'; },
+    r => { r.cabin_navigation.target.id = 'S02'; },
+    r => { r.cabin_navigation.mode = 'live_tracking'; },
+    r => { r.cabin_navigation.requires_operator = false; },
+    r => { r.cabin_navigation.steps.find(step => step.maneuver === 'TURN_RIGHT').maneuver = 'TURN_LEFT'; },
+    r => { r.cabin_navigation.steps.find(step => step.maneuver === 'STRAIGHT').distance_m = 12; },
+    r => { r.cabin_navigation.steps.find(step => step.maneuver === 'TURN_RIGHT').text = 'Turn left.'; },
+  ]) {
+    const tampered = structuredClone(result); mutate(tampered);
+    assert.equal(revalidateForSimulation(tampered, input).valid, false);
   }
 });
 

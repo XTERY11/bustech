@@ -59,12 +59,15 @@ export async function plan(raw, { mode = 'single', client, onSummary } = {}) {
   }
   meta.latency_ms = Math.round(performance.now() - started);
   return {
-    schema_version: '2.0', request_id: proposal.request_id,
+    schema_version: '2.2', request_id: proposal.request_id,
     simulated: true, execution_authorized: false,
     presentation_mode: context.presentation_mode ?? null,
     vehicle_context_source: context.presentation_mode === 'WEB_DEMO' ? 'SIMULATED_SCENARIO' : 'SUPPLIED_CONTEXT',
     requires_fresh_vehicle_state: context.presentation_mode !== 'WEB_DEMO',
     plan_status: proposal.plan_status,
+    boarding_target: proposal.boarding_target,
+    cabin_navigation: policy.navigation_route && proposal.navigation_steps
+      ? { ...policy.navigation_route, steps: proposal.navigation_steps, mode: 'map_based', simulated: true, requires_operator: true } : null,
     decision_summary: proposal.decision_summary,
     first_stage_summary: firstStage,
     action_plan: proposal.actions.map((action, i) => ({ step: i + 1, action, parameters: parametersFor(action, context) })),
@@ -81,8 +84,10 @@ export function revalidateForSimulation(result, freshRaw) {
   if (result.meta?.source === 'safe_fallback') return { valid: false, errors: ['FALLBACK_NOT_DISPATCHABLE'] };
   try {
     const context = normalizeInput(freshRaw), policy = buildPolicy(context);
-    const proposal = { request_id: result.request_id, plan_status: result.plan_status, decision_summary: result.decision_summary, actions: result.action_plan.map(a => a.action) };
+    const proposal = { request_id: result.request_id, plan_status: result.plan_status, decision_summary: result.decision_summary, actions: result.action_plan.map(a => a.action), boarding_target: result.boarding_target ?? null, navigation_steps: result.cabin_navigation?.steps ?? null };
     const errors = validateProposal(proposal, context, policy);
+    const saved = result.cabin_navigation, route = policy.navigation_route;
+    if (route ? !saved || saved.layout_id !== route.layout_id || saved.origin?.type !== route.origin.type || saved.origin?.id !== route.origin.id || saved.origin?.facing !== route.origin.facing || saved.target?.type !== route.target.type || saved.target?.id !== route.target.id || saved.mode !== 'map_based' || saved.simulated !== true || saved.requires_operator !== true : saved != null) errors.push('NAVIGATION_ROUTE_CHANGED_REPLAN_REQUIRED');
     for (const a of result.action_plan) if (JSON.stringify(a.parameters) !== JSON.stringify(parametersFor(a.action, context))) errors.push('PARAMETERS_CHANGED_REPLAN_REQUIRED');
     return { valid: errors.length === 0, errors };
   } catch { return { valid: false, errors: ['FRESH_STATE_INVALID'] }; }

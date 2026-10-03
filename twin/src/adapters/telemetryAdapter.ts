@@ -1,8 +1,13 @@
-import { normalizeSeatOccupancy } from '../data/cabinLayout';
+import { normalizeSeatOccupancy, SEATS } from '../data/cabinLayout';
 import type {
   BoardingStatus,
   DoorState,
+  FixedSeatId,
+  PassengerAid,
+  PassengerJourney,
+  PassengerJourneyStage,
   RampState,
+  VehicleArrival,
   VehicleStatePatch,
 } from '../types/vehicle';
 import type { VehicleStore } from '../state/vehicleState';
@@ -27,6 +32,9 @@ export interface TelemetryMessage {
   destination?: string;
   announcement?: { active?: boolean; text?: string };
   passengerInfo?: { title?: string; message?: string } | null;
+  seatOccupancy?: unknown;
+  passengerJourney?: unknown;
+  arrival?: unknown;
   [extra: string]: unknown;
 }
 
@@ -43,6 +51,48 @@ const RAMP_ALIASES: Record<string, RampState> = {
   retracting: 'retracting', stowing: 'retracting',
 };
 const BOARDING: BoardingStatus[] = ['idle', 'request_received', 'preparing', 'ready', 'boarding', 'complete'];
+const PASSENGER_AIDS = new Set<PassengerAid>(['wheelchair', 'cane', 'crutch', 'walker', 'stroller', 'visual', 'hearing', 'none']);
+const PASSENGER_STAGES = new Set<PassengerJourneyStage>(['hidden', 'waiting', 'boarding', 'navigating', 'seated', 'secured']);
+const FIXED_SEATS = new Set(SEATS.filter((seat) => seat.kind !== 'foldable').map((seat) => seat.id));
+const JOURNEY_ID = /^[A-Za-z0-9_.:-]{1,200}$/;
+
+/** Invalid arrival frames leave the preceding pose intact. */
+export function normalizeArrival(value: unknown): VehicleArrival | null | undefined {
+  if (value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.id !== 'string' || !JOURNEY_ID.test(raw.id)) return undefined;
+  if (typeof raw.progress !== 'number' || !Number.isFinite(raw.progress) || raw.progress < 0 || raw.progress > 1) return undefined;
+  return { id: raw.id, progress: raw.progress };
+}
+
+/** Validate the optional wire-level passenger state without inventing defaults. */
+export function normalizePassengerJourney(value: unknown): PassengerJourney | null | undefined {
+  if (value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.journeyId !== 'string' || !JOURNEY_ID.test(raw.journeyId)) return undefined;
+  if (typeof raw.aid !== 'string' || !PASSENGER_AIDS.has(raw.aid as PassengerAid)) return undefined;
+  if (typeof raw.stage !== 'string' || !PASSENGER_STAGES.has(raw.stage as PassengerJourneyStage)) return undefined;
+  if (!raw.destination || typeof raw.destination !== 'object' || Array.isArray(raw.destination)) return undefined;
+
+  const destination = raw.destination as Record<string, unknown>;
+  if (!['SEAT', 'WHEELCHAIR_BAY'].includes(String(destination.type))) return undefined;
+  if (typeof destination.id !== 'string') return undefined;
+  if (destination.type === 'SEAT' && !FIXED_SEATS.has(destination.id)) return undefined;
+  if (destination.type === 'WHEELCHAIR_BAY' && destination.id !== 'WHEELCHAIR_BAY') return undefined;
+  if (raw.progress !== undefined && (typeof raw.progress !== 'number' || !Number.isFinite(raw.progress) || raw.progress < 0 || raw.progress > 1)) return undefined;
+
+  return {
+    journeyId: raw.journeyId,
+    aid: raw.aid as PassengerAid,
+    stage: raw.stage as PassengerJourneyStage,
+    destination: destination.type === 'SEAT'
+      ? { type: 'SEAT', id: destination.id as FixedSeatId }
+      : { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' },
+    ...(typeof raw.progress === 'number' ? { progress: raw.progress } : {}),
+  };
+}
 
 /** Map one raw message to a validated VehicleState patch. Unknown values are dropped. */
 export function normalizeTelemetry(msg: TelemetryMessage): VehicleStatePatch {
@@ -64,6 +114,14 @@ export function normalizeTelemetry(msg: TelemetryMessage): VehicleStatePatch {
   if (msg.passengerInfo === null) patch.passengerInfo = undefined;
   else if (msg.passengerInfo) patch.passengerInfo = { ...msg.passengerInfo };
   if (msg.seatOccupancy !== undefined) patch.seatOccupancy = normalizeSeatOccupancy(msg.seatOccupancy);
+  if ('passengerJourney' in msg) {
+    const journey = normalizePassengerJourney(msg.passengerJourney);
+    if (journey !== undefined) patch.passengerJourney = journey;
+  }
+  if ('arrival' in msg) {
+    const arrival = normalizeArrival(msg.arrival);
+    if (arrival !== undefined) patch.arrival = arrival;
+  }
   return patch;
 }
 

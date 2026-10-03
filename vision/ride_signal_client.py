@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import uuid
+from collections import deque
+from copy import deepcopy
 from datetime import datetime, timezone
 from urllib import error, request
 
@@ -27,19 +30,111 @@ class RideSignalClient:
                     return json.load(response)
             except error.HTTPError:
                 raise
-            except error.URLError:
+            except (error.URLError, TimeoutError):
                 if attempt:
                     raise
                 time.sleep(0.2)
 
-    def signal(self, channel, payload, *, observed_at=None, event_id=None):
+    @staticmethod
+    def envelope(channel, payload, *, observed_at=None, event_id=None):
         if channel not in {"booking", "perception"}:
             raise ValueError("Unknown signal channel")
-        return self.post(f"/api/{channel}", {
+        return {
             "event_id": event_id or f"{channel}-{uuid.uuid4()}",
             "observed_at": observed_at or datetime.now(timezone.utc).isoformat(),
-            "payload": payload,
-        })
+            "payload": deepcopy(payload),
+        }
+
+    def signal(self, channel, payload, *, observed_at=None, event_id=None):
+        return self.post(f"/api/{channel}", self.envelope(channel, payload, observed_at=observed_at, event_id=event_id))
+
+
+class OrderedSignalQueue:
+    """Retry in capture order without blocking inference or losing an enter/exit.
+
+    Only adjacent, unsent region heartbeats for the same visit may be replaced. An
+    in-flight or failed envelope stays unchanged, including its ID and timestamp.
+    The outbox is in memory; stopping the process does not persist pending events.
+    """
+    def __init__(self, client, retry_seconds=1.0):
+        self.client, self.retry_seconds = client, retry_seconds
+        self._queue = deque()
+        self._lock = threading.Lock()
+        self._sending = None
+        self._wake, self._stop = threading.Event(), threading.Event()
+        self._worker = None
+        self._last_signal = self._last_error = None
+
+    @staticmethod
+    def _heartbeat_key(item):
+        zone = item['envelope']['payload'].get('zone', {})
+        return (item['channel'], zone.get('roi_id'), zone.get('visit_id')) if zone.get('event') == 'present' else None
+
+    def enqueue(self, channel, payload, *, observed_at=None, event_id=None):
+        item = {'channel': channel, 'envelope': RideSignalClient.envelope(channel, payload, observed_at=observed_at, event_id=event_id), 'attempted': False}
+        with self._lock:
+            key = self._heartbeat_key(item)
+            tail = self._queue[-1] if self._queue else None
+            if key is not None and tail is not None and not tail['attempted'] and self._heartbeat_key(tail) == key:
+                self._queue[-1] = item
+            else:
+                self._queue.append(item)
+        self._wake.set()
+        return deepcopy(item['envelope'])
+
+    def deliver_once(self):
+        """Attempt the oldest event once; useful in memory-only tests, too."""
+        with self._lock:
+            if not self._queue or self._sending is not None:
+                return False
+            item = self._queue[0]
+            item['attempted'] = True
+            self._sending = item
+        envelope = item['envelope']
+        try:
+            result = self.client.post(f"/api/{item['channel']}", deepcopy(envelope))
+            if not isinstance(result, dict) or result.get('accepted') is not True:
+                raise ValueError('Signal acknowledgement did not confirm acceptance')
+        except Exception as failure:
+            with self._lock:
+                self._last_error = {'event_id': envelope['event_id'], 'error': type(failure).__name__}
+                if isinstance(failure, error.HTTPError):
+                    self._last_error['status'] = failure.code
+                self._sending = None
+            return False
+        with self._lock:
+            self._queue.popleft()
+            zone = envelope['payload'].get('zone', {})
+            self._last_signal = {'at': time.time(), 'event_id': envelope['event_id'], 'observed_at': envelope['observed_at'],
+                                 'reason': zone.get('event'), 'visit_id': zone.get('visit_id'),
+                                 'labels': [d['label'] for d in envelope['payload'].get('yolo_detections', [])]}
+            self._last_error = None
+            self._sending = None
+        return True
+
+    def diagnostics(self):
+        with self._lock:
+            return {'pending_signals': len(self._queue), 'last_signal': deepcopy(self._last_signal), 'signal_error': deepcopy(self._last_error)}
+
+    def start(self):
+        if self._worker is None:
+            self._worker = threading.Thread(target=self._run, daemon=True)
+            self._worker.start()
+
+    def _run(self):
+        while not self._stop.is_set():
+            if self.diagnostics()['pending_signals']:
+                if not self.deliver_once():
+                    self._stop.wait(self.retry_seconds)
+            else:
+                self._wake.wait(0.5)
+                self._wake.clear()
+
+    def close(self, timeout=1.0):
+        self._stop.set(); self._wake.set()
+        if self._worker is not None:
+            self._worker.join(timeout)
+        return self.diagnostics()['pending_signals']
 
 
 class YoloSignalPublisher:

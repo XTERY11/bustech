@@ -1,7 +1,9 @@
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { BUS } from '../dimensions';
 import { getMaterials } from '../materials';
+import { wheelRotationForTravel } from '../../../simulation/arrival';
 
 /** Lathe-profiled tyre + steel rim. Wheels stay planted while the body kneels. */
 function useTyreGeometry() {
@@ -18,12 +20,14 @@ function useTyreGeometry() {
   }, []);
 }
 
-function Wheel({ position, side }: { position: [number, number, number]; side: 1 | -1 }) {
+function Wheel({ position, side, travel }: { position: [number, number, number]; side: 1 | -1; travel?: { current: number } }) {
   const m = getMaterials();
   const tyre = useTyreGeometry();
   const face = BUS.wheel.width / 2 - 0.035;
+  const wheel = useRef<THREE.Group>(null!);
+  useFrame(() => { if (wheel.current) wheel.current.rotation.z = wheelRotationForTravel(travel?.current ?? 0, BUS.wheel.radius); });
   return (
-    <group position={position}>
+    <group ref={wheel} position={position}>
       <mesh geometry={tyre} material={m.rubber} castShadow />
       {/* rim barrel */}
       <mesh rotation={[Math.PI / 2, 0, 0]} material={m.rim}>
@@ -60,12 +64,12 @@ function Wheel({ position, side }: { position: [number, number, number]; side: 1
   );
 }
 
-export const Wheels = memo(function Wheels() {
+export const Wheels = memo(function Wheels({ travel }: { travel?: { current: number } }) {
   const { frontX, rearX, radius, trackZ } = BUS.wheel;
   return (
     <group name="Wheels">
       {[frontX, rearX].flatMap((x) =>
-        ([1, -1] as const).map((s) => <Wheel key={`${x}${s}`} position={[x, radius, s * trackZ]} side={s} />),
+        ([1, -1] as const).map((s) => <Wheel key={`${x}${s}`} position={[x, radius, s * trackZ]} side={s} travel={travel} />),
       )}
     </group>
   );

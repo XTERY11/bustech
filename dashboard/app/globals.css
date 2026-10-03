@@ -353,3 +353,18 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
 }
+
+/* Dashboard guidance mirrors the navigation snapshot supplied to the independent App. */
+.passengerNavigation { width:calc(100% - clamp(36px,6vw,88px)); max-width:1652px; margin:14px auto 0; padding:13px 16px; display:flex; align-items:center; gap:20px; border:1px solid #bfdccc; border-radius:16px; background:#f3fbf6; }
+.passengerNavigationMessage { flex:1; min-width:0; }
+.passengerNavigationMessage h2 { margin:3px 0; font-size:17px; }
+.passengerNavigationMessage>p:last-child { margin:4px 0 0; color:#385a47; font-size:13px; line-height:1.5; overflow-wrap:anywhere; max-height:90px; overflow-y:auto; }
+.navigationDestination { max-width:200px; padding:10px 13px; border-radius:11px; background:white; color:var(--green); border:1px solid #c9e4d3; font-size:14px; text-align:center; overflow-wrap:anywhere; }
+.journeyProgress { display:flex; gap:16px; list-style:none; padding:0; margin:0; }
+.journeyProgress li { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:11px; font-weight:700; white-space:nowrap; }
+.journeyProgress li>span { width:23px; height:23px; flex:none; display:grid; place-items:center; border:1px solid #cbd5df; border-radius:50%; background:white; }
+.journeyProgress .isReached { color:var(--green); }
+.journeyProgress .isReached>span { background:var(--green); border-color:var(--green); color:white; }
+.journeyProgress [aria-current=step]>span { box-shadow:0 0 0 4px #147d4f14; }
+@media(max-width:1000px) { .passengerNavigation { flex-wrap:wrap; gap:12px; }.passengerNavigationMessage { flex-basis:100%; }.passengerNavigation .journeyProgress { flex:1; }.navigationDestination { font-size:12px; } }
+@media(max-width:680px) { .passengerNavigation { margin-left:18px; margin-right:18px; max-width:none; }.passengerNavigation .journeyProgress { gap:9px; }.journeyProgress li { font-size:10px; gap:5px; }.navigationDestination { width:100%; max-width:none; } }

@@ -1,6 +1,8 @@
 # BusTech 交接文档（HANDOFF.md）
 
-状态：2026-10-02 · 对应提交 `5a5f61d` · 接口细节见 [PROMPT.md](PROMPT.md)
+状态：v0.5 联调开发（2026-10-03）· 基于 `main@7160917` · 接口细节见 [PROMPT.md](PROMPT.md)
+
+第 1–6 节保留原有启动、App 兼容与历史验证说明；最新握手、座位、广播和分段导航行为以第 7–8 节及 `PROMPT.md` 顶部的 v0.4/v0.5 补充为准。本轮 DeepSeek 验收记录在 7.5 节；历史实拍验证不代表本次改动已经用真实摄像头重新验收。
 
 这份文档说明三件事：系统现在能做什么、别人怎样在自己的机器上跑起来、还剩哪两块没做完。
 两块待办（[模块一：dashboard 界面调整](#4-待办模块一dashboard-界面调整)、[模块二：App 侧触发](#5-待办模块二app-侧触发)）目前只列出接口和已知问题，具体要求由负责人补充。
@@ -248,3 +250,85 @@ App 不需要自己推断流程，也不需要在到站时让乘客操作，到�
 - 不要修改 `vision/monitor_zone.py`；`dashboard/backend/hub.mjs` 的改动必须带测试。
 - key 和 token 只通过环境变量传入，不写进文件，不提交。
 - 合并前跑 3.8 节的测试。
+
+---
+
+## 7. v0.4：CV、App、dashboard 的三轮反馈
+
+### 7.1 谁发送信号，谁决定阶段
+
+中枢是旅程状态的唯一来源。App 提交乘客自选的需求，CV 只上报区域观察；dashboard 和 App 读取同一份指引、座位目标和动画描述。乘客不需要重复点击到站或上车。
+
+| 轮次 | 输入 | 中枢处理 | App 与 dashboard 的共同输出 |
+|---|---|---|---|
+| 第一轮：预约 | App → `POST /api/booking` | 记录有效需求，以 LLM 或规则生成并校验方案；进入 `BOOKED` | 请前往站台标记的上车点；方案就绪尚不执行车辆准备 |
+| 第二轮：到站 | CV → `enter`，占用期间 → `present` | 检查已确认、置信度 ≥0.75、当前预约类别一致；信号 1 绑定本次区域访问 | 已识别到站；启动模拟公交进站与准备动画，按校验后的动作开门、下蹲、处理坡道 |
+| 第三轮：离开区域 | CV → 明确 `exit`，带 `left` | 核对同次访问和类别；规划或准备未完成时保留 `pending_exit`，就绪后进入 `ON_BOARD` | 播放上车与车内指引，显示分配位置；当前预约完成后不再匹配下一位到站乘客 |
+
+进入区域后的公交进站展示为 4200 ms，整个到站准备阶段为 10000 ms。`READY` 指方案符合模拟策略；动画仍由中枢的旅程阶段和计时驱动。CV 的 `exit` 只表示 ROI 已清空，不是已坐好、已系安全带或已固定轮椅的真实确认，动画也不构成发车授权。
+
+`zone.visit_id` 为可选字段，新检测桥每次区域激活生成 12 位 UUID，并在本次 `enter/present/exit` 中保持一致。它关联触发 1 和触发 2，不代表个人身份。既有 CV 输入仍可使用原 `event/roi_id/left`；接入新版后应发送访问编号，避免把不同次区域访问拼接成一次旅程。“即将离开”暂未新增，仍使用既有的离开事件。
+
+### 7.2 需求、动作与座位
+
+App 的输入信封和预约字段保持兼容：`accessibility_need` 表示需求类别，`assistance_requested` 与 `ramp_preference` 表示具体要求。普通乘客请求坡道不会因此被改成轮椅乘客。
+
+动作枚举从 17 项扩展为 18 项，新增 `GUIDE_PASSENGER_TO_ASSIGNED_PLACE`。该动作位于 `WAIT_FOR_BOARDING_CONFIRMATION` 与 `WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION` 之间，由服务端生成 `{target_type, target_id}` 参数。
+
+`Result.boarding_target` 是目标的唯一来源：
+
+```ts
+null
+// 或
+{ type: 'SEAT', id: 'S01' /* … 'S16' */ }
+// 或
+{ type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' }
+```
+
+客舱空位来自模拟的 `vehicle_context.cabin`，而不是现场座位传感器。中枢把预约信封的 `event_id` 注入只读 `booking_event_id`，策略用该 ID 在空位中稳定分配；同一预约的重试或重跑保留同一目标，新预约可分配不同空位。App 不需要增加 `booking_event_id` 请求字段，也不要把每次规划的 `request_id` 当作座位随机种子。轮椅只分配轮椅区，已占用位置不重新分配给当前乘客；无可用位置时按策略提示等待协助。
+
+LLM 返回的目标必须与可信策略一致。显示目标和执行动画使用通过校验的 Result，不在 App 或孪生中另行挑座位。
+
+### 7.3 SSE 与客户端接入
+
+原来的 `GET /api/state`、`GET /api/events`、`POST /api/booking` 和 `POST /api/perception` 均保留。`journey.stage/need/labels/matched/seat/guidance` 保留，新增 `journey_id/revision/completed/pending_exit/boarding_target/animation`。`journey_id` 来源于预约事件 ID。
+
+```ts
+animation: null | {
+  id: string;
+  phase: 'arrival' | 'boarding';
+  aid: string;
+  started_at: number;  // 中枢 epoch ms
+  duration_ms: number;
+  target: Result['boarding_target'];
+}
+```
+
+每次旅程转换、规划完成、取消或过期均广播完整 `snapshot`。保留原 `result` 事件，数据为 `{run_id,result,snapshot}`；新增 `navigation` 阶段事件，数据为 `{navigation,snapshot}`，其中 `navigation` 为 `{id,revision,phase,destination,instruction,simulated,animation}`。客户端优先应用随事件附带的完整快照，使用 `journey.guidance` 给乘客显示指引；评委页面额外展示 `summary` 中的决策摘要。
+
+客户端以 `animation.id` 去重，并根据 `started_at/duration_ms` 恢复剩余进度。心跳、重复信封和 SSE 重连不能重新播放整段动画。`result.passenger_communication` 继续保留供旧 App 读取；新 App 应读取 `journey.guidance`，以区分预约、到站和车内指引。
+
+乘客 App 是独立项目，本仓库不实现手机页面。中枢按现有 HTTP/SSE 连接下发 navigation 与旅程快照，不对手机项目进行 UI 改动。外部 App 按第 5 节配置中枢地址、Bearer token、来源放行及 HTTP/HTTPS 后，读取本节的新增可选数据。
+
+### 7.4 CV 投递可靠性
+
+检测桥不读取预约或 READY，匹配由中枢完成。其有序队列在后台投递：失败时保留原 ID、观察时间和内容重试；旧事件确认后才发送新事件。相邻未发送的同次 `present` 可合并，`enter/exit` 和已尝试过的信封不可替换。
+
+`GET :8790/health` 新增 `pending_signals`、`signal_error`，`last_signal` 表示真正收到中枢 ACK 的事件。诊断不暴露 token。队列保存在进程内，停止时报告未送达数，但不跨重启保存。区域内旁观者仍会延迟现有的清空事件；访问编号不解决逐人身份识别。
+
+### 7.5 本轮验收记录
+
+- 已完成视觉纯逻辑测试：`python -m unittest test_aid_verifier test_monitor_zone test_signal_delivery -v`，31 项通过；另用测试视频无窗口、无上报处理 120 帧，未做实物摄像头验收。
+- dashboard 81 项回归测试、Twin 12 项测试通过，包含公交沿车头方向进站和轮胎滚动方向校验。两份孪生单文件已同步，各约 1.35 MB。
+- 真实 `deepseek-flash` / `single`：带 token 的 HTTP/SSE 完成 WHEELCHAIR、CANE、STROLLER、VISUAL_ASSISTANCE 预约 → TO_STOP → CV enter → WAIT_AT_STOP → CV exit → 座位/轮椅区分段导航。四类分别调用一次模型，`meta.source=llm`、`validation_passed=true`；CV 不增加调用。CV 输入是模拟 HTTP 信号，未做实物摄像头验收。
+- 可重复运行：`cd dashboard && node scripts/check-journey.mjs --key-stdin`（隐藏输入密钥，只存内存；产生四次真实模型调用，rules/fallback 不能通过检查）。
+- 浏览器另用真实模型完成一次 CANE 预约与模拟 CV 触发，服务端下发 S03 指引，dashboard 同步显示。桌面 YOLO/Twin 并排已检查。手机页面归独立项目，不在本次交付范围；未宣称实际 App 已适配。
+- 等待中的预约 5 分钟失效；已消费的模拟上车旅程保留原目标，不被 TTL 或强制 rerun 改到另一座位。取消不释放已经使用的模拟位置；重启中枢重置演示车厢。真实安全确认和发车控制未实现。
+
+## 8. v0.5：LLM 生成车内分段指引
+
+不是仅告诉乘客“去 S03”。服务端按 `cabinRoute.mjs` 中与孪生一致的模拟地图，先计算从车门内侧、面向车内开始的直行距离和相对左右转。LLM 在同一轮动作规划中生成 `navigation_steps` 英文文字，不能改动目标、步序、距离或方向；通过校验后成为 `Result.cabin_navigation`。
+
+`navigation.cabin_route` 在规划完成后即可下发，`navigation.steps` 在上车阶段下发具体指引，`instruction` 是步骤文字。单入口 S03 示例：直行约 0.9 m → 右转 → 直行约 0.7 m → 右转 → 直行约 0.5 m → 停下等安全员协助。完整字段见 `PROMPT.md` v0.5 与 `dashboard/docs/COMMUNICATION.md`。手机 UI 由独立项目负责，本仓库只通过既有 SSE/state 接口发送。
+
+没有乘客实时位置及逐步回执；这些近似距离只用于模拟地图路线说明，不自动宣称某一步已真实完成，也不承诺可独立引导盲人在真实公交内避障。公交模型车头朝 −X，进站动画应由 +X 侧沿 −X 驶入，而不是倒车。

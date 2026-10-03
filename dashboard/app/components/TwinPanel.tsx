@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Context, Journey, Result } from '../live-types';
 import { actionLabel } from '../lib/actionLabels';
-import { actionsToScenario, boardingScenario, playScenario, waitingScenario, IDLE_FRAME, type ScenarioStep } from '../lib/twinScenario';
+import { buildScenario, cabinSeatOccupancy, playScenario, IDLE_FRAME, type ScenarioStep } from '../lib/twinScenario';
 
 /**
  * Embedded bus digital twin. The twin runs in an iframe (public/twin/index.html,
@@ -26,28 +26,38 @@ export function TwinPanel({ result, context, running, journey = null, basePath =
   const [step, setStep] = useState<ScenarioStep | null>(null);
   const [playbackNonce, setPlaybackNonce] = useState(0);
   const [iframeEpoch, setIframeEpoch] = useState(0);
+  const playedNonce = useRef(0);
+  const currentJourney = useRef(journey);
+  const currentInputs = useRef({ context, result });
+  useEffect(() => {
+    currentJourney.current = journey;
+    currentInputs.current = { context, result };
+  }, [journey, context, result]);
   const key = JSON.stringify({
     requestId: result?.request_id ?? '',
     status: result?.plan_status ?? '',
     actions: result?.action_plan ?? [],
-    communication: result?.passenger_communication ?? null,
     entrance: context.vehicle_context?.single_entrance_state ?? '',
     route: context.request?.route_id ?? context.vehicle_context?.route_id ?? '',
+    active: context.request?.active,
+    intent: context.request?.intent,
+    stage: journey?.stage,
+    matched: journey?.matched,
+    journeyId: journey?.journey_id,
+    need: journey?.need,
+    animation: journey?.animation ?? null,
     running,
   });
   // The hub's journey decides which half of the story the twin shows (see backend/journey.mjs):
   // BOOKED: the plan exists but the passenger is not at the stop, so the bus waits;
   // AT_STOP: the camera has matched the passenger, so the plan is carried out;
-  // ON_BOARD: they left the stop after READY, so the boarding half plays from the READY pose.
+  // ON_BOARD: a matching exit begins a presentation preview; operator confirmation is still required.
   const stage = journey?.stage ?? null;
   const boarded = stage === 'ON_BOARD';
-  const journeyKey = JSON.stringify([stage, journey?.matched, journey?.seat, journey?.labels, journey?.guidance.display_text]);
   const steps = useMemo(() => {
-    if (boarded) return boardingScenario(result, journey?.labels ?? [], journey?.seat ?? null, journey?.guidance.display_text);
-    if (stage === 'BOOKED' && result?.plan_status === 'READY' && !running) return waitingScenario(journey?.guidance.display_text);
-    return actionsToScenario(result, context, running);
+    return buildScenario(result, context, running, journey);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the keys capture every input that changes the timeline
-  }, [key, journeyKey]);
+  }, [key]);
   const route = String(context.request?.route_id ?? context.vehicle_context?.route_id ?? 'DEMO_ROUTE');
 
   useEffect(() => {
@@ -66,22 +76,37 @@ export function TwinPanel({ result, context, running, journey = null, basePath =
   const send = (message: Record<string, unknown>) => frame.current?.contentWindow?.postMessage(message, '*');
   useEffect(() => {
     if (!ready) return;
-    if (!boarded) {  // the boarding half continues from the READY pose instead of resetting it
+    if (!boarded) {
       send({ type: 'twin:telemetry', frame: IDLE_FRAME });
       send({ type: 'twin:camera', preset: 'overview' });
+    } else {
+      // Reset the route actor for explicit Replay while preserving the entrance pose.
+      const inputs = currentInputs.current;
+      send({ type: 'twin:telemetry', frame: { passengerJourney: null, arrival: null,
+        seatOccupancy: cabinSeatOccupancy(inputs.context, currentJourney.current?.boarding_target ?? inputs.result?.boarding_target) } });
     }
+    const replay = playedNonce.current !== playbackNonce;
+    playedNonce.current = playbackNonce;
+    const animation = currentJourney.current?.animation;
+    const elapsed = !replay && animation ? Math.max(0, Date.now() - animation.started_at) : 0;
     const reset = window.setTimeout(() => setStep(null), 0);
     const stop = playScenario(steps, (f, s) => {
       send({ type: 'twin:telemetry', frame: f });
       if (s.camera) send({ type: 'twin:camera', preset: s.camera });
       setStep(s);
-    });
+    }, elapsed);
     return () => { window.clearTimeout(reset); stop(); };
   }, [ready, steps, playbackNonce, iframeEpoch, boarded]);
 
-  const done = step ? steps.indexOf(step) + 1 : 0;
+  const guidanceTitle = journey?.guidance.title;
+  const guidanceText = journey?.guidance.display_text;
+  useEffect(() => {
+    if (ready && guidanceText) send({ type: 'twin:telemetry', frame: { passengerInfo: { title: guidanceTitle, message: guidanceText } } });
+  }, [ready, guidanceTitle, guidanceText]);
+
+  const done = step ? steps.findIndex(item => item.at === step.at && item.label === step.label) + 1 : 0;
   // Before the passenger is at the stop, and once they are on board, the journey's guidance is what applies.
-  const passengerMessage = (stage === 'BOOKED' || stage === 'ON_BOARD') && journey ? journey.guidance.display_text
+  const passengerMessage = journey ? journey.guidance.display_text
     : result?.passenger_communication.display_text
     ?? result?.passenger_communication.audio_text
     ?? (result?.plan_status === 'CANNOT_EXECUTE'
@@ -113,7 +138,7 @@ export function TwinPanel({ result, context, running, journey = null, basePath =
     <div className="twinConsole" aria-label="Digital twin outputs">
       <div className="twinExternalDisplay">
         <div className="twinConsoleLabel"><span>External display</span><strong>{route === 'DEMO_ROUTE' ? '400' : route}</strong></div>
-        <p>{passengerMessage ?? (running ? 'Preparing passenger guidance…' : 'Waiting for a validated passenger message.')}</p>
+        <p tabIndex={0} aria-label="Scrollable external display message" style={{ display: 'block', WebkitLineClamp: 'unset', maxHeight: 92, overflowY: 'auto' }}>{passengerMessage ?? (running ? 'Preparing passenger guidance…' : 'Waiting for a validated passenger message.')}</p>
       </div>
       <div className="twinActions">
         <div className="twinConsoleLabel"><span>Validated actions</span><strong>{result ? result.action_plan.length : 0}</strong></div>

@@ -90,4 +90,48 @@ For the competition, run the server and dashboard on one computer. Connect the p
 
 GitHub Pages serves static files and cannot host this persistent signal server. Keep the existing Pages UI and connect a separate HTTPS server for a public live demo. A local presentation does not require buying a cloud server. [GitHub Pages documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages)
 
-Set `NEXT_PUBLIC_API_BASE_URL` or enter the server URL in Connection settings, and allow the website origin through `ALLOWED_ORIGINS`. DeepSeek credentials stay in the server process; app and Python clients use a separate `BRIDGE_TOKEN`. The existing publishing configuration is preserved; these edits have not been pushed or deployed.
+Set `NEXT_PUBLIC_API_BASE_URL` or enter the server URL in Connection settings, and allow the website origin through `ALLOWED_ORIGINS`. DeepSeek credentials stay in the server process; app and Python clients use a separate `BRIDGE_TOKEN`. The existing publishing configuration is preserved; committing or pushing a feature branch does not by itself confirm a live deployment.
+
+## v0.4 integration update — 2026-10-03
+
+This section and the v0.4/v0.5 supplements in the root `PROMPT.md` supersede earlier journey and publisher details above. Existing endpoints, input envelopes, authentication and external App deployment options remain supported. Real DeepSeek validation is recorded below and in `HANDOFF.md` section 7.5; live-camera and independent-App acceptance remain outstanding.
+
+### Three inputs and shared responses
+
+| Round | Sender and input | Hub responsibility | Shared passenger response |
+|---|---|---|---|
+| Booking | App posts need and requested assistance to `/api/booking` | Create `BOOKED`; generate and validate the plan using the selected mode | Go to the marked boarding point |
+| Arrival | CV posts `zone.event: enter`; `present` refreshes an occupied region | Require confirmed detections at confidence ≥0.75 matching the active booking | Arrival detected; play simulated bus arrival and preparation |
+| Region exit | CV posts explicit `exit`, an empty detection list and matching `zone.left` | Bind it to the accepted visit; retain an early exit until planning and preparation finish | Play boarding and show the assigned seat or wheelchair bay |
+
+CV reports observations; it does not read bookings or authorize vehicle movement. `exit` means the monitored region has cleared, not that the passenger is seated or secured. There is no “about to leave” event in v0.4. The first arrival display lasts 4200 ms within a 10000 ms preparation phase, and all vehicle behavior remains simulated.
+
+The optional `zone.visit_id` joins one region activation's `enter`, `present` and `exit`. The bridge generates a 12-character UUID for each activation. It identifies a visit, not a person. Keep the ID unchanged when retrying or sending heartbeats for that visit. Older senders can retain their existing ROI and event metadata.
+
+### Validated destinations
+
+The 18-action contract adds `GUIDE_PASSENGER_TO_ASSIGNED_PLACE` between boarding confirmation and seated/belted confirmation. The server supplies its `{target_type, target_id}` parameters. `Result.boarding_target` is `null`, `{type:'SEAT',id:'S01'…'S16'}` or `{type:'WHEELCHAIR_BAY',id:'WHEELCHAIR_BAY'}`.
+
+The hub injects the accepted booking envelope's ID as the read-only planner input `booking_event_id`; no new App input field is required. Trusted policy uses this stable ID and simulated cabin occupancy to select a free position. Repeated planning of the same booking does not choose a new seat. A different booking can receive a different free seat. Wheelchair bookings target the bay; asking for a ramp does not change a walking passenger into a wheelchair passenger. The LLM must return the policy-assigned destination, which is checked before producing the Result.
+
+### Complete snapshots and animation identity
+
+`snapshot.journey` retains `stage`, `need`, `labels`, `matched`, `seat` and `guidance`, and adds `journey_id`, `revision`, `completed`, `pending_exit`, `boarding_target` and `animation`. The booking event ID becomes the journey ID. A completed booking is not reused for later CV arrivals.
+
+Each journey transition, planning completion, cancellation and expiry broadcasts a complete `snapshot`. The existing `result` event carries `{run_id,result,snapshot}`. The new `navigation` event carries `{navigation,snapshot}`, with a navigation object `{id,revision,phase,destination,instruction,simulated,animation}`. Apply the latest complete snapshot to both clients. Older clients can continue reading `result.passenger_communication`; new clients should display `journey.guidance` for stage-specific messages.
+
+`journey.animation` is `null` or `{id, phase:'arrival'|'boarding', aid, started_at, duration_ms, target}`. Times are hub epoch milliseconds. Clients deduplicate by animation ID and derive the remaining progress from the start time. Heartbeats, duplicate input IDs, snapshot refreshes and reconnects must not restart animations. The dashboard may also display the short `summary`; the passenger App shows guidance and the assigned position instead of planner implementation details.
+
+The passenger App is a separate project; this repository does not implement phone UI. The hub delivers navigation and authoritative journey snapshots over the existing HTTP/SSE interfaces. Configure the App's hub URL, Bearer token, allowed origin and compatible HTTP/HTTPS setup as described above; the App is responsible for rendering those optional fields.
+
+### v0.5: directional cabin guidance
+
+The same LLM response now verbalizes a trusted interior route, not just a seat ID. `Result.cabin_navigation` is nullable; when present it contains `layout_id`, `origin:{type:'ENTRANCE',id:'SINGLE_ENTRANCE',facing:'INTO_BUS'}`, `target`, `steps`, `mode:'map_based'`, `simulated:true`, and `requires_operator:true`. Each step contains `step`, `maneuver:START|STRAIGHT|TURN_LEFT|TURN_RIGHT|ARRIVE`, `distance_m:number|null` and English `text`. Distances are approximate horizontal metres in the simulated cabin, not live measurements. The server checks the LLM's sequence and distances against the geometry before publishing.
+
+`Snapshot.navigation.cabin_route` carries the prepared interior route immediately after planning; `navigation.steps` is empty before the boarding phase and carries the same steps in `TO_SEAT` / `TO_WHEELCHAIR_BAY`. Its `instruction` contains those spoken-style steps. Turns are relative to the passenger's current heading, starting at the interior threshold and facing into the bus. For S03, the route is approximately: straight 0.9 m, right, straight 0.7 m, right, straight 0.5 m, then stop for operator assistance. The App still uses `/api/events` or `/api/state`; no new input API is required. Without passenger localisation or step acknowledgements, this is a map-based route description, not turn-by-turn live tracking.
+
+### Delivery and validation
+
+`yolo_bridge.py` now uses a background FIFO outbox. Failed delivery retains the exact event ID, observation time and body, and retries the oldest event first. Only adjacent, never-attempted `present` events for the same visit can be coalesced; transitions and attempted envelopes are kept. The outbox is in memory, and shutdown reports any pending count rather than claiming persistence.
+
+Vision health exposes `pending_signals`, `signal_error` and the last acknowledged `last_signal`, without exposing credentials. Pure vision tests pass 31 checks: the existing 21 plus 10 delivery tests. Dashboard has 81 passing checks and the twin has 12. A real DeepSeek single-call check passed for wheelchair, cane, stroller and visual assistance over authenticated HTTP/SSE, including all three feedback rounds and directional navigation. CV events in that check are simulated, not a physical-camera or external-App acceptance test. Run `node scripts/check-journey.mjs --key-stdin` from `dashboard/` to repeat it; it makes four paid model calls and rejects rules/fallback results. See `HANDOFF.md` section 7.5 for the acceptance record.
