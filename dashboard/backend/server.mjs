@@ -8,6 +8,14 @@ const equal = (a, b) => { const x = Buffer.from(a), y = Buffer.from(b); return x
 
 export function createBridge({ hub = new SignalHub(), token = process.env.BRIDGE_TOKEN || '', allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://127.0.0.1:3000,http://localhost:3000').split(',') } = {}) {
   const streams = new Set();
+  // One console line per journey change, with the hub's clock: the record to read when the screens
+  // and the passenger seem out of step.
+  let logged = '';
+  hub.on('event', () => {
+    const j = hub.snapshot().journey ?? {}, at = new Date().toTimeString().slice(0, 8);
+    const line = `${j.stage ?? '-'} need=${j.need ?? '-'} matched=${j.matched ?? '-'} pending_exit=${j.pending_exit ?? '-'} reason=${j.reason ?? '-'} seat=${j.seat ?? '-'} animation=${j.animation?.phase ?? '-'}`;
+    if (line !== logged) { logged = line; console.log(`[journey ${at}] ${line}`); }
+  });
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const origin = req.headers.origin;

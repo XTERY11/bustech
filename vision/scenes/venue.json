@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "points_normalized": [
+    [
+      0.34323690383111805,
+      0.9819193324061196
+    ],
+    [
+      0.8201720093823299,
+      0.9707927677329624
+    ],
+    [
+      0.7537138389366693,
+      0.8386648122392212
+    ],
+    [
+      0.37294761532447224,
+      0.8400556328233658
+    ]
+  ],
+  "anchor": "bottom-center",
+  "source_hint": "acceptance scene: venue of 2 Oct, bus deeper in the picture; redraw on site",
+  "board_direction": "up"
+}

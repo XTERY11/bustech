@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "points_normalized": [
+    [
+      0.7716966379984362,
+      0.9819193324061196
+    ],
+    [
+      0.3846755277560594,
+      0.9791376912378303
+    ],
+    [
+      0.4065676309616888,
+      0.8567454798331016
+    ],
+    [
+      0.7513682564503519,
+      0.8344923504867872
+    ]
+  ],
+  "anchor": "bottom-center",
+  "source_hint": "demo scene: small classroom, camera on the desk, bus on the camera side",
+  "board_direction": "down"
+}

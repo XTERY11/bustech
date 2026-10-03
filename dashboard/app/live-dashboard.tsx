@@ -93,6 +93,8 @@ function waitingChip(entry: JourneyEntry, currentId: string | null | undefined) 
     place: entry.stage === 'IDLE' ? null : placeLabel(entry.boarding_target) };
 }
 
+const TOKEN_KEY = 'accessride.hubToken';
+
 export default function Dashboard() {
   const [scenarioId, setScenarioId] = useState('wheelchair_auto');
   const [context, setContext] = useState<Context>(() => sample('wheelchair_auto'));
@@ -178,14 +180,23 @@ export default function Dashboard() {
       .then(health => {
         if (!health) return;
         setConfigured(health.llm_configured);
-        // LAN mode: the hub wants a token. Take it from the address (start_demo.sh opens
-        // .../#token=…, the fragment never reaches a server), else ask once.
-        if (health.token_required && !token) {
-          const fromUrl = new URLSearchParams(window.location.hash.slice(1)).get('token') ?? '';
-          const entered = fromUrl || window.prompt('Signal hub access token (printed in the terminal as "Access token")')?.trim() || '';
-          if (fromUrl) window.history.replaceState(null, '', window.location.pathname + window.location.search);
-          if (entered) { setDraftToken(entered); setToken(entered); }
-        }
+        // LAN mode: the hub wants a token. Take it from the address (start_demo.sh opens .../#token=…,
+        // the fragment never reaches a server), else the one this browser used last time, else ask once.
+        // A page reload or a hub restart therefore reconnects by itself.
+        if (!health.token_required) return;
+        const fromUrl = new URLSearchParams(window.location.hash.slice(1)).get('token') ?? '';
+        if (fromUrl) window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        let saved = '';
+        try { saved = window.localStorage.getItem(TOKEN_KEY) ?? ''; } catch { /* storage unavailable */ }
+        const candidate = fromUrl || token || saved;
+        const accepted = async (value: string) => Boolean(value) && (await fetch(`${apiBase}/api/state`, { headers: { Authorization: `Bearer ${value}` }, signal: abort.signal })).ok;
+        void (async () => {
+          let next = candidate;
+          if (!(await accepted(next))) next = window.prompt('Signal hub access token (printed in the terminal as "Access token")')?.trim() ?? '';
+          if (!next || next === token) return;
+          try { window.localStorage.setItem(TOKEN_KEY, next); } catch { /* ignore */ }
+          setDraftToken(next); setToken(next);
+        })().catch(() => {});
       })
       .catch(() => {});
     void watchEvents(apiBase, token, abort.signal, onEvent, online => {

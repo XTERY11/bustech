@@ -69,17 +69,26 @@ bash start_demo.sh demos/captures/venue
 1. 手机 A 打开 DroidCam，保持在前台、不锁屏。记下它显示的地址，例如 `http://172.20.10.4:4747/video`。
 2. 固定机位：能看到地面上的一块"站台区域"，以及区域后面乘客走向"车"的方向。之后不要再动手机，动了要重画区域。
 
-### 第 3 步：画站台区域
+### 第 3 步：画站台区域，并说明车在哪一侧
+
+每个场地存成一个"场景"，包含画好的区域和车所在的一侧。已有两个场景：
+
+| 场景 | 用途 | 车在哪一侧 |
+|---|---|---|
+| `classroom` | 演示和调试用的小教室，摄像头放在桌上 | `down`：乘客等完后朝镜头方向走出画面 |
+| `venue` | 最终验收场地（10 月 2 日的布置） | `up`：乘客往画面深处走；到现场后要重画区域 |
+
+机位没动、区域不用变时，这一步可以跳过。要重画或新建场景：
 
 ```bash
-cd vision && .venv/bin/python monitor_zone.py --source "http://172.20.10.4:4747/video"; cd ..
+bash vision/draw_region.sh classroom "http://172.20.10.4:4747/video" down
 ```
 
-在弹出的窗口里：按 `R` 清掉旧区域 → 鼠标左键依次点出区域的四个角 → 按回车保存（终端出现 "Region saved"）→ 按 `Q` 退出。
+三个参数依次是场景名、摄像头地址、车在哪一侧（`up` 画面深处，`down` 朝镜头，`left`，`right`）。在弹出的窗口里：按 `R` 清掉旧区域 → 鼠标左键依次点出区域的四个角 → 按回车保存 → 按 `Q` 退出。
 
-- 区域画在地面上，大小够一个人带着辅具站进去，不要贴着画面下沿。
+- **车在哪一侧必须设对。**乘客等完之后朝哪边走出区域去"上车"，就填哪一侧。朝其他方向离开会被判为"没有上车"，流程退回"已预约"；方向设反时，往回走反而会被当成上车。
+- 区域画在地面上，大小够一个人带着辅具站进去。
 - 一定要按 `Q` 退出。DroidCam 同一时间只允许一个连接，不退出下一步连不上。
-- 车不在画面深处时：在 `vision/monitor_roi.json` 里加一项 `"board_direction": "left"`（可选 `up`、`down`、`left`、`right`；`up` 是画面深处）。
 
 ### 第 4 步：启动（实时摄像头 + 大模型 + 允许手机连接）
 
@@ -87,9 +96,10 @@ cd vision && .venv/bin/python monitor_zone.py --source "http://172.20.10.4:4747/
 
 ```bash
 read -s DEEPSEEK_API_KEY && export DEEPSEEK_API_KEY
-LAN=1 BRIDGE_WINDOW=1 BRIDGE_RECORD=1 bash start_demo.sh "http://172.20.10.4:4747/video"
+SCENE=classroom LAN=1 BRIDGE_WINDOW=1 BRIDGE_RECORD=1 bash start_demo.sh "http://172.20.10.4:4747/video"
 ```
 
+- `SCENE=classroom`：用哪个场景的区域和车的方向。验收场地换成 `SCENE=venue`。
 - 第一行：粘贴 DeepSeek 的 key 后回车，输入不显示。没有 key 就跳过这一行，稍后在 dashboard 右上角展开控制面板，把 Generation mode 选成 Offline rules。
 - `LAN=1`：让手机 B 能连进来。终端会打印两行，记下 IP 和 token：
   ```
@@ -100,13 +110,17 @@ LAN=1 BRIDGE_WINDOW=1 BRIDGE_RECORD=1 bash start_demo.sh "http://172.20.10.4:474
 - `BRIDGE_RECORD=1`：同时把原始画面录到 `vision/recordings/`，出问题时可以回放复查。
 - macOS 第一次可能弹出"是否允许接受传入网络连接"，选允许。
 
-打印的 IP 取自电脑的 en0 网卡。IP 是空的或不对时，用 `ipconfig getifaddr en0`（或 `en1`）核对。token 每次启动都会换。
+打印的 IP 取自电脑的 en0 网卡。IP 是空的或不对时，用 `ipconfig getifaddr en0`（或 `en1`）核对。同一台电脑上 token 每次启动都相同，手机 B 填一次即可；电脑的 IP 变了才需要改主机地址。
 
-### 第 5 步：电脑上打开 dashboard
+手机 A 的 DroidCam 断开（切到后台、锁屏）时，检测桥每 2 秒自动重连，演示不会停。
 
-浏览器打开 <http://127.0.0.1:3000>，**只开一个标签页**。应看到：左侧是手机 A 的实时画面和绿色区域，右侧是关着门的公交，上方 Thinking 面板显示 "Ready"，通道条里 Signal hub 是 Connected、Camera bridge 有帧率。
+### 第 5 步：dashboard
 
-LAN 模式下 dashboard 需要 token 才能连中枢：右上角展开控制面板，在 Connection settings 里填入终端打印的 token。
+启动后 dashboard 会自动在浏览器里打开并连上中枢（地址里带着 token，浏览器会记住它）。**只留一个标签页。**应看到：右上角 "Signal server connected"；左侧是手机 A 的实时画面和绿色区域；右侧是关着门的公交；上方 Thinking 面板显示 "Ready"。
+
+如果右上角是 "Signal server disconnected"：刷新页面；仍然不行时，打开终端里打印的 "Dashboard with token" 那一行地址。
+
+大模型的推理显示在最上面的 Thinking 面板：预约后约 1–5 秒出现推理摘要、生成来源（DeepSeek response）和耗时。
 
 ### 第 6 步：手机 B 连上中枢
 
@@ -114,7 +128,7 @@ LAN 模式下 dashboard 需要 token 才能连中枢：右上角展开控制面�
 2. 打开 App → Settings → BusTech signal hub：打开开关，选 HTTP，填 `<IP>`、端口 `8787`、`<token>`。
 3. 第一次连接时系统会问"本地网络"权限，选允许。
 
-App 重启后 token 要重新填。
+App 重启后 token 要重新填（token 本身不变）。
 
 ### 第 7 步：检查一遍再开始
 
@@ -228,10 +242,13 @@ curl -X POST http://127.0.0.1:8787/api/booking -H 'Content-Type: application/jso
 | 手机 B 上公交动画不显示，文字正常 | Safari 打开 `http://<IP>:3000/passenger-twin#token=<token>` 看能否加载 |
 | 人在区域里但不变红 | 辅具没被识别（手杖被身体挡住、太细太远、贴着画面边缘）；区域画得太小；辅具没有被人拿着 |
 | 变红了但旅程停在 "Booked" | 类别与预约不一致；预约已过期；没有预约 |
-| 走出区域后不进入上车阶段 | 区域里还有别人；走出的方向不是朝车一侧；停留不到 2 秒；进站还不满 10 秒（等一下） |
+| 走出区域后不进入上车阶段，手机退回 "Go to the bus stop" | 走出的方向不是场景里设的车的一侧（最常见，见第 3 步）；区域里还有别人；停留不到 2 秒。查 `vision/trigger_snapshots/events.jsonl` 最后一条 `CLEAR`：`why` 是 `left_another_way` 就是方向问题 |
+| 往回走却播了上车动画 | 车的方向设反了，见第 3 步 |
+| dashboard 不显示推理、画面不跟着变 | 右上角是不是 "Signal server disconnected"；刷新页面 |
 | dashboard 显示 key 未配置 | `read -s` 和启动命令不在同一个终端窗口 |
 | dashboard 显示未连接或需要 token | LAN 模式下在 Connection settings 里填 token |
 | 触发了但中枢没反应 | `curl http://127.0.0.1:8790/health`：`pending_signals`、`dropped_signals` 应为 0，`signal_error` 应为 null |
+| 屏幕和人的动作对不上，想看时间线 | 运行演示的终端里，每次旅程变化都有一行 `[journey 时:分:秒] …`，对照检测桥的 `TRIGGER` / `CLEAR` 行 |
 | 想复查刚才发生了什么 | `vision/trigger_snapshots/` 里每次触发、类别变化、离开都有截图和 `events.jsonl`；`curl http://127.0.0.1:8787/api/state` 看 `journey`（LAN 模式加 token） |
 
 ---

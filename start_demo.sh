@@ -7,6 +7,7 @@
 #   LAN=1 bash start_demo.sh 0         # bind to 0.0.0.0 with a generated BRIDGE_TOKEN for phones / other PCs
 #   APP_ORIGINS=http://192.168.1.20:5173 LAN=1 bash start_demo.sh 0  # allow an external App origin
 #   BRIDGE_WINDOW=1 bash start_demo.sh 0   # also show the annotated camera view in a local window (Q stops the bridge)
+#   SCENE=classroom LAN=1 bash start_demo.sh "http://<phone>:4747/video"   # a named scene: its region + bus side
 #   BRIDGE_RECORD=1 bash start_demo.sh 0   # also save the raw camera frames to vision/recordings/ for replay
 #   bash start_demo.sh demos/captures/venue   # replay a recorded session (no camera, no YOLO);
 #                                      # each pass starts once a booking arrives (AFTER_BOOKING=0: at once)
@@ -28,7 +29,9 @@ export NEXT_PUBLIC_VISION_PORT="${NEXT_PUBLIC_VISION_PORT:-$VISION_PORT}"
 if [ "${LAN:-0}" = "1" ]; then
   IP="$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')"
   export BRIDGE_HOST=0.0.0.0
-  export BRIDGE_TOKEN="${BRIDGE_TOKEN:-$(python3 -c 'import secrets;print(secrets.token_hex(16))')}"
+  # The same token on every start of this machine, so the phone app and the dashboard keep working
+  # across restarts. It is derived, not stored anywhere; set BRIDGE_TOKEN yourself to use another one.
+  export BRIDGE_TOKEN="${BRIDGE_TOKEN:-$(python3 -c 'import hashlib,uuid,getpass;print(hashlib.sha256(f"bustech-demo:{uuid.getnode()}:{getpass.getuser()}".encode()).hexdigest()[:32])')}"
   DEFAULT_ORIGINS="http://${IP}:${DASHBOARD_PORT},http://127.0.0.1:${DASHBOARD_PORT},http://localhost:${DASHBOARD_PORT}"
   [ -z "${APP_ORIGINS:-}" ] || DEFAULT_ORIGINS="${DEFAULT_ORIGINS},${APP_ORIGINS}"
   export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-${DEFAULT_ORIGINS}}"
@@ -42,6 +45,13 @@ else
   echo "Dashboard http://127.0.0.1:${DASHBOARD_PORT}  hub http://127.0.0.1:${BRIDGE_PORT}  camera http://127.0.0.1:${VISION_PORT}"
 fi
 
+# SCENE picks the stop region and the side the bus is on: vision/scenes/<name>.json (drawn with
+# vision/draw_region.sh). Without it the bridge uses vision/monitor_roi.json as before.
+if [ -n "${SCENE:-}" ]; then
+  [ -f "$ROOT/vision/scenes/$SCENE.json" ] || { echo "No scene vision/scenes/$SCENE.json. Draw it first:  bash vision/draw_region.sh $SCENE <camera> <up|down|left|right>"; exit 1; }
+  export BUSTECH_ROI="scenes/$SCENE.json"
+  echo "Scene: $SCENE ($(python3 -c 'import json,sys;r=json.load(open(sys.argv[1]));print("bus side:",r.get("board_direction","up"))' "$ROOT/vision/scenes/$SCENE.json"))"
+fi
 WINDOW_FLAG="--no-window"; [ -n "${BRIDGE_WINDOW:-}" ] && WINDOW_FLAG=""
 RECORD_FLAG=""; [ -n "${BRIDGE_RECORD:-}" ] && RECORD_FLAG="--record $ROOT/vision/recordings/live_$(date +%H%M%S).mp4"
 PIDS=()
