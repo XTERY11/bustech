@@ -220,3 +220,14 @@ button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visi
 .replayFlow strong { color:var(--ink); font-size:12px; font-weight:750; }
 .replayFlow small { color:var(--muted); font-size:10px; }
 .replayFlow .replayAnimation { font-size:11px; padding:6px 11px; }
+
+/* Waiting list: one chip per booking, oldest first; the hub serves one passenger at a time. */
+.waitingList { width:calc(100% - clamp(36px,6vw,88px)); max-width:1652px; margin:14px auto 0; display:flex; align-items:stretch; gap:10px; }
+.waitingList .communicationTitle { min-height:44px; }
+.waitingListItems { flex:1; min-width:0; display:flex; flex-wrap:wrap; gap:8px; margin:0; padding:0; list-style:none; }
+.waitingChip { flex:0 1 auto; min-width:150px; max-width:280px; }
+.waitingChip strong { text-transform:none; }
+.waitingChip em { color:var(--green); font-size:11px; font-style:normal; font-weight:700; }
+.waitingChip.isCurrent { border-color:#9fd3b5; background:#f3fbf6; box-shadow:0 0 0 3px #147d4f14; }
+@media(max-width:760px) { .waitingList { display:block; margin-left:18px; margin-right:18px; width:auto; }.waitingList .communicationTitle { min-height:38px; margin-bottom:8px; }.waitingChip { flex:1 1 140px; max-width:none; } }
+.passengerNavigation .journeyReset { flex:none; min-height:34px; padding:6px 14px; font-size:12px; }

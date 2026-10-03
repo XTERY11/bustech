@@ -48,6 +48,8 @@ export function createBridge({ hub = new SignalHub(), token = process.env.BRIDGE
       void hub.run({ force: true }).catch(() => {});
       return reply(res, 202, { accepted: true, run_id: hub.active });
     } catch (error) {
+      // Waiting list: one live booking per need. The rejected event ID is not remembered, so a retry works later.
+      if (error.message === 'NEED_ALREADY_BOOKED') return reply(res, 409, { error: error.message, need: error.need, existing_journey_id: error.existing_journey_id });
       const known = ['EVENT_ID_CONFLICT', 'OUT_OF_ORDER_SIGNAL', 'INVALID_OBSERVED_AT', 'INVALID_EVENT_ID', 'INVALID_MODE', 'INVALID_SIGNAL', 'PAYLOAD_REQUIRED'];
       return reply(res, error.message === 'EVENT_ID_CONFLICT' ? 409 : 400, { error: known.includes(error.message) ? error.message : 'INVALID_REQUEST' });
     }

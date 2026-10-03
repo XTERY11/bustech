@@ -21,6 +21,9 @@ SwiftPM 实际跑通，真实中枢的 `/api/state` 也能解码。
 | P1 动画 | 已完成（方式改为内嵌 dashboard 数字孪生）：AT_STOP+matched 与 ON_BOARD 时用 WKWebView 加载 `http://<中枢 IP>:3000/passenger-twin#token=<token>`，加载失败只显示文字 | `PassengerTwinView.swift`、`dashboard/app/passenger-twin/page.tsx` |
 | P2 过期/取消 | 已完成：`IDLE+cancelled/expired` 显示中枢文案并结束；`completed` 后不再做本地 300 s 过期；`not_boarding` 回到第 1 轮并加一句提示 | 同上 |
 | P2 测试 | 已完成：`HubBookingTests`（旧用例改名为 Legacy，新增场馆场景、乱序、取消、URL）；`boarding_ui_fixture.py` 输出 journey；`SignalTwoUITests` 改为按三轮断言 | — |
+| 等待名单（多部手机） | 已完成，按约定字段编写，**尚未与实现了等待名单的中枢联调**：有 `journeys` 时只跟 `journey_id == 本单 event_id` 的条目及其 `navigation`，没有本单视为已结束（前 10 s 宽限；已上车的保留）；排队行 "N passengers ahead of you"；`waiting_turn`/`no_place` 黄色框；排队时不显示孪生；中枢仍列着本单时不做本地 300 s 过期；409 `NEED_ALREADY_BOOKED` 提示且不自动重试；取消带 `cancels`（旧中枢会丢弃该字段）；没有 `journeys` 的中枢行为不变 | `HubBookingContract.swift`（`HubJourneyEntry`、`ownEntry`）、`AssistanceRequestService.applyJourney`、`HTTPVehicleCloudService`、`AssistanceStatusView.journeyContent` |
+| 一部手机依次多位乘客 | 已完成：第 3 轮步骤下方 "Finish"：先清空本地会话并回到选类别，再向中枢发一次带 `cancels` 的取消（中枢视为复位，失败忽略、不重试）；`reason: "completed"` 和上车后从 `journeys` 消失都显示 "Journey finished"；下一单只认新 `event_id` | `AssistanceRequestService.finish`、`AssistanceStatusView.hubCard` |
+| P2 测试（等待名单） | 已完成：`HubBookingTests` 新增 5 个用例（共 27 个，macOS SwiftPM 跑通）；`boarding_ui_fixture.py` 输出 `journeys`，新增阶段 7–10 和 `/test/reject` | — |
 | 仍未做 | 中文文案（中枢只有英文）；按 `aid` 选本地动画（改用孪生）；`scripts/test-bustech-integration.mjs` 写死的 Xcode 路径；没有 journey 的旧中枢仍走旧逻辑 | — |
 
 **LAN 阻塞点**：Next 16 开发服务器默认拦截非 localhost 来源的开发资源（HMR websocket），用局域网 IP 打开页面时

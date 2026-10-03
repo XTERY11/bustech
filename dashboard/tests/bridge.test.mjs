@@ -87,3 +87,27 @@ test('HTTP + SSE authenticate signals and deliver actual result events', async t
   assert.equal((await fetch(base + '/api/vehicle', { method: 'POST', headers, body: '{}' })).status, 404);
   assert.equal((await fetch(base + '/api/state', { headers: { ...headers, Origin: 'https://untrusted.example' } })).status, 403);
 });
+
+test('HTTP: waiting-list replies (202 with queued/position, 409 for a second booking of a need), cancels and resets', async t => {
+  const hub = new SignalHub({ autoRun: false, planner: c => plan(c, { mode: 'rules' }) });
+  const server = createBridge({ hub, token: 'test-bridge' });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer test-bridge' };
+  const post = async (id, payload, at = Date.now()) => {
+    const response = await fetch(base + '/api/booking', { method: 'POST', headers, body: JSON.stringify(envelope(id, payload, at)) });
+    return [response.status, await response.json()];
+  };
+  const request = need => ({ ...input.request, accessibility_need: need, ramp_preference: need === 'WHEELCHAIR' ? 'REQUESTED' : 'UNSPECIFIED', assistance_requested: [] });
+  assert.deepEqual(await post('phone-a', request('WHEELCHAIR')), [202, { accepted: true, duplicate: false, changed: true, journey_id: 'phone-a', queued: true, position: 0 }]);
+  assert.deepEqual(await post('phone-b', request('CANE')), [202, { accepted: true, duplicate: false, changed: true, journey_id: 'phone-b', queued: true, position: 1 }]);
+  assert.deepEqual(await post('phone-c', request('WHEELCHAIR')), [409, { error: 'NEED_ALREADY_BOOKED', need: 'WHEELCHAIR', existing_journey_id: 'phone-a' }]);
+  const state = await (await fetch(base + '/api/state', { headers })).json();
+  assert.deepEqual(state.journeys.map(j => [j.journey_id, j.queued, j.position]), [['phone-a', true, 0], ['phone-b', true, 1]]);
+  assert.equal(state.journey.journey_id, 'phone-a');
+  assert.deepEqual(await post('cancel-a', { active: false, cancels: 'phone-a' }), [202, { accepted: true, duplicate: false, changed: true, journey_id: 'phone-a' }]);
+  // "Try again" on the phone that got the 409: same event ID, new observation time, now accepted.
+  assert.deepEqual((await post('phone-c', request('WHEELCHAIR'), Date.now() + 1))[0], 202);
+  assert.deepEqual(await post('reset-x', { active: false, cancels: 'unknown' }), [202, { accepted: true, duplicate: false, changed: false, journey_id: null }]);
+});

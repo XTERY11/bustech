@@ -14,9 +14,10 @@ bookings, so point it at a hub nobody is presenting from:
     cd vision && .venv/bin/python rehearse_live.py --bridge-url http://127.0.0.1:8887
     .venv/bin/python rehearse_live.py --bridge-url ... --only already_in_region walked_off_sideways
 
-Waits are real (bus arrival 10 s, empty region 2 s, lost presence 8 s); the whole run takes about 4-5 minutes. The
+Waits are real (bus arrival 10 s, empty region 2 s, lost presence 8 s); the whole run takes about 5 minutes. The
 5-minute booking TTL (frozen while a matched passenger is at the stop) is covered by the hub's unit tests with an
-injected clock, not here.
+injected clock, not here. 'single_phone' plays the supported demo (one phone, the "next passenger" reset after each
+boarding); 'queue' plays the waiting-list safety net (three phones book, the camera serves them one at a time).
 """
 from __future__ import annotations
 
@@ -30,12 +31,14 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from urllib import request
+from urllib.error import HTTPError
 
-from ride_signal_client import OrderedSignalQueue, RideSignalClient
+from ride_signal_client import OrderedSignalQueue, RideSignalClient, hub_error_code
 from yolo_bridge import perception_payload
 
 HEARTBEAT, EXIT_SECONDS, MIN_DWELL = 2.0, 2.0, 2.0  # yolo_bridge.py defaults
 ARRIVAL = 10.0                                     # journey.mjs ARRIVAL_MS
+DOCKED_ARRIVAL = 3.0                               # journey.mjs DOCKED_ARRIVAL_MS (later passengers of the same bus)
 PRESENCE_LOST = 8.0                                # hub.mjs PRESENCE_LOST_MS
 BOARDING = {'STROLLER': 22.0}                      # journey.mjs STROLLER_BOARDING_MS; others BOARDING_MS 16 s
 
@@ -49,7 +52,7 @@ def booking(need):
 
 class Timeline:
     """Polls GET /api/state and prints every change of the fields the App and dashboard act on."""
-    FIELDS = ('stage', 'matched', 'pending_exit', 'reason', 'seat', 'phase', 'visit')
+    FIELDS = ('id', 'stage', 'matched', 'pending_exit', 'reason', 'seat', 'phase', 'visit')
 
     def __init__(self, base, token):
         self.base, self.headers = base.rstrip('/'), ({'Authorization': f'Bearer {token}'} if token else {})
@@ -73,7 +76,7 @@ class Timeline:
             except OSError as failure:
                 self.say(f'hub unreachable: {failure}'); time.sleep(1); continue
             j, n = snapshot.get('journey') or {}, snapshot.get('navigation') or {}
-            row = dict(zip(self.FIELDS, (j.get('stage'), j.get('matched'), j.get('pending_exit'), j.get('reason'), j.get('seat'), n.get('phase'), j.get('visit_id'))))
+            row = dict(zip(self.FIELDS, (j.get('journey_id'), j.get('stage'), j.get('matched'), j.get('pending_exit'), j.get('reason'), j.get('seat'), n.get('phase'), j.get('visit_id'))))
             with self.lock:
                 self.snapshot = snapshot
                 if row != self.row:
@@ -173,11 +176,21 @@ class Rehearsal:
 
     # -- App side ---------------------------------------------------------------------------------------------
     def book(self, need):
-        self.timeline.say(f'APP    booking {need}')
-        return self.app.signal('booking', booking(need))
+        reply = self.app.signal('booking', booking(need))
+        self.timeline.say(f'APP    booking {need}: {reply.get("journey_id")} queued={reply.get("queued")} position={reply.get("position")}')
+        return reply
 
-    def cancel(self):
-        return self.app.signal('booking', {'active': False})
+    def cancel(self, journey_id=None):
+        """The App's cancel; with the journey_id of a boarded journey it is the "next passenger" reset."""
+        return self.app.signal('booking', {'active': False, **({'cancels': journey_id} if journey_id else {})})
+
+    @staticmethod
+    def entry(snapshot, journey_id):
+        return next((j for j in snapshot.get('journeys') or [] if j['journey_id'] == journey_id), None)
+
+    def expect_entry(self, journey_id, what, check, timeout=4.0):
+        """Wait until check(entry of journey_id in snapshot.journeys, snapshot) is true."""
+        return self.expect(f'{journey_id}: {what}', lambda r, s: (lambda e: e is not None and check(e, s))(self.entry(s, journey_id)), timeout)
 
     # -- checks -----------------------------------------------------------------------------------------------
     def expect(self, what, check, timeout=4.0):
@@ -377,6 +390,74 @@ class Rehearsal:
             previous = self.boarded(seat_type=seat_type)['journey']
             boarded_at = time.monotonic()
 
+    def single_phone(self):
+        """The supported demo: one phone, wheelchair, stroller, cane one after another, the "next passenger" reset after each."""
+        for need, seat_type in (('WHEELCHAIR', 'WHEELCHAIR_BAY'), ('STROLLER', 'SEAT'), ('CANE', 'SEAT')):
+            journey_id = self.book(need)['journey_id']
+            j = self.ready()['journey']
+            assert j['journey_id'] == journey_id and j['boarding_target']['type'] == seat_type, j
+            if need == 'STROLLER':
+                assert j['equipment_target'] == {'type': 'WHEELCHAIR_BAY', 'id': 'WHEELCHAIR_BAY'}, 'the stroller parks in the bay of a fresh bus'
+            self.camera.enter(need); self.at_stop()
+            time.sleep(2.5); self.camera.leave()
+            self.boarded(seat_type=seat_type)
+            time.sleep(1)
+            reply = self.cancel(journey_id)  # the reset button under the phone's navigation
+            assert reply['changed'] and reply['journey_id'] == journey_id, reply
+            snapshot = self.expect('reset: IDLE, journey finished', lambda r, s: r['id'] == journey_id and r['stage'] == 'IDLE'
+                                   and r['reason'] == 'completed' and r['phase'] is None)
+            assert snapshot['journey']['guidance']['title'] == 'No active booking', snapshot['journey']['guidance']
+            cabin = snapshot['context']['vehicle_context']['cabin']
+            assert cabin['wheelchair_bay_occupied'] is False, f'the bus is fresh again: {cabin}'
+        again = self.cancel(journey_id)
+        assert again['changed'] is False and again['journey_id'] is None, f'a second reset is harmless: {again}'
+        self.timeline.say('ok     a second reset changed nothing')
+
+    def queue(self):
+        """Three phones book wheelchair, cane, stroller; the camera serves the cane first, the wheelchair waits in the region."""
+        ids = {need: self.book(need)['journey_id'] for need in ('WHEELCHAIR', 'CANE', 'STROLLER')}
+        w, c, st = ids['WHEELCHAIR'], ids['CANE'], ids['STROLLER']
+        snapshot = self.expect('all three planned on one bus', lambda r, s: all((self.entry(s, i) or {}).get('plan_status') for i in ids.values()), 60)
+        mine = lambda s: [j for j in s['journeys'] if j['journey_id'] in ids.values()]  # earlier scenarios stay listed 2 min
+        positions = [(j['journey_id'], j['queued'], j['position']) for j in mine(snapshot)]
+        assert positions == [(w, True, 0), (c, True, 1), (st, True, 2)], positions
+        assert self.entry(snapshot, w)['boarding_target']['type'] == 'WHEELCHAIR_BAY' and self.entry(snapshot, c)['boarding_target']['type'] == 'SEAT'
+        assert self.entry(snapshot, st)['reason'] == 'no_place', 'the bay of this bus is promised to the wheelchair'
+        assert snapshot['journey']['journey_id'] == w, 'the oldest waiting booking is on top'
+        try:
+            self.book('WHEELCHAIR')
+            raise AssertionError('a second wheelchair booking was accepted')
+        except HTTPError as failure:
+            assert failure.code == 409 and hub_error_code(failure) == 'NEED_ALREADY_BOOKED', failure
+        self.timeline.say('ok     a second wheelchair booking is rejected (409 NEED_ALREADY_BOOKED)')
+        # The cane comes first, although booked second; it leaves early, so its exit is held for the bus arrival.
+        self.camera.enter('CANE')
+        self.expect('the cane is served first', lambda r, _: r['id'] == c and r['stage'] == 'AT_STOP' and r['matched'])
+        self.expect_entry(w, '1 passenger ahead', lambda e, _: e['queued'] and e['position'] == 1 and '1 passenger ahead of you' in e['guidance']['display_text'])
+        time.sleep(2.5); self.camera.leave()
+        self.expect('pending_exit for the cane', lambda r, _: r['id'] == c and r['pending_exit'] is True)
+        # The wheelchair rolls in while the cane's exit is held: told to wait, then released at the cane's ON_BOARD.
+        self.camera.enter('WHEELCHAIR')
+        self.expect_entry(w, 'waiting_turn while the cane boards', lambda e, _: e['stage'] == 'BOOKED' and e['reason'] == 'waiting_turn'
+                          and e['guidance']['display_text'] == 'We see you at the stop. Please wait, another passenger is boarding.')
+        snapshot = self.expect('the wheelchair is released when the cane is on board, without re-entering', lambda r, _: r['id'] == w and r['stage'] == 'AT_STOP' and r['matched'], ARRIVAL)
+        animation = snapshot['journey']['animation']
+        assert animation['duration_ms'] == DOCKED_ARRIVAL * 1000 and animation.get('docked') is True, f'short arrival on the docked bus: {animation}'
+        assert self.entry(snapshot, c)['stage'] == 'ON_BOARD', 'the cane keeps its boarding entry'
+        self.expect('"Ready to board" after the short arrival', lambda r, _: r['id'] == w and r['phase'] == 'BOARD_BUS', DOCKED_ARRIVAL + 2)
+        self.camera.leave()
+        self.expect_entry(w, 'ON_BOARD in the bay (its phone keeps the entry; the top level moves on to the stroller)',
+                          lambda e, _: e['stage'] == 'ON_BOARD' and e['boarding_target']['type'] == 'WHEELCHAIR_BAY' and e['navigation']['phase'] == 'TO_WHEELCHAIR_BAY')
+        # Nobody boardable is left: a fresh bus comes and the stroller is planned for it.
+        self.expect_entry(st, 'planned again on a fresh bus', lambda e, _: e['plan_status'] == 'READY' and e['reason'] == 'booked', 60)
+        self.camera.enter('STROLLER')
+        snapshot = self.expect('the stroller is served', lambda r, _: r['id'] == st and r['stage'] == 'AT_STOP' and r['matched'])
+        assert snapshot['journey']['animation']['duration_ms'] == ARRIVAL * 1000, 'the first passenger of a fresh bus waits for its arrival'
+        time.sleep(2.5); self.camera.leave()
+        snapshot = self.boarded(seat_type='SEAT')
+        done = [(j['journey_id'], j['stage']) for j in mine(snapshot)]
+        assert done == [(w, 'ON_BOARD'), (c, 'ON_BOARD'), (st, 'ON_BOARD')], done
+
     def camera_clock_skew(self):
         """Camera clock 6 s ahead of the hub: rejected, but must not block the queue; 3 s ahead works."""
         self.book('CANE'); self.ready()
@@ -396,13 +477,20 @@ class Rehearsal:
 
     SCENARIOS = ['baseline', 'already_in_region', 'booked_while_leaving', 'occupied_by_other_aid', 'handover_in_one_visit', 'passers_by',
                  'walked_off_sideways', 'too_short_stay', 'back_during_pending_exit', 'low_confidence',
-                 'bridge_restart_mid_visit', 'lost_exit', 'lost_exit_after_ready', 'camera_clock_skew', 'sequence']
+                 'bridge_restart_mid_visit', 'lost_exit', 'lost_exit_after_ready', 'camera_clock_skew', 'sequence',
+                 'single_phone', 'queue']
+
+    def clear(self):
+        for j in self.timeline.fetch().get('journeys') or []:
+            if j['stage'] != 'IDLE':
+                self.cancel(j['journey_id'])
+        self.cancel()
 
     def reset(self):
-        """No booking and an empty region before each scenario."""
+        """No booking and an empty region before each scenario: every booking still listed is cancelled or reset."""
         if self.camera:
             self.camera.close()
-        self.cancel()
+        self.clear()
         self.expect('reset: no booking', lambda r, _: r['stage'] == 'IDLE', 10)
         self.camera = Camera(self.base, self.token, self.timeline)
 
@@ -424,7 +512,7 @@ class Rehearsal:
             results.append((name, ok, why))
         if self.camera:
             self.camera.close()
-        self.cancel()
+        self.clear()
         return results
 
 

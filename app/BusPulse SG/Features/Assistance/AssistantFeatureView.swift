@@ -38,7 +38,12 @@ struct AssistantFeatureView: View {
                     AssistanceStatusView(
                         request: request,
                         onEdit: { screen = .manual(request) },
-                        onDone: startNewRequest
+                        onDone: startNewRequest,
+                        // Same stop and route, no category chosen yet: the next passenger picks theirs.
+                        onNextPassenger: {
+                            screen = .manual(AssistanceRequest(context: request.context, intent: .boarding, need: .none,
+                                                               preferredInteraction: .visual, assistanceRequested: []))
+                        }
                     )
                 }
             }

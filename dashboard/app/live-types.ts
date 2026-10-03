@@ -26,5 +26,7 @@ export type Result = {
 /** Passenger journey from the hub (backend/journey.mjs); null for demo presets. The App shows `guidance`. */
 export type Journey = { stage: 'IDLE' | 'BOOKED' | 'AT_STOP' | 'ON_BOARD'; journey_id?: string | null; revision?: number; completed?: boolean; pending_exit?: boolean; reason?: string | null; visit_id?: string | null; roi_id?: string | null; updated_at?: number; boarding_target?: BoardingTarget | null; equipment_target?: BoardingTarget | null; animation?: JourneyAnimation | null; matched?: boolean; need?: string | null; labels?: string[]; seat?: string | null;
   guidance: { title: string; display_text: string; audio_text: string } };
-export type Snapshot = { journey?: Journey | null; navigation?: Navigation | null; source: 'demo' | 'external'; mode: Mode; context: Context; channels: Record<string, { received_at: number; observed_at: number; event_id: string }>; running: string | null; summary: Summary | null; result: Result | null };
+/** One booking in the hub's waiting list (oldest first): waiting, in progress, or finished in the last ~2 minutes. */
+export type JourneyEntry = Journey & { queued?: boolean; position?: number; plan_status?: string | null; navigation?: Navigation | null };
+export type Snapshot = { journey?: Journey | null; navigation?: Navigation | null; journeys?: JourneyEntry[] | null; source: 'demo' | 'external'; mode: Mode; context: Context; channels: Record<string, { received_at: number; observed_at: number; event_id: string }>; running: string | null; summary: Summary | null; result: Result | null };
 export type HubEvent = { id: number; type: string; at: number; data: Record<string, unknown> };

@@ -51,9 +51,12 @@ final class AssistanceRequestService {
             guard isCurrent(request) else { return }
             update(request, phase: .sent, receipt: receipt)
             if client.usesHubFeedback {
-                // BusTech supports exactly one active booking at this hub.
-                for key in Array(sessions.keys) where sessions[key]?.request.id != request.id && sessions[key]?.hubFeedback != nil {
-                    sessions[key]?.hubFeedback = .replaced
+                // A single-journey hub keeps exactly one active booking. A waiting-list hub (it reports
+                // `queued`/`position` on acceptance) keeps the others, and each follows its own entry.
+                if receipt.queuePosition == nil {
+                    for key in Array(sessions.keys) where sessions[key]?.request.id != request.id && sessions[key]?.hubFeedback != nil {
+                        sessions[key]?.hubFeedback = .replaced
+                    }
                 }
                 await refreshFeedback(for: request)
             } else {
@@ -105,8 +108,9 @@ final class AssistanceRequestService {
         defer { refreshingRequests.remove(request.id) }
         // Do not keep presenting a READY result after its five-minute lifetime,
         // including when this version of the hub preserves presentation snapshots.
-        // A completed hub journey (ON_BOARD) no longer expires at the hub, so it does not expire here either.
-        guard now.timeIntervalSince(receipt.submittedAt) < 300 || session.journey?.isCompleted == true else {
+        // While the hub still has this booking (waiting in its list, frozen at the stop, or completed),
+        // the hub decides when it ends and reports it, so the local timer does not expire it.
+        guard now.timeIntervalSince(receipt.submittedAt) < 300 || hubKeepsBooking(session) else {
             setFeedback(.expired, for: request)
             return
         }
@@ -117,7 +121,7 @@ final class AssistanceRequestService {
                   sessions[request.context.id]?.hubFeedback?.isTerminal != true,
                   sessions[request.context.id]?.hubFeedback != .cancelling,
                   !failedCancellations.contains(request.id) else { return }
-            if applyJourney(snapshot, for: request, receipt: receipt) { return }
+            if applyJourney(snapshot, for: request, receipt: receipt, now: now) { return }
             setFeedback(snapshot.feedback(for: request, eventID: receipt.providerReference, now: now), for: request)
             sessions[request.context.id]?.busAtStop = snapshot.busIsAtStop(
                 for: request, eventID: receipt.providerReference, now: now)
@@ -152,8 +156,8 @@ final class AssistanceRequestService {
               session.phase != .cancelled, session.phase != .completed,
               session.hubFeedback?.isTerminal != true, session.hubFeedback != .cancelling,
               !failedCancellations.contains(request.id), let receipt = session.receipt,
-              now.timeIntervalSince(receipt.submittedAt) < 300 || session.journey?.isCompleted == true else { return }
-        if applyJourney(snapshot, for: request, receipt: receipt) { return }
+              now.timeIntervalSince(receipt.submittedAt) < 300 || hubKeepsBooking(session) else { return }
+        if applyJourney(snapshot, for: request, receipt: receipt, now: now) { return }
         if session.triggeredAt == nil, snapshot.hasTrigger(for: request, receipt: receipt, now: now) {
             sessions[request.context.id]?.triggeredAt = now
             sessions[request.context.id]?.triggerObservedAt = snapshot.perceptionObservedAt
@@ -165,22 +169,39 @@ final class AssistanceRequestService {
         }
     }
 
-    /// v0.5 hubs publish one passenger journey. When the snapshot has one, it replaces the legacy
+    /// v0.5 hubs publish the passenger journey. When the snapshot has one, it replaces the legacy
     /// trigger latching, vehicle telemetry check, freshness window and ROI correlation, and the
-    /// stage may move back (AT_STOP → BOOKED) exactly as the hub decides. Returns false for older hubs.
+    /// stage may move back (AT_STOP → BOOKED) exactly as the hub decides. A waiting-list hub also
+    /// publishes `journeys`: this booking then follows its own entry (and that entry's navigation),
+    /// never the top-level journey, which belongs to whoever is boarding. Returns false for older hubs.
     private func applyJourney(_ snapshot: HubSnapshot, for request: AssistanceRequest,
-                              receipt: VehicleSubmissionReceipt) -> Bool {
-        guard snapshot.journey != nil else { return false }
+                              receipt: VehicleSubmissionReceipt, now: Date = .now) -> Bool {
+        guard snapshot.journey != nil || snapshot.listsJourneys else { return false }
         guard isCurrent(request), let session = sessions[request.context.id] else { return true }
-        if let journey = snapshot.ownJourney(eventID: receipt.providerReference) {
+        if let entry = snapshot.ownEntry(eventID: receipt.providerReference) {
+            let journey = entry.journey
             // Polling and the event stream can arrive out of order; never step back to an older revision.
             if let current = session.journey, current.journey_id == journey.journey_id,
                (journey.revision ?? 0) < (current.revision ?? 0) { return true }
             sessions[request.context.id]?.journey = journey
-            sessions[request.context.id]?.navigation = snapshot.navigation
+            sessions[request.context.id]?.navigation = entry.navigation
+        } else if snapshot.listsJourneys {
+            // Not listed. A boarded journey the hub has since forgotten ended normally; give a fresh
+            // booking a moment in case this snapshot was taken just before the hub accepted it.
+            if session.journey?.isCompleted == true {
+                setFeedback(.finished, for: request)
+                return true
+            }
+            if session.journey == nil, now.timeIntervalSince(receipt.submittedAt) < 10 { return true }
         }
         setFeedback(snapshot.feedback(for: request, eventID: receipt.providerReference), for: request)
         return true
+    }
+
+    /// The hub still lists this booking and has not ended it, so its own expiry applies, not the App's.
+    private func hubKeepsBooking(_ session: AssistanceSession) -> Bool {
+        guard let journey = session.journey, session.hubFeedback?.isTerminal != true else { return false }
+        return journey.isCompleted || journey.journeyStage != .idle
     }
 
     /// The hub's journey for this request, or nil when the hub predates v0.5.
@@ -259,6 +280,26 @@ final class AssistanceRequestService {
     }
 
     func complete(_ request: AssistanceRequest) { update(request, phase: .completed) }
+
+    /// "Finish": ends a boarded journey so the same phone can book the next passenger.
+    /// The local session is cleared first and never waits on the hub. The hub is told once, best effort,
+    /// with the ordinary cancellation (`cancels` = this booking), which a hub treats as a reset for a
+    /// completed journey; a failure or an unreachable hub is ignored and never retried.
+    /// Returns the hub notification so tests can await it; callers need not.
+    @discardableResult
+    func finish(_ request: AssistanceRequest) -> Task<Void, Never>? {
+        guard isCurrent(request), let session = sessions[request.context.id] else { return nil }
+        let client = clients[request.id]
+        let notifyHub = client?.usesHubFeedback == true && session.receipt != nil
+            && session.phase != .cancelled && session.hubFeedback?.isTerminal != true
+        sessions[request.context.id] = nil
+        clients[request.id] = nil
+        failedCancellations.remove(request.id)
+        announcedJourneys[request.id] = nil
+        announcedTriggers.remove(request.id)
+        guard notifyHub, let client else { return nil }
+        return Task { try? await client.cancel(request) }
+    }
 
     private func isCurrent(_ request: AssistanceRequest) -> Bool {
         sessions[request.context.id]?.request.id == request.id

@@ -313,6 +313,8 @@ struct VehicleSubmissionReceipt: Codable, Equatable, Hashable, Sendable {
     let requestID: UUID
     let providerReference: String
     let submittedAt: Date
+    /// Bookings ahead at acceptance, from a hub that keeps a waiting list; nil from any other hub.
+    var queuePosition: Int? = nil
 }
 
 struct VehicleAcknowledgement: Codable, Equatable, Hashable, Sendable {

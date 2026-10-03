@@ -46,7 +46,8 @@ struct AssistanceFlowView: View {
                     AssistanceStatusView(
                         request: request,
                         onEdit: { screen = .manual(request) },
-                        onDone: { dismiss() }
+                        onDone: { dismiss() },
+                        onNextPassenger: { screen = .manual(nil) }
                     )
                 }
             }

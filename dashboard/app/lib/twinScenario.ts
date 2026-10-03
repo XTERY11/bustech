@@ -18,6 +18,8 @@ export type TwinFrame = {
 };
 export type ScenarioStep = { at: number; label: string; action?: string; frame: TwinFrame; camera?: 'overview' | 'entrance' | 'ramp' | 'cutaway' | 'interior' };
 export const DOCK_MS = 4200, ARRIVAL_MS = 10000, BOARDING_MS = 16000, STROLLER_BOARDING_MS = 22000;
+/** A hub arrival this short means the bus is already at the stop (a later passenger of the same bus): no drive-in. */
+export const DOCKED_ARRIVAL_MAX_MS = 5000;
 const DOOR_MS = 1200, RAMP_MS = 2000, KNEEL_MS = 1600;
 export const IDLE_FRAME: TwinFrame = { door: 'closed', ramp: 'retracted', kneeling: false, boardingStatus: 'idle', announcement: { active: false, text: '' }, passengerInfo: null, passengerJourney: null, arrival: null };
 const SEAT_IDS = [...Array.from({ length: 16 }, (_, index) => `S${String(index + 1).padStart(2, '0')}`), 'F01'];
@@ -94,16 +96,25 @@ export function actionsToScenario(result: Result | null, context: Context, runni
   if (has(actions, 'ABORT_ASSISTANCE_SEQUENCE')) return waitingScenario('Assistance is paused. Please wait for the safety operator.', passenger, occupancy);
   const action = (...names: string[]) => names.find(name => actions.includes(name));
   const arrivalId = journey?.animation?.id ?? `${result.request_id}:arrival`;
+  // The hub times the arrival (animation.duration_ms). A short one is for a later passenger of the same bus,
+  // which is already docked: start at the stop and go straight to the entrance (door, ramp) without a drive-in.
+  const hubArrivalMs = journey?.animation?.phase === 'arrival' && Number.isFinite(journey.animation.duration_ms) && journey.animation.duration_ms > 0
+    ? journey.animation.duration_ms : ARRIVAL_MS;
+  const docked = hubArrivalMs <= DOCKED_ARRIVAL_MAX_MS;
+  const dockMs = docked ? 0 : DOCK_MS;
+  const preparing: ScenarioStep = { at: dockMs, label: 'Preparing entrance', action: action('HOLD_AT_STOP', 'CHECK_SINGLE_ENTRANCE_CLEARANCE', 'KEEP_SINGLE_ENTRANCE_CLEAR', 'PREPARE_WHEELCHAIR_AREA'),
+    frame: { boardingStatus: 'preparing', passengerInfo: { title: 'Preparing to board', message: 'The bus is stopping and preparing the entrance. Please wait for the operator.' } } };
   const initial: TwinFrame = { ...IDLE_FRAME, ...(occupancy ? { seatOccupancy: occupancy } : {}),
-    passengerJourney: passenger, arrival: { id: arrivalId, progress: 0 }, boardingStatus: 'request_received',
+    passengerJourney: passenger, arrival: { id: arrivalId, progress: docked ? 1 : 0 }, boardingStatus: 'request_received',
     passengerInfo: { title: 'Bus arriving', message: 'Your arrival has been recognised. Please stay behind the marked boarding line.' } };
-  const steps: ScenarioStep[] = [
-    { at: 0, label: 'Bus arriving', camera: 'overview', frame: initial },
-    { at: 50, label: 'Bus approaching the stop', frame: { arrival: { id: arrivalId, progress: 1 } } },
-    { at: DOCK_MS, label: 'Preparing entrance', action: action('HOLD_AT_STOP', 'CHECK_SINGLE_ENTRANCE_CLEARANCE', 'KEEP_SINGLE_ENTRANCE_CLEAR', 'PREPARE_WHEELCHAIR_AREA'),
-      frame: { boardingStatus: 'preparing', passengerInfo: { title: 'Preparing to board', message: 'The bus is stopping and preparing the entrance. Please wait for the operator.' } } },
-  ];
-  let t = DOCK_MS;
+  const steps: ScenarioStep[] = docked
+    ? [{ ...preparing, camera: 'overview', frame: { ...initial, ...preparing.frame } }]
+    : [
+      { at: 0, label: 'Bus arriving', camera: 'overview', frame: initial },
+      { at: 50, label: 'Bus approaching the stop', frame: { arrival: { id: arrivalId, progress: 1 } } },
+      preparing,
+    ];
+  let t = dockMs;
   const deployRamp = has(actions, 'DEPLOY_AUTOMATIC_SHORT_RAMP');
   const openDoor = has(actions, 'OPEN_SINGLE_ENTRANCE') || context.vehicle_context?.single_entrance_state === 'OPEN' || deployRamp;
   const rampAction = action('DEPLOY_AUTOMATIC_SHORT_RAMP');
@@ -114,7 +125,7 @@ export function actionsToScenario(result: Result | null, context: Context, runni
     t += DOOR_MS; steps.push({ at: t, label: 'Door open', action: doorAction, frame: { door: 'open' } });
   }
   if (deployRamp) {
-    t = Math.max(t, DOCK_MS + 300 + KNEEL_MS) + 200;
+    t = Math.max(t, dockMs + 300 + KNEEL_MS) + 200;
     steps.push({ at: t, label: 'Ramp extending', action: rampAction, frame: { ramp: 'extending' } });
     t += RAMP_MS; steps.push({ at: t, label: 'Ramp extended', action: rampAction, frame: { ramp: 'extended' } });
   } else if (has(actions, 'KEEP_RAMPS_STOWED')) {
@@ -123,7 +134,8 @@ export function actionsToScenario(result: Result | null, context: Context, runni
   const audio = result.passenger_communication.audio_text, display = result.passenger_communication.display_text;
   const ready: TwinFrame = { boardingStatus: 'ready', passengerInfo: { title: 'Ready to board', message: display ?? audio ?? 'Please board when the safety operator signals.' } };
   if (has(actions, 'ACTIVATE_EXTERNAL_SPEAKER', 'CONFIRM_ROUTE_IDENTITY', 'PLAY_ENTRANCE_AUDIO_BEACON') && audio) ready.announcement = { active: true, text: audio };
-  steps.push({ at: ARRIVAL_MS, label: 'Ready to board', action: action('SHOW_EXTERNAL_DISPLAY', 'WAIT_FOR_BOARDING_CONFIRMATION', 'EXTEND_DWELL_TIME'), frame: ready });
+  // Ready when the hub's arrival ends (10 s from the constants for a full drive-in), never before the entrance is ready.
+  steps.push({ at: docked ? Math.max(hubArrivalMs, t) : ARRIVAL_MS, label: 'Ready to board', action: action('SHOW_EXTERNAL_DISPLAY', 'WAIT_FOR_BOARDING_CONFIRMATION', 'EXTEND_DWELL_TIME'), frame: ready });
   return steps;
 }
 

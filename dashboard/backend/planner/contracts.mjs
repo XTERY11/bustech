@@ -55,6 +55,8 @@ export const INPUT_SCHEMA = {
       assistance_requested: { type: 'array', maxItems: 8, uniqueItems: true, items: en(['WHEELCHAIR_RAMP', 'ADDITIONAL_BOARDING_TIME', 'AUDIO_BOARDING_GUIDANCE', 'VISUAL_BOARDING_GUIDANCE', 'CONFIRM_BUS_IDENTITY']) },
       ramp_preference: en(['REQUESTED', 'DECLINED', 'UNSPECIFIED']),
       preferred_interaction: en(['AUDIO', 'VISUAL', 'BOTH']), language: en(['zh-CN', 'en-SG']),
+      // With active:false: the journey_id (booking event_id) this cancel or reset ends. Optional; see hub.cancelTarget.
+      cancels: id,
     }),
     perception: obj({
       observation_age_ms: age, target_match_confirmed: bool,

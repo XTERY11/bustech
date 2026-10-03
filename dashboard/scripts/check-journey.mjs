@@ -60,8 +60,8 @@ try {
   assert.equal((await fetch(`${base}/api/state`)).status, 401);
   const report = [];
   for (const need of categories) {
-    // Each category is an independent simulated bus. A stroller and a wheelchair
-    // cannot consume the same bay in one journey sequence; unit tests cover that refusal.
+    // Each category is an independent simulated bus: the previous journey was reset by the phone's "next passenger"
+    // cancel below, which gives a fresh bus. Overlapping bookings sharing a bus are covered by the unit tests.
     hub.cabin = structuredClone(initialCabin);
     if (need === 'STROLLER' && strollerNearbyFull) {
       hub.cabin.occupied_seat_ids = [...new Set([...hub.cabin.occupied_seat_ids, 'S02', 'S03'])];
@@ -109,6 +109,10 @@ try {
     await until(() => events.some(e => e.type === 'navigation' && e.data.navigation?.id === journeyId && e.data.navigation.destination.id === target.id));
     report.push({ category: need, model: result.meta.model, target: target.id, equipment_target: result.equipment_target, navigation: snapshot.navigation.phase, steps: snapshot.navigation.steps,
       api_calls: result.meta.api_calls, total_tokens: result.meta.usage.total_tokens, latency_ms: result.meta.latency_ms });
+    // The phone's reset ("next passenger"): the boarded journey ends as completed and the bus is fresh again.
+    assert.equal((await post('/api/booking', { event_id: `reset-${randomUUID()}`, observed_at: new Date(clock).toISOString(), payload: { active: false, cancels: journeyId } })).journey_id, journeyId);
+    const after = await state();
+    assert.deepEqual([after.journey.stage, after.journey.reason, after.navigation], ['IDLE', 'completed', null]);
   }
   console.log(JSON.stringify({ ok: true, real_deepseek: true, cv_source: 'simulated HTTP events', cabin_reset_between_categories: true, stroller_nearby_full: strollerNearbyFull, authenticated_sse_navigation: true, results: report }, null, 2));
 } finally {

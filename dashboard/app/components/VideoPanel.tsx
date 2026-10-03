@@ -16,7 +16,8 @@ const REPLAY_NEEDS = [['WHEELCHAIR', 'Wheelchair'], ['STROLLER', 'Stroller'], ['
 /**
  * `onReplay` books assistance for one need. It is offered only while the bridge is the recorded-session
  * replay (vision/replay_bridge.py), which then plays the venue clip for that need and sends its signals:
- * one click shows the whole flow, video included. `replayBusy` is true while a journey is under way.
+ * one click shows the whole flow, video included. `replayBusy` is true while any booking is BOOKED or AT_STOP:
+ * the bridge plays one clip at a time. Once the passenger is on board the next one can start.
  */
 export function VideoPanel({ onStatusChange, onReplay, replayBusy = false }: { onStatusChange?: (status: { online: boolean; triggered: boolean; fps: number }) => void; onReplay?: (need: string) => void; replayBusy?: boolean }) {
   const [base, setBase] = useState(''), [draft, setDraft] = useState('');
@@ -72,7 +73,9 @@ export function VideoPanel({ onStatusChange, onReplay, replayBusy = false }: { o
         : <div className="stagePlaceholder"><strong>No video stream</strong><p>Start the bridge on the vision computer:<br /><code>bash vision/start_bridge.sh 0</code><br />then check <code>{base || '…'}/health</code>.</p></div>}
     </div>
     {online && health?.device === 'replay' && onReplay && <div className="replayFlow" aria-label="Replay the full flow from a recorded session">
-      <span><strong>Replay full flow</strong><small>recorded venue clip · booking → at the stop → on board</small></span>
+      <span><strong>Replay full flow</strong><small>{replayBusy
+        ? 'available once no booking is waiting or at the stop · one clip plays at a time'
+        : 'recorded venue clip · booking → at the stop → on board'}</small></span>
       <span className="stageFooterControls">{REPLAY_NEEDS.map(([need, label]) =>
         <button key={need} className="replayAnimation" disabled={replayBusy} onClick={() => onReplay(need)}>▶ {label}</button>)}</span>
     </div>}

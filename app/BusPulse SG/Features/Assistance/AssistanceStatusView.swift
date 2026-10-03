@@ -10,6 +10,8 @@ struct AssistanceStatusView: View {
     let onEdit: () -> Void
     let onDone: () -> Void
     var embedded = false
+    /// After "Finish": open a fresh category selection. Falls back to `onDone`.
+    var onNextPassenger: (() -> Void)? = nil
 
     @Environment(PreferencesStore.self) private var conversationPreferences
     @Environment(\.scenePhase) private var scenePhase
@@ -169,16 +171,29 @@ struct AssistanceStatusView: View {
             if case .unavailable = state {
                 Text("Connection interrupted. Reconnecting…").font(.footnote).foregroundStyle(.secondary)
             }
-            if state.isTerminal {
-                Button("New Request", systemImage: "plus", action: onEdit).buttonStyle(.borderedProminent)
-            } else if journey?.isCompleted == true {
-                Button("Done", systemImage: "checkmark") {
-                    requestService.complete(request)
-                    onDone()
+            if state == .finished {
+                Button("Finish", systemImage: "checkmark.circle.fill") {
+                    requestService.finish(request) // Local reset only: the hub has already ended it.
+                    (onNextPassenger ?? onEdit)()
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color.pulseNavy)
-                .accessibilityHint("Closes the boarding guidance")
+                .accessibilityIdentifier("assistance.status.next")
+            } else if state.isTerminal {
+                Button("New Request", systemImage: "plus", action: onEdit).buttonStyle(.borderedProminent)
+            } else if journey?.isCompleted == true {
+                // Directly under the step-by-step guidance: one phone plays one passenger after another.
+                Button("Finish", systemImage: "checkmark.circle.fill") {
+                    feedback.stopSpeaking()
+                    requestService.finish(request)
+                    (onNextPassenger ?? onDone)()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .tint(Color.pulseNavy)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel("Finish journey, next passenger")
+                .accessibilityHint("Ends this journey and opens a new assistance request")
                 .accessibilityIdentifier("assistance.status.done")
             } else {
                 Button("Cancel Request", role: .destructive) {
@@ -195,6 +210,7 @@ struct AssistanceStatusView: View {
     }
 
     private func hubTitle(_ state: HubFeedback) -> String {
+        if state == .finished { return state.title }
         if state.isTerminal || state == .cancelling {
             // The hub's own wording for a cancelled or expired journey, so phone and dashboard agree.
             if journey?.journeyStage == .idle, let title = journey?.guidanceTitle { return title }
@@ -204,6 +220,7 @@ struct AssistanceStatusView: View {
     }
 
     private func hubMessage(_ state: HubFeedback) -> String {
+        if state == .finished { return state.message }
         if journey?.journeyStage == .idle, let text = journey?.guidanceText { return text }
         return state.message
     }
@@ -224,10 +241,24 @@ struct AssistanceStatusView: View {
                            ?? navigation?.destination?.isWheelchairBay ?? false)
             }
         case .booked?, .idle?, nil:
-            if let text = journey.guidanceText {
+            if journey.isHeldAtStop {
+                // waiting_turn: recognised at the stop while another passenger boards; no_place: the bus
+                // has no accessible place left. The hub's words, in the amber waiting style.
+                journeyCallout(journey.guidanceText,
+                               symbol: journey.reason == "no_place" ? "exclamationmark.triangle.fill" : "hourglass",
+                               tint: Color.pulseAmber)
+            } else if let text = journey.guidanceText {
                 Text(text)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("assistance.journey.message")
+            }
+            if let queueText = journey.queueText {
+                Label(queueText, systemImage: "person.2.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("Waiting list: \(queueText)")
+                    .accessibilityIdentifier("assistance.journey.queue")
             }
             if journey.reason == "not_boarding" {
                 Label("You left the boarding point, so the bus will wait for you to come back.",
@@ -238,7 +269,8 @@ struct AssistanceStatusView: View {
             }
         }
         // One position for the twin in both rounds, so the web view is not reloaded between them.
-        if stage == .onBoard || (stage == .atStop && journey.isMatched) {
+        // The twin shows whoever is boarding now, so a passenger still in the waiting list does not see it.
+        if !journey.isQueued, stage == .onBoard || (stage == .atStop && journey.isMatched) {
             twinView
         }
         if stage == .onBoard {
@@ -586,6 +618,11 @@ struct AssistanceStatusView: View {
     }
 
     private func handleFeedback(for phase: AssistanceRequestPhase) {
+        // A refused hub booking (e.g. this need is already booked) is announced like any failure.
+        if hubFeedback != nil, case let .failed(message) = phase, !hasReceipt {
+            feedback.announceFailure(message)
+            return
+        }
         guard hubFeedback == nil else { return }
         switch phase {
         case .received where !hasAnnouncedAcknowledgement:

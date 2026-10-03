@@ -569,6 +569,301 @@ struct HubBookingTests {
         }
     }
 
+    // MARK: Waiting list (several phones, one passenger at a time)
+
+    @Test("Three phones: this booking waits at position 2, then 1, then boards, while other bookings come and go")
+    @MainActor
+    func waitingListFromOnePhone() async throws {
+        let request = booking(), ours = "app-booking-\(request.id.uuidString)"
+        let a = "app-booking-phone-a", b = "app-booking-phone-b", d = "app-booking-phone-d"
+        let bay: [String: Any] = ["type": "WHEELCHAIR_BAY", "id": "WHEELCHAIR_BAY"]
+        let otherNavigation = navigationJSON(phase: "TO_SEAT", destination: ["type": "SEAT", "id": "S02"], steps: true)
+        func state(current: [String: Any], latestBooking: String, _ journeys: [[String: Any]],
+                   navigation: [String: Any]? = nil) -> String {
+            snapshotJSON(request: request, eventID: latestBooking, journey: current,
+                         navigation: navigation ?? otherNavigation, journeys: journeys)
+        }
+        let aAtStop = entryJSON(a, need: "CANE", stage: "AT_STOP", matched: true, reason: "entered", title: "Bus arriving")
+        let aDone = entryJSON(a, need: "CANE", revision: 3, stage: "ON_BOARD", matched: true, completed: true,
+                              reason: "boarding_preview", title: "Follow guidance to seat S02", navigation: otherNavigation)
+        let bWaiting = entryJSON(b, need: "STROLLER", stage: "BOOKED", queued: true, position: 1, reason: "booked", title: "Booking received")
+        let bAtStop = entryJSON(b, need: "STROLLER", revision: 2, stage: "AT_STOP", matched: true, reason: "entered", title: "Bus arriving")
+        let bDone = entryJSON(b, need: "STROLLER", revision: 3, stage: "ON_BOARD", matched: true, completed: true,
+                              reason: "boarding_preview", title: "Follow guidance to seat S03")
+        let dWaiting = entryJSON(d, need: "CANE", stage: "BOOKED", queued: true, position: 2, reason: "booked", title: "Booking received")
+        let dCancelled = entryJSON(d, need: "CANE", revision: 2, stage: "IDLE", reason: "cancelled", title: "Booking cancelled")
+        let ours2 = entryJSON(ours, revision: 1, stage: "BOOKED", queued: true, position: 2, reason: "booked",
+                              title: "Booking received", text: "Two passengers are ahead of you. Please wait near the stop.")
+        let ours1 = entryJSON(ours, revision: 2, stage: "BOOKED", queued: true, position: 1, reason: "booked",
+                              title: "Booking received", text: "One passenger is ahead of you. Please wait near the stop.")
+        let oursTurn = entryJSON(ours, revision: 3, stage: "BOOKED", queued: true, position: 0, reason: "waiting_turn",
+                                 title: "Please wait at the stop", text: "Another passenger is boarding. You are next.")
+        let oursArrival = entryJSON(ours, revision: 4, stage: "AT_STOP", matched: true, reason: "entered", title: "Bus arriving",
+                                    animation: ["id": "\(ours):arrival", "phase": "arrival", "aid": "wheelchair",
+                                                "started_at": 1_800_000_000_000.0, "duration_ms": 3000, "target": bay])
+        let oursNavigation = navigationJSON(phase: "TO_WHEELCHAIR_BAY", destination: bay, steps: true)
+        let oursBoarded = entryJSON(ours, revision: 5, stage: "ON_BOARD", matched: true, completed: true, reason: "boarding_preview",
+                                    title: "Follow the wheelchair-space guidance", navigation: oursNavigation)
+        HubURLProtocol.fixture.reset([
+            .response(202, "{\"accepted\":true,\"journey_id\":\"\(ours)\",\"queued\":true,\"position\":2}"),
+            .response(200, state(current: aAtStop, latestBooking: ours, [aAtStop, bWaiting, ours2])),
+            .response(200, state(current: bAtStop, latestBooking: d, [aDone, bAtStop, ours1, dWaiting])),
+            .response(200, state(current: bAtStop, latestBooking: d, [aDone, bAtStop, ours1, dWaiting])),
+            .response(200, state(current: bDone, latestBooking: d, [bDone, oursTurn, dCancelled])),
+            .response(200, state(current: oursArrival, latestBooking: d, [bDone, oursArrival])),
+            // The top-level navigation is deliberately another phase: the App must use its own entry's.
+            .response(200, state(current: oursBoarded, latestBooking: d, [bDone, oursBoarded],
+                                 navigation: navigationJSON(phase: "TO_STOP", destination: ["type": "BUS_STOP", "id": "DEMO_STOP"], steps: false))),
+            .response(200, state(current: bDone, latestBooking: d, [])),
+        ])
+        let service = AssistanceRequestService(vehicleCloud: client())
+        await service.send(request)
+        #expect(service.session(for: request.context)?.receipt?.queuePosition == 2)
+
+        // Position 2: round 1 with the hub's words; another passenger's plan and navigation are not ours.
+        var journey = try #require(service.journey(for: request))
+        #expect(journey.journeyStage == .booked && journey.isQueued)
+        #expect(journey.queueText == "2 passengers ahead of you")
+        #expect(service.navigation(for: request) == nil)
+        #expect(service.session(for: request.context)?.hubFeedback == .waiting)
+        #expect(service.takeJourneyFeedback(for: request)?.guidanceText == "Two passengers are ahead of you. Please wait near the stop.")
+
+        // Position 1 while A boards and D books after us; the local five-minute timer defers to the hub.
+        await service.refreshFeedback(for: request)
+        #expect(service.journey(for: request)?.queueText == "1 passenger ahead of you")
+        await service.refreshFeedback(for: request, now: .now.addingTimeInterval(400))
+        #expect(service.session(for: request.context)?.hubFeedback == .waiting)
+        #expect(service.journey(for: request)?.bookingsAhead == 1)
+
+        // Recognised at the stop while B boards: hold, in the hub's words.
+        await service.refreshFeedback(for: request)
+        journey = try #require(service.journey(for: request))
+        #expect(journey.reason == "waiting_turn" && journey.isHeldAtStop && journey.isQueued)
+        #expect(journey.queueText == "You are next.")
+        #expect(service.session(for: request.context)?.hubFeedback?.isTerminal == false)
+        #expect(service.takeJourneyFeedback(for: request)?.guidanceTitle == "Please wait at the stop")
+
+        // Our turn: the bus is already docked (short arrival); the plan in `result` is now ours.
+        await service.refreshFeedback(for: request)
+        journey = try #require(service.journey(for: request))
+        #expect(journey.journeyStage == .atStop && journey.isMatched && !journey.isQueued)
+        #expect(journey.animation?.duration_ms == 3000)
+        #expect(service.session(for: request.context)?.hubFeedback?.result?.plan_status == .ready)
+
+        // On board, with this entry's own step-by-step navigation.
+        await service.refreshFeedback(for: request)
+        #expect(service.journey(for: request)?.journeyStage == .onBoard)
+        #expect(service.navigation(for: request)?.phase == "TO_WHEELCHAIR_BAY")
+        #expect(service.navigation(for: request)?.visibleSteps.count == 4)
+
+        // About two minutes later the hub forgets the boarded journey: a normal end, not expired or cancelled.
+        await service.refreshFeedback(for: request)
+        #expect(service.journey(for: request)?.journeyStage == .onBoard)
+        #expect(service.session(for: request.context)?.hubFeedback == .finished)
+    }
+
+    // MARK: One phone, one passenger after another
+
+    @Test("Finish: resets locally at once, tells the hub once with cancels, and the next booking follows its new id")
+    @MainActor
+    func finishThenNextPassenger() async throws {
+        let first = booking(), firstID = "app-booking-\(first.id.uuidString)"
+        let bay: [String: Any] = ["type": "WHEELCHAIR_BAY", "id": "WHEELCHAIR_BAY"]
+        let boarded = entryJSON(firstID, revision: 5, stage: "ON_BOARD", matched: true, completed: true, reason: "boarding_preview",
+                                title: "Follow the wheelchair-space guidance",
+                                navigation: navigationJSON(phase: "TO_WHEELCHAIR_BAY", destination: bay, steps: true))
+        let onBoard = snapshotJSON(request: first, eventID: firstID, journey: boarded, journeys: [boarded])
+        let ended = entryJSON(firstID, revision: 6, stage: "IDLE", completed: true, reason: "completed", title: "Journey finished")
+        HubURLProtocol.fixture.reset([.response(202, "{\"accepted\":true,\"journey_id\":\"\(firstID)\",\"queued\":false,\"position\":0}"),
+            .response(200, onBoard), .response(200, onBoard), .response(202, #"{"accepted":true}"#)])
+        let service = AssistanceRequestService(vehicleCloud: client())
+        await service.send(first)
+        #expect(service.journey(for: first)?.isCompleted == true)
+
+        let notify = service.finish(first)
+        #expect(service.session(for: first.context) == nil) // Before the hub has answered.
+        #expect(notify != nil)
+        await notify?.value
+        let posts = HubURLProtocol.fixture.calls.filter { $0.body != nil }
+        let reset = try JSONDecoder().decode(HubBookingEnvelope.self, from: #require(posts.last?.body))
+        #expect(!reset.payload.active && reset.payload.cancels == firstID)
+        #expect(service.finish(first) == nil) // Nothing left to finish; nothing re-sent.
+
+        // The next passenger books another category at once; the old entry is still listed as completed.
+        let next = AssistanceRequest(context: first.context, intent: .boarding, need: .stroller,
+                                     preferredInteraction: .visual, assistanceRequested: [.additionalBoardingTime])
+        let nextID = "app-booking-\(next.id.uuidString)"
+        let waiting = entryJSON(nextID, need: "STROLLER", stage: "BOOKED", reason: "booked", title: "Go to the bus stop", text: "Stroller booking.")
+        HubURLProtocol.fixture.reset([.response(202, "{\"accepted\":true,\"journey_id\":\"\(nextID)\",\"queued\":false,\"position\":0}"),
+            .response(200, snapshotJSON(request: next, eventID: nextID, journey: waiting, journeys: [ended, waiting]))])
+        await service.send(next)
+        #expect(service.session(for: next.context)?.phase == .sent)
+        #expect(service.journey(for: next)?.journey_id == nextID)
+        #expect(service.journey(for: next)?.guidanceText == "Stroller booking.")
+        #expect(service.session(for: next.context)?.hubFeedback?.isTerminal == false)
+        #expect(service.journey(for: first) == nil)
+    }
+
+    @Test("Finish works with the hub unreachable: one attempt, no error state, no retry")
+    @MainActor
+    func finishWithHubUnreachable() async throws {
+        let request = booking(), event = "app-booking-\(request.id.uuidString)"
+        let boarded = entryJSON(event, revision: 5, stage: "ON_BOARD", matched: true, completed: true, reason: "boarding_preview", title: "On board")
+        HubURLProtocol.fixture.reset([.response(202, #"{"accepted":true}"#),
+            .response(200, snapshotJSON(request: request, eventID: event, journey: boarded, journeys: [boarded])),
+            .response(503, "{}")])
+        let service = AssistanceRequestService(vehicleCloud: client())
+        await service.send(request)
+        await service.finish(request)?.value
+        #expect(service.session(for: request.context) == nil)
+        #expect(!service.isUpdating)
+        #expect(HubURLProtocol.fixture.calls.count == 3) // Booking, state, and the single failed reset attempt.
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(HubURLProtocol.fixture.calls.count == 3)
+    }
+
+    @Test("Hub reason completed is a normal end (Journey finished), and finishing it again stays local")
+    @MainActor
+    func completedReasonIsFinished() async throws {
+        let request = booking(), event = "app-booking-\(request.id.uuidString)"
+        let ended = entryJSON(event, revision: 6, stage: "IDLE", completed: true, reason: "completed", title: "Journey finished")
+        let state = try decode(snapshotJSON(request: request, eventID: event, journey: ended, journeys: [ended]))
+        #expect(state.feedback(for: request, eventID: event) == .finished)
+        #expect(HubFeedback.finished.isTerminal && HubFeedback.finished.title == "Journey finished")
+        // Single-journey hub: the same reason on `journey`.
+        let single = try decode(snapshotJSON(request: request, eventID: event, journey: ended))
+        #expect(single.feedback(for: request, eventID: event) == .finished)
+
+        HubURLProtocol.fixture.reset([.response(202, #"{"accepted":true}"#), .response(200, snapshotJSON(request: request, eventID: event, journey: ended, journeys: [ended]))])
+        let service = AssistanceRequestService(vehicleCloud: client())
+        await service.send(request)
+        #expect(service.session(for: request.context)?.hubFeedback == .finished)
+        #expect(service.finish(request) == nil) // Already ended at the hub: local reset only.
+        #expect(service.session(for: request.context) == nil)
+        #expect(HubURLProtocol.fixture.calls.count == 2)
+    }
+
+    @Test("no_place waits in amber; a booking the hub stops listing has ended, but not in its first seconds")
+    @MainActor
+    func waitingListNoPlaceAndDropped() async throws {
+        let request = booking(), ours = "app-booking-\(request.id.uuidString)"
+        let other = entryJSON("app-booking-other", need: "CANE", stage: "AT_STOP", matched: true, reason: "entered", title: "Bus arriving")
+        let noPlace = entryJSON(ours, revision: 2, stage: "BOOKED", queued: true, position: 0, reason: "no_place",
+                                title: "Please wait for the operator", text: "No accessible place is left on this bus. Please wait for the safety operator.")
+        let listed = snapshotJSON(request: request, eventID: ours, journey: other, journeys: [other, noPlace])
+        let dropped = snapshotJSON(request: request, eventID: ours, journey: other, journeys: [other])
+        HubURLProtocol.fixture.reset([.response(202, #"{"accepted":true,"queued":true,"position":1}"#),
+            .response(200, listed), .response(200, dropped)])
+        let service = AssistanceRequestService(vehicleCloud: client())
+        await service.send(request)
+        let journey = try #require(service.journey(for: request))
+        #expect(journey.reason == "no_place" && journey.isHeldAtStop)
+        #expect(journey.queueText == nil) // Nobody is ahead; the bus is full. The hub's words say what happens.
+        #expect(journey.guidanceText == "No accessible place is left on this bus. Please wait for the safety operator.")
+        #expect(service.session(for: request.context)?.hubFeedback == .waiting)
+        await service.refreshFeedback(for: request)
+        #expect(service.session(for: request.context)?.hubFeedback == .expired)
+        #expect(service.takeJourneyFeedback(for: request) == nil)
+        #expect(!service.hasTriggered(for: request)) // No fallback to the legacy trigger logic.
+
+        // A snapshot taken just before the hub listed a brand-new booking does not end it at once.
+        let fresh = booking(), unlisted = snapshotJSON(request: fresh, eventID: "app-booking-other", journey: other, journeys: [other])
+        HubURLProtocol.fixture.reset([.response(202, #"{"accepted":true,"queued":true,"position":1}"#),
+            .response(200, unlisted), .response(200, unlisted)])
+        let second = AssistanceRequestService(vehicleCloud: client())
+        await second.send(fresh)
+        #expect(second.session(for: fresh.context)?.hubFeedback?.isTerminal == false)
+        await second.refreshFeedback(for: fresh, now: .now.addingTimeInterval(30))
+        #expect(second.session(for: fresh.context)?.hubFeedback == .expired)
+    }
+
+    @Test("409 NEED_ALREADY_BOOKED is a clear failure, is not retried, and a later retry is a fresh booking")
+    @MainActor
+    func needAlreadyBooked() async throws {
+        let request = booking(), ours = "app-booking-\(request.id.uuidString)"
+        HubURLProtocol.fixture.reset([.response(409,
+            #"{"error":"NEED_ALREADY_BOOKED","need":"WHEELCHAIR","existing_journey_id":"app-booking-other"}"#)])
+        let service = AssistanceRequestService(vehicleCloud: client())
+        await service.send(request)
+        let message = "A request for this type of assistance is already active. Please try again after that passenger has boarded."
+        let session = try #require(service.session(for: request.context))
+        #expect(session.phase == .failed(message))
+        #expect(session.receipt == nil && session.journey == nil)
+        await service.refreshFeedback(for: request) // No receipt: nothing to poll, nothing re-sent.
+        #expect(HubURLProtocol.fixture.calls.count == 1)
+
+        let waiting = entryJSON(ours, stage: "BOOKED", reason: "booked", title: "Go to the bus stop")
+        HubURLProtocol.fixture.reset([.response(202, "{\"accepted\":true,\"journey_id\":\"\(ours)\",\"queued\":false,\"position\":0}"),
+            .response(200, snapshotJSON(request: request, eventID: ours, journey: waiting, journeys: [waiting]))])
+        await service.retry(request)
+        #expect(service.session(for: request.context)?.phase == .sent)
+        #expect(service.session(for: request.context)?.receipt?.queuePosition == 0)
+        #expect(service.journey(for: request)?.isQueued == false)
+        let posts = HubURLProtocol.fixture.calls.filter { $0.body != nil }
+        #expect(posts.count == 1)
+        #expect(try JSONDecoder().decode(HubBookingEnvelope.self, from: #require(posts[0].body)).event_id == ours)
+    }
+
+    @Test("Cancel names this booking; a waiting-list hub lets it cancel although another booking arrived later")
+    func cancelListedBooking() async throws {
+        let request = booking(), ours = "app-booking-\(request.id.uuidString)"
+        let other = entryJSON("app-booking-later", need: "CANE", stage: "AT_STOP", matched: true, reason: "entered", title: "Bus arriving")
+        let waiting = entryJSON(ours, stage: "BOOKED", queued: true, position: 1, reason: "booked", title: "Booking received")
+        HubURLProtocol.fixture.reset([.response(202, #"{"accepted":true,"queued":true,"position":1}"#),
+            .response(200, snapshotJSON(request: request, eventID: "app-booking-later", journey: other, journeys: [other, waiting])),
+            .response(202, #"{"accepted":true}"#)])
+        let client = client()
+        _ = try await client.submit(request)
+        try await client.cancel(request)
+        let posts = HubURLProtocol.fixture.calls.filter { $0.body != nil }
+        #expect(posts.count == 2)
+        #expect(!String(decoding: try #require(posts[0].body), as: UTF8.self).contains("cancels"))
+        let cancellation = try JSONDecoder().decode(HubBookingEnvelope.self, from: #require(posts[1].body))
+        #expect(!cancellation.payload.active)
+        #expect(cancellation.payload.cancels == ours)
+
+        // Not listed (already ended at the hub): this client does not cancel anything.
+        let gone = booking()
+        HubURLProtocol.fixture.reset([.response(200, snapshotJSON(request: gone, eventID: "app-booking-later", journey: other, journeys: [other]))])
+        do { try await client.cancel(gone); Issue.record("Expected ownership rejection") }
+        catch HTTPVehicleCloudService.ServiceError.bookingReplaced {} catch { Issue.record("Unexpected error: \(error)") }
+    }
+
+    @Test("journeys decode leniently; an older hub without journeys keeps the single-journey rule")
+    func journeysDecoding() throws {
+        let request = booking()
+        let good = entryJSON("ours", stage: "BOOKED", queued: true, position: 3, reason: "booked", title: "Booking received")
+        var odd = entryJSON("odd", stage: "BOOKED", reason: "booked", title: "Booking received")
+        odd["position"] = "first" // Wrong type: the entry is kept with its id and stage.
+        let json = snapshotJSON(request: request, eventID: "ours", journey: good, journeys: [good, odd, ["no": "id"]])
+        var payload = try JSONSerialization.jsonObject(with: Data(json.utf8)) as! [String: Any]
+        payload["journeys"] = (payload["journeys"] as! [Any]) + [NSNull()]
+        let state = try JSONDecoder().decode(HubSnapshot.self, from: JSONSerialization.data(withJSONObject: payload))
+        #expect(state.journeys?.map(\.journey.journey_id) == ["ours", "odd"])
+        #expect(state.ownJourney(eventID: "ours")?.bookingsAhead == 3)
+        #expect(state.ownJourney(eventID: "odd")?.journeyStage == .booked)
+        #expect(state.feedback(for: request, eventID: "missing") == .expired)
+
+        let single = try decode(snapshotJSON(request: request, eventID: "ours",
+            journey: journeyJSON("someone-else", revision: 2, stage: "BOOKED", reason: "booked", title: "T", text: "T")))
+        #expect(single.journeys == nil && !single.listsJourneys)
+        #expect(single.feedback(for: request, eventID: "ours") == .replaced)
+    }
+
+    /// A `journeys[]` entry: the journey shape plus `queued`, `position`, `plan_status` and its own `navigation`.
+    private func entryJSON(_ id: String, need: String = "WHEELCHAIR", revision: Int = 1, stage: String,
+                           queued: Bool = false, position: Int = 0, matched: Bool = false, completed: Bool = false,
+                           reason: String, title: String, text: String = "Text", animation: [String: Any]? = nil,
+                           navigation: [String: Any]? = nil) -> [String: Any] {
+        var value = journeyJSON(id, revision: revision, stage: stage, matched: matched, completed: completed,
+                                reason: reason, title: title, text: text, animation: animation, need: need)
+        value["queued"] = queued
+        value["position"] = position
+        value["plan_status"] = "READY"
+        value["navigation"] = navigation ?? NSNull()
+        return value
+    }
+
     private func booking(actions: [AssistanceAction] = [.deployWheelchairRamp, .additionalBoardingTime],
                          ramp: RampPreference = .requested, interaction: InteractionMode = .visual) -> AssistanceRequest {
         AssistanceRequest(context: AssistanceContext(stopCode: "DEMO_STOP", stopName: "Demo", roadName: "",
@@ -588,7 +883,8 @@ struct HubBookingTests {
     private func snapshotJSON(request: AssistanceRequest, eventID: String, time: Date = .now,
                               status: String = "READY", running: String? = nil, active: Bool = true, source: String = "external", triggered: Bool = false,
                               zoneEvent: String? = nil, roiID: String? = nil,
-                              journey: [String: Any]? = nil, navigation: [String: Any]? = nil) -> String {
+                              journey: [String: Any]? = nil, navigation: [String: Any]? = nil,
+                              journeys: [[String: Any]]? = nil) -> String {
         var zone: [String: Any] = ["triggered": triggered]
         zone["event"] = zoneEvent
         zone["roi_id"] = roiID
@@ -601,6 +897,8 @@ struct HubBookingTests {
         ]
         // v0.5 hubs always send both keys; the legacy tests above model an older hub without them.
         if let journey { payload["journey"] = journey; payload["navigation"] = navigation ?? NSNull() }
+        // Waiting-list hubs add `journeys`; single-journey hubs never send the key.
+        if let journeys { payload["journeys"] = journeys }
         return String(data: try! JSONSerialization.data(withJSONObject: payload), encoding: .utf8)!
     }
 
@@ -608,9 +906,10 @@ struct HubBookingTests {
     private func journeyJSON(_ id: String, revision: Int, stage: String, matched: Bool = false, labels: [String] = [],
                              pendingExit: Bool = false, completed: Bool = false, reason: String,
                              title: String, text: String, animation: [String: Any]? = nil,
-                             target: [String: Any]? = ["type": "WHEELCHAIR_BAY", "id": "WHEELCHAIR_BAY"]) -> [String: Any] {
+                             target: [String: Any]? = ["type": "WHEELCHAIR_BAY", "id": "WHEELCHAIR_BAY"],
+                             need: String = "WHEELCHAIR") -> [String: Any] {
         [
-            "journey_id": id, "revision": revision, "stage": stage, "need": "WHEELCHAIR", "labels": labels,
+            "journey_id": id, "revision": revision, "stage": stage, "need": need, "labels": labels,
             "matched": matched, "pending_exit": pendingExit, "completed": completed, "reason": reason,
             "seat": (target?["id"] as Any?) ?? NSNull(), "boarding_target": (target as Any?) ?? NSNull(),
             "animation": (animation as Any?) ?? NSNull(), "visit_id": NSNull(), "roi_id": "stop-a", "updated_at": 1_800_000_000_000.0,

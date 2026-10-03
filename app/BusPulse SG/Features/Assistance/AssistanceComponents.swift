@@ -260,6 +260,8 @@ struct AssistanceMapControl: View {
 
     private var controlTitle: String {
         guard let session else { return "Request Assistance" }
+        // A booking the hub refused (e.g. this need is already booked) is not "requested".
+        if case .failed = session.phase { return "Assistance needs attention" }
         if let hub = session.hubFeedback { return hub.isTerminal ? "Request Assistance" : "Assistance requested" }
         return switch session.phase {
         case .sending: "Sending assistance…"
@@ -272,6 +274,7 @@ struct AssistanceMapControl: View {
 
     private var controlDetail: String {
         guard let session else { return "Next bus · \(context.etaDescription())" }
+        if case .failed = session.phase { return "Open to retry" }
         if let hub = session.hubFeedback { return hub.title }
         return switch session.phase {
         case .received, .active: "Received by Bus \(context.busService)"

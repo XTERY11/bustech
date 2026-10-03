@@ -8,7 +8,7 @@ import { VideoPanel } from './components/VideoPanel';
 import { WordReveal } from './components/WordReveal';
 import { ACTION_LABELS } from './lib/actionLabels';
 import { postSignal, snapshotFromEvent, watchEvents } from './live-client';
-import type { Context, HubEvent, Journey, Mode, Navigation, Result, Snapshot, Summary } from './live-types';
+import type { Context, HubEvent, Journey, JourneyEntry, Mode, Navigation, Result, Snapshot, Summary } from './live-types';
 import { offlinePlan } from './offline';
 
 const choices = [
@@ -58,6 +58,41 @@ const labels: Record<string, string> = {
   discarded: 'Previous result discarded',
 };
 
+const NEED_ALREADY_BOOKED = 'A request for this type of assistance is already active. Please try again after that passenger has boarded.';
+const needLabel = (need?: string | null) => need ? need.charAt(0) + need.slice(1).toLowerCase().replaceAll('_', ' ') : 'Booking';
+const placeLabel = (target?: Journey['boarding_target']) => target?.type === 'WHEELCHAIR_BAY' ? 'Wheelchair bay' : target?.type === 'SEAT' ? `Seat ${target.id}` : null;
+const isWaitingEntry = (entry: JourneyEntry) => entry.stage !== 'IDLE' && !entry.completed
+  && (entry.queued === true || (entry.position ?? 0) > 0 || entry.reason === 'waiting_turn' || entry.reason === 'no_place');
+
+/** One chip of the waiting list: the hub serves one passenger at a time, oldest booking first. */
+function waitingChip(entry: JourneyEntry, currentId: string | null | undefined) {
+  const ahead = entry.position ?? 0;
+  const current = Boolean(entry.journey_id) && entry.journey_id === currentId && !isWaitingEntry(entry);
+  let state: string, tone: 'online' | 'active' | 'waiting' | 'offline';
+  if (entry.stage === 'IDLE') {
+    state = entry.reason === 'cancelled' ? 'Cancelled' : entry.reason === 'expired' ? 'Expired' : 'Done';
+    tone = 'waiting';
+  } else if (current) {
+    state = `In progress · ${entry.stage === 'ON_BOARD' ? 'On board' : entry.stage === 'AT_STOP'
+      ? entry.pending_exit || entry.navigation?.phase === 'BOARD_BUS' ? 'Boarding' : 'At the stop' : 'On the way'}`;
+    tone = 'active';
+  } else if (entry.completed) {
+    state = 'Done';
+    tone = 'online';
+  } else if (entry.reason === 'no_place') {
+    state = 'No place · operator';
+    tone = 'offline';
+  } else if (entry.reason === 'waiting_turn') {
+    state = `Waiting at the stop · ${ahead > 0 ? `${ahead} ahead` : 'next'}`;
+    tone = 'waiting';
+  } else {
+    state = `Waiting · ${ahead > 0 ? `${ahead} ahead` : 'next'}`;
+    tone = 'waiting';
+  }
+  return { id: entry.journey_id ?? `${entry.need}-${entry.updated_at}`, need: needLabel(entry.need), state, tone, current,
+    place: entry.stage === 'IDLE' ? null : placeLabel(entry.boarding_target) };
+}
+
 export default function Dashboard() {
   const [scenarioId, setScenarioId] = useState('wheelchair_auto');
   const [context, setContext] = useState<Context>(() => sample('wheelchair_auto'));
@@ -71,6 +106,7 @@ export default function Dashboard() {
   const [draftToken, setDraftToken] = useState('');
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
+  const [resetting, setResetting] = useState(false);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [result, setResult] = useState<Result | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -220,7 +256,28 @@ export default function Dashboard() {
         ramp_preference: wheelchair ? 'REQUESTED' : 'UNSPECIFIED', assistance_requested: wheelchair ? ['WHEELCHAIR_RAMP', 'ADDITIONAL_BOARDING_TIME'] : ['ADDITIONAL_BOARDING_TIME'],
         preferred_interaction: 'BOTH', language: 'en-SG' } });
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Could not connect to the server');
+      // 409: the hub keeps one booking per need category until that passenger has boarded.
+      setError(failure instanceof Error ? failure.message === 'NEED_ALREADY_BOOKED' ? NEED_ALREADY_BOOKED : failure.message : 'Could not connect to the server');
+    }
+  }
+
+  /**
+   * Operator reset between passengers, without a phone: the App's own cancellation naming the journey shown.
+   * After boarding the hub treats it as a reset (journey ends with reason `completed`, bus reset); before
+   * boarding it cancels that booking.
+   */
+  async function resetJourney() {
+    if (!journey?.journey_id || resetting) return;
+    setResetting(true);
+    setError('');
+    try {
+      await postSignal(apiBase, token, '/api/booking', { event_id: `reset-${crypto.randomUUID()}`, observed_at: new Date().toISOString(), payload: {
+        active: false, intent: 'BOARDING', route_id: request.route_id ?? 'DEMO_ROUTE', stop_id: request.stop_id ?? 'DEMO_STOP',
+        accessibility_need: journey.need ?? 'UNKNOWN', cancels: journey.journey_id } });
+    } catch (failure) {
+      setError(failure instanceof Error ? `Reset not accepted: ${failure.message}` : 'Could not connect to the server');
+    } finally {
+      setResetting(false);
     }
   }
 
@@ -251,7 +308,15 @@ export default function Dashboard() {
   const bookingActive = Boolean(request.active);
   const detectionActive = Boolean(detection?.label && detection.label !== 'NONE' && (detection.confidence ?? 0) >= 0.75);
   const modeLabel = mode === 'single' ? 'DeepSeek · Single' : mode === 'two_turn' ? 'DeepSeek · Two turns' : 'Offline rules';
-  const navigationTitle = navigation ? ({ TO_STOP: 'Go to the boarding point', WAIT_AT_STOP: 'Wait at the boarding point', BOARD_BUS: 'Your bus is ready', TO_SEAT: 'Your assigned seat', TO_WHEELCHAIR_BAY: 'Your wheelchair space' })[navigation.phase] : running ? 'Preparing passenger guidance' : journey?.guidance.title ?? 'Waiting for an app booking';
+  // Waiting-list hubs list every booking; the rest of the page follows the journey in progress (`journey`).
+  const journeys = inputSource === 'external' ? snapshot?.journeys ?? [] : [];
+  const waitingList = journeys.filter(entry => entry.stage !== 'IDLE' && !entry.completed).length > 1 || journeys.some(isWaitingEntry)
+    ? journeys.map(entry => waitingChip(entry, journey?.journey_id)) : [];
+  // The replay bridge plays one clip per booking and cannot interleave: disabled only while a booking waits or is at
+  // the stop (BOOKED / AT_STOP). The hub frees the slot at ON_BOARD, so the next passenger can start at once.
+  const replayBusy = inputSource === 'external' && (journey?.stage === 'BOOKED' || journey?.stage === 'AT_STOP'
+    || journeys.some(entry => entry.stage === 'BOOKED' || entry.stage === 'AT_STOP'));
+  const navigationTitle = navigation ?({ TO_STOP: 'Go to the boarding point', WAIT_AT_STOP: 'Wait at the boarding point', BOARD_BUS: 'Your bus is ready', TO_SEAT: 'Your assigned seat', TO_WHEELCHAIR_BAY: 'Your wheelchair space' })[navigation.phase] : running ? 'Preparing passenger guidance' : journey?.guidance.title ?? 'Waiting for an app booking';
 
   const communication = [
     { label: 'Signal hub', value: connected ? 'Connected' : 'Offline', tone: connected ? 'online' : 'offline' },
@@ -320,16 +385,30 @@ export default function Dashboard() {
       </section>
     </section>
 
+    {waitingList.length > 0 && <section className="waitingList" aria-label="Waiting list, oldest booking first. One passenger is served at a time.">
+      <div className="communicationTitle"><span className="livePulse" />Waiting list</div>
+      <ol className="waitingListItems">
+        {waitingList.map((chip, index) => <li key={chip.id} className={`communicationItem communicationItem--${chip.tone} waitingChip ${chip.current ? 'isCurrent' : ''}`}
+          aria-current={chip.current ? 'step' : undefined} aria-label={`${index + 1}. ${chip.need}: ${chip.state}${chip.place ? `, ${chip.place}` : ''}`}>
+          <span className="communicationState" aria-hidden="true" />
+          <span aria-hidden="true"><small>{chip.need}</small><strong>{chip.state}</strong>{chip.place && <em>{chip.place}</em>}</span>
+        </li>)}
+      </ol>
+    </section>}
+
     {inputSource === 'external' && journey && <section className="passengerNavigation" aria-label="Passenger journey guidance" aria-live="polite">
       <div className="passengerNavigationMessage"><p className="sectionKicker">Passenger guidance · shared with app</p><h2>{navigationTitle}</h2><p>{navigation?.instruction ?? (running ? 'Your assistance plan is being prepared. Please wait.' : journey.guidance.display_text)}</p></div>
       <ol className="journeyProgress" aria-label="Booking, arrival and boarding progress">{[
         ['BOOKED', 'Request received'], ['AT_STOP', 'At the stop'], ['ON_BOARD', 'On board'],
       ].map(([stage, label], index) => <li key={stage} className={['BOOKED', 'AT_STOP', 'ON_BOARD'].indexOf(journey.stage) >= index ? 'isReached' : ''} aria-current={journey.stage === stage ? 'step' : undefined}><span>{index + 1}</span>{label}</li>)}</ol>
       {navigation && <strong className="navigationDestination">{navigation.destination.type === 'SEAT' ? `Seat ${navigation.destination.id}` : navigation.destination.type === 'WHEELCHAIR_BAY' ? 'Wheelchair bay' : `Stop ${navigation.destination.id.replaceAll('_', ' ')}`}</strong>}
+      {connected && journey.journey_id && journey.stage !== 'IDLE' && <button className="secondaryButton journeyReset" disabled={resetting} onClick={() => void resetJourney()}
+        aria-label={journey.stage === 'ON_BOARD' ? 'Reset: finish this journey and get the bus ready for the next passenger' : 'Reset: cancel this booking and clear the screen'}>
+        {resetting ? 'Resetting…' : 'Reset'}</button>}
     </section>}
 
     <section className="stageRow" aria-label="Camera and vehicle">
-      <VideoPanel onStatusChange={setVisionStatus} onReplay={connected ? replayFlow : undefined} replayBusy={inputSource === 'external' && (journey?.stage === 'BOOKED' || journey?.stage === 'AT_STOP')} />
+      <VideoPanel onStatusChange={setVisionStatus} onReplay={connected ? replayFlow : undefined} replayBusy={replayBusy} />
       <TwinPanel
         result={result}
         context={context}

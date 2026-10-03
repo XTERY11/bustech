@@ -21,13 +21,34 @@ actor HTTPVehicleCloudService: VehicleCloudServing {
                 case "OUT_OF_ORDER_SIGNAL": "A newer booking is already at the hub. Submit a new booking."
                 case "INVALID_OBSERVED_AT": "The phone clock is ahead of the hub. Check both clocks, then submit a new booking."
                 case "ORIGIN_NOT_ALLOWED": "The hub rejected this client origin. Check the integration settings."
+                case "NEED_ALREADY_BOOKED": "A request for this type of assistance is already active. Please try again after that passenger has boarded."
                 default: "The hub rejected the request (HTTP \(status)). Check the connection settings and booking."
                 }
             }
         }
     }
 
-    private struct Accepted: Decodable { let accepted: Bool }
+    /// Waiting-list hubs add `journey_id`, `queued` and `position`; older hubs send `accepted` only.
+    private struct Accepted: Decodable {
+        let accepted: Bool
+        var queued: Bool? = nil
+        var position: Int? = nil
+
+        private enum CodingKeys: String, CodingKey { case accepted, queued, position }
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            accepted = try container.decode(Bool.self, forKey: .accepted)
+            // Additive fields never turn an acceptance into a failure.
+            queued = try? container.decodeIfPresent(Bool.self, forKey: .queued)
+            position = try? container.decodeIfPresent(Int.self, forKey: .position)
+        }
+
+        var queuePosition: Int? {
+            guard queued != nil || position != nil else { return nil }
+            return max(0, position ?? (queued == true ? 1 : 0))
+        }
+    }
     private struct Rejection: Decodable { let error: String }
     private struct FrozenEvent {
         let id: String
@@ -60,8 +81,17 @@ actor HTTPVehicleCloudService: VehicleCloudServing {
             event = try freeze(request, active: true)
             submissions[request.id] = event
         }
-        try await post(event)
-        return VehicleSubmissionReceipt(requestID: request.id, providerReference: event.id, submittedAt: event.observedAt)
+        let accepted: Accepted
+        do {
+            accepted = try await post(event)
+        } catch ServiceError.rejected(let status, let code) where code == "NEED_ALREADY_BOOKED" {
+            // A definite refusal, not an ambiguous failure: forget the frozen event so a later retry is a
+            // fresh booking (new observed_at, so the hub's booking lifetime starts then), not a replay.
+            submissions[request.id] = nil
+            throw ServiceError.rejected(statusCode: status, code: code)
+        }
+        return VehicleSubmissionReceipt(requestID: request.id, providerReference: event.id, submittedAt: event.observedAt,
+                                        queuePosition: accepted.queuePosition)
     }
 
     /// HTTP receipt is not a vehicle ACK. Hub clients consume snapshot() instead.
@@ -101,29 +131,32 @@ actor HTTPVehicleCloudService: VehicleCloudServing {
     }
 
     func cancel(_ request: AssistanceRequest) async throws {
-        // Avoid cancelling another passenger's current singleton booking. On an
-        // ambiguous previous POST, allow a duplicate of our frozen cancellation.
+        // Avoid cancelling another passenger's booking. On an ambiguous previous POST, allow a
+        // duplicate of our frozen cancellation. A waiting-list hub names every booking it keeps, so
+        // ours may be cancelled while another passenger's booking was received later.
         let state = try await snapshot()
         let currentID = state?.channels["booking"]?.event_id
         let ownID = submissions[request.id]?.id ?? "app-booking-\(request.id.uuidString)"
+        let listed = state?.ownEntry(eventID: ownID).map { $0.journey.journeyStage != .idle } ?? false
         guard state?.source == "external",
-              currentID == ownID || currentID == cancellations[request.id]?.id else {
+              currentID == ownID || currentID == cancellations[request.id]?.id
+                || (state?.listsJourneys == true && listed) else {
             throw ServiceError.bookingReplaced
         }
         let event: FrozenEvent
         if let existing = cancellations[request.id] {
             event = existing
         } else {
-            event = try freeze(request, active: false)
+            event = try freeze(request, active: false, cancels: ownID)
             cancellations[request.id] = event
         }
-        try await post(event)
+        _ = try await post(event)
     }
 
-    private func freeze(_ request: AssistanceRequest, active: Bool) throws -> FrozenEvent {
+    private func freeze(_ request: AssistanceRequest, active: Bool, cancels: String? = nil) throws -> FrozenEvent {
         let now = Date.now
         let id = active ? "app-booking-\(request.id.uuidString)" : "app-cancel-\(UUID().uuidString)"
-        let envelope = HubBookingEnvelope(request: request, active: active, observedAt: now, eventID: id)
+        let envelope = HubBookingEnvelope(request: request, active: active, observedAt: now, eventID: id, cancels: cancels)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(envelope)
@@ -131,11 +164,11 @@ actor HTTPVehicleCloudService: VehicleCloudServing {
         return FrozenEvent(id: id, body: data, observedAt: now)
     }
 
-    private func post(_ event: FrozenEvent) async throws {
+    private func post(_ event: FrozenEvent) async throws -> Accepted {
         let data = try await perform(url: endpoint, body: event.body)
-        guard try JSONDecoder().decode(Accepted.self, from: data).accepted else {
-            throw ServiceError.invalidResponse
-        }
+        let accepted = try JSONDecoder().decode(Accepted.self, from: data)
+        guard accepted.accepted else { throw ServiceError.invalidResponse }
+        return accepted
     }
 
     private func perform(url: URL, body: Data? = nil) async throws -> Data {

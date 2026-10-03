@@ -256,3 +256,24 @@ test('stroller reconnect preserves the parked cart; cancellation stops late seat
   replay();
   assert.equal(timers.size, 0);
 });
+
+test('a later passenger of the same bus (hub arrival of 3000 ms) starts docked: no drive-in, entrance first', () => {
+  const docked = (wheelchair: boolean, duration_ms: number): Journey => {
+    const j = journey('AT_STOP', wheelchair);
+    return { ...j, animation: { ...j.animation!, duration_ms } };
+  };
+  const at = (steps: ReturnType<typeof buildScenario>, pick: (frame: (typeof steps)[number]['frame']) => boolean) => steps.find(step => pick(step.frame))?.at;
+  let steps = buildScenario(result(true), context('WHEELCHAIR'), false, docked(true, 3000));
+  assert.equal(steps[0].at, 0);
+  assert.deepEqual(steps[0].frame.arrival, { id: 'animation-1', progress: 1 });
+  assert.ok(steps.every(step => !step.frame.arrival || step.frame.arrival.progress === 1), 'the bus never drives in');
+  assert.equal(at(steps, frame => frame.door === 'opening'), 600);
+  assert.equal(at(steps, frame => frame.ramp === 'extended'), 4100);
+  assert.equal(at(steps, frame => frame.boardingStatus === 'ready'), 4100, 'never ready before the ramp');
+  steps = buildScenario(result(false), context('CANE'), false, docked(false, 3000));
+  assert.equal(at(steps, frame => frame.boardingStatus === 'ready'), 3000);
+  // The first passenger of a bus keeps the full drive-in.
+  steps = buildScenario(result(true), context('WHEELCHAIR'), false, docked(true, ARRIVAL_MS));
+  assert.equal(steps[0].frame.arrival?.progress, 0);
+  assert.equal(at(steps, frame => frame.boardingStatus === 'ready'), ARRIVAL_MS);
+});
