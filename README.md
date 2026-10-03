@@ -1,6 +1,6 @@
 # BusTech integrated demo · Camera → YOLO → Hub → LLM → Dashboard + Digital Twin
 
-> Start here: [HANDOFF.md](HANDOFF.md) (what works, how to run it) · [HANDOFF-APP.md](HANDOFF-APP.md) (the phone app: what it must do, how it connects, where to make small changes) · interfaces in [PROMPT.md](PROMPT.md).
+> Start here: [HANDOFF.md](HANDOFF.md) (what works, how to run it) · [HANDOFF-APP.md](HANDOFF-APP.md) (the phone app: what it must do, how it connects, where to make small changes) · [RUNBOOK.md](RUNBOOK.md) (real-camera acceptance: order of operations, signal flow, what each screen shows, where the waits are) · interfaces in [PROMPT.md](PROMPT.md).
 
 The native passenger app and three companion modules are wired into one open-loop demonstration:
 
