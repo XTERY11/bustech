@@ -57,6 +57,9 @@ export const INPUT_SCHEMA = {
       preferred_interaction: en(['AUDIO', 'VISUAL', 'BOTH']), language: en(['zh-CN', 'en-SG']),
       // With active:false: the journey_id (booking event_id) this cancel or reset ends. Optional; see hub.cancelTarget.
       cancels: id,
+      // With active:false: sent only by the dashboard's Reset button. A boarded journey ends only with this flag;
+      // the phone's Finish (same request without it) leaves the dashboard's boarded journey as it is.
+      operator_reset: bool,
     }),
     perception: obj({
       observation_age_ms: age, target_match_confirmed: bool,

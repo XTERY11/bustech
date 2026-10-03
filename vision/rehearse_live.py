@@ -16,8 +16,8 @@ bookings, so point it at a hub nobody is presenting from:
 
 Waits are real (bus arrival 10 s, empty region 2 s, lost presence 8 s); the whole run takes about 5 minutes. The
 5-minute booking TTL (frozen while a matched passenger is at the stop) is covered by the hub's unit tests with an
-injected clock, not here. 'single_phone' plays the supported demo (one phone, the "next passenger" reset after each
-boarding); 'queue' plays the waiting-list safety net (three phones book, the camera serves them one at a time).
+injected clock, not here. 'single_phone' plays the supported demo (one phone; after each boarding the phone's Finish,
+which leaves the dashboard as it is, then the operator's Reset or directly the next booking); 'queue' plays the waiting-list safety net (three phones book, the camera serves them one at a time).
 """
 from __future__ import annotations
 
@@ -180,9 +180,11 @@ class Rehearsal:
         self.timeline.say(f'APP    booking {need}: {reply.get("journey_id")} queued={reply.get("queued")} position={reply.get("position")}')
         return reply
 
-    def cancel(self, journey_id=None):
-        """The App's cancel; with the journey_id of a boarded journey it is the "next passenger" reset."""
-        return self.app.signal('booking', {'active': False, **({'cancels': journey_id} if journey_id else {})})
+    def cancel(self, journey_id=None, operator=False):
+        """The App's cancel (on a boarded journey: its Finish, which leaves the dashboard as it is);
+        operator=True is the dashboard's Reset (operator_reset), which also ends a boarded journey."""
+        return self.app.signal('booking', {'active': False, **({'cancels': journey_id} if journey_id else {}),
+                                           **({'operator_reset': True} if operator else {})})
 
     @staticmethod
     def entry(snapshot, journey_id):
@@ -391,20 +393,32 @@ class Rehearsal:
             boarded_at = time.monotonic()
 
     def single_phone(self):
-        """The supported demo: one phone, wheelchair, stroller, cane one after another, the "next passenger" reset after each."""
-        for need, seat_type in (('WHEELCHAIR', 'WHEELCHAIR_BAY'), ('STROLLER', 'SEAT'), ('CANE', 'SEAT')):
-            journey_id = self.book(need)['journey_id']
+        """The supported demo: one phone, wheelchair, stroller, cane one after another; phone Finish, then the operator's Reset or the next booking."""
+        journey_id, finish_only = None, False
+        for need, seat_type in (('WHEELCHAIR', 'WHEELCHAIR_BAY'), ('STROLLER', 'SEAT'), ('CANE', 'SEAT'), ('WHEELCHAIR', 'WHEELCHAIR_BAY')):
+            previous, journey_id = (journey_id if finish_only else None), self.book(need)['journey_id']
             j = self.ready()['journey']
             assert j['journey_id'] == journey_id and j['boarding_target']['type'] == seat_type, j
             if need == 'STROLLER':
                 assert j['equipment_target'] == {'type': 'WHEELCHAIR_BAY', 'id': 'WHEELCHAIR_BAY'}, 'the stroller parks in the bay of a fresh bus'
+            if previous:
+                self.timeline.say(f'ok     booked after only the phone Finish of {previous}: started at once on a fresh bus')
             self.camera.enter(need); self.at_stop()
             time.sleep(2.5); self.camera.leave()
             self.boarded(seat_type=seat_type)
             time.sleep(1)
-            reply = self.cancel(journey_id)  # the reset button under the phone's navigation
+            # The phone's Finish: acknowledged, but the dashboard keeps the boarded journey and its animation.
+            reply = self.cancel(journey_id)
+            assert reply['journey_id'] == journey_id, reply
+            finished = lambda r, s: r['id'] == journey_id and r['stage'] == 'ON_BOARD' and (self.entry(s, journey_id) or {}).get('passenger_finished') is True
+            self.expect('phone Finish acknowledged (passenger_finished)', finished)
+            self.hold('phone Finish: the dashboard still shows ON_BOARD', finished, 1)
+            finish_only = need == 'CANE'
+            if finish_only:
+                continue  # the next booking follows the phone Finish directly, without the operator's Reset
+            reply = self.cancel(journey_id, operator=True)  # the dashboard's Reset button
             assert reply['changed'] and reply['journey_id'] == journey_id, reply
-            snapshot = self.expect('reset: IDLE, journey finished', lambda r, s: r['id'] == journey_id and r['stage'] == 'IDLE'
+            snapshot = self.expect('operator Reset: IDLE, journey finished', lambda r, s: r['id'] == journey_id and r['stage'] == 'IDLE'
                                    and r['reason'] == 'completed' and r['phase'] is None)
             assert snapshot['journey']['guidance']['title'] == 'No active booking', snapshot['journey']['guidance']
             request = snapshot['context'].get('request') or {}
@@ -413,7 +427,7 @@ class Rehearsal:
             self.hold('no replanning on the idle screen', lambda r, s: s['result'] is None and s['running'] is None, 1)
             cabin = snapshot['context']['vehicle_context']['cabin']
             assert cabin['wheelchair_bay_occupied'] is False, f'the bus is fresh again: {cabin}'
-        again = self.cancel(journey_id)
+        again = self.cancel(journey_id, operator=True)
         assert again['changed'] is False and again['journey_id'] is None, f'a second reset is harmless: {again}'
         self.timeline.say('ok     a second reset changed nothing')
 
@@ -487,8 +501,8 @@ class Rehearsal:
     def clear(self):
         for j in self.timeline.fetch().get('journeys') or []:
             if j['stage'] != 'IDLE':
-                self.cancel(j['journey_id'])
-        self.cancel()
+                self.cancel(j['journey_id'], operator=True)
+        self.cancel(operator=True)
 
     def reset(self):
         """No booking and an empty region before each scenario: every booking still listed is cancelled or reset."""

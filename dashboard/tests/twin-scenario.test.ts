@@ -146,6 +146,8 @@ test('stroller preview parks equipment, pauses visibly, then walks to its valida
     assert.deepEqual(seated.frame.passengerJourney?.equipmentDestination, prepared.equipment_target);
     assert.equal(steps.find(step => step.frame.seatOccupancy?.[id] === true)?.at, 19000);
     assert.equal(steps.at(-1)?.at, STROLLER_BOARDING_MS);
+    // The rearward 'interior' camera cannot see the front bay: parking and seating stay in one cutaway shot.
+    assert.deepEqual(steps.filter(step => step.camera).map(step => [step.at, step.camera]), [[0, 'entrance'], [4500, 'cutaway']]);
     assert.equal(steps[0].frame.ramp, 'retracted');
     assert.ok(steps.every(step => step.frame.boardingStatus !== 'complete' && step.frame.passengerJourney?.stage !== 'secured'));
     assert.ok(steps.every(step => !['closing', 'closed'].includes(step.frame.door ?? '') && !['retracting'].includes(step.frame.ramp ?? '')));
@@ -267,10 +269,18 @@ test('a later passenger of the same bus (hub arrival of 3000 ms) starts docked: 
   assert.equal(steps[0].at, 0);
   assert.deepEqual(steps[0].frame.arrival, { id: 'animation-1', progress: 1 });
   assert.ok(steps.every(step => !step.frame.arrival || step.frame.arrival.progress === 1), 'the bus never drives in');
-  assert.equal(at(steps, frame => frame.door === 'opening'), 600);
+  // The docked bus keeps its entrance open: the door never closes and reopens between passengers.
+  assert.equal(steps[0].frame.door, 'open');
+  assert.ok(steps.every(step => !['closed', 'closing', 'opening'].includes(step.frame.door ?? 'open')));
   assert.equal(at(steps, frame => frame.ramp === 'extended'), 4100);
   assert.equal(at(steps, frame => frame.boardingStatus === 'ready'), 4100, 'never ready before the ramp');
   steps = buildScenario(result(false), context('CANE'), false, docked(false, 3000));
+  assert.equal(at(steps, frame => frame.boardingStatus === 'ready'), 3000);
+  // A stroller on the docked bus: the waiting actor already carries its parking bay; ready after the 3 s.
+  const strollerDocked = strollerJourney('AT_STOP');
+  steps = buildScenario(strollerResult(), context('STROLLER'), false, { ...strollerDocked, animation: { ...strollerDocked.animation!, duration_ms: 3000, docked: true } });
+  assert.deepEqual(steps[0].frame.passengerJourney?.equipmentDestination, strollerResult().equipment_target);
+  assert.equal(steps[0].frame.door, 'open');
   assert.equal(at(steps, frame => frame.boardingStatus === 'ready'), 3000);
   // The first passenger of a bus keeps the full drive-in.
   steps = buildScenario(result(true), context('WHEELCHAIR'), false, docked(true, ARRIVAL_MS));

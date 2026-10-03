@@ -104,7 +104,10 @@ export function actionsToScenario(result: Result | null, context: Context, runni
   const dockMs = docked ? 0 : DOCK_MS;
   const preparing: ScenarioStep = { at: dockMs, label: 'Preparing entrance', action: action('HOLD_AT_STOP', 'CHECK_SINGLE_ENTRANCE_CLEARANCE', 'KEEP_SINGLE_ENTRANCE_CLEAR', 'PREPARE_WHEELCHAIR_AREA'),
     frame: { boardingStatus: 'preparing', passengerInfo: { title: 'Preparing to board', message: 'The bus is stopping and preparing the entrance. Please wait for the operator.' } } };
-  const initial: TwinFrame = { ...IDLE_FRAME, ...(occupancy ? { seatOccupancy: occupancy } : {}),
+  const deployRamp = has(actions, 'DEPLOY_AUTOMATIC_SHORT_RAMP');
+  const openDoor = has(actions, 'OPEN_SINGLE_ENTRANCE') || context.vehicle_context?.single_entrance_state === 'OPEN' || deployRamp;
+  // A docked bus keeps its entrance open between passengers: no door closing and reopening.
+  const initial: TwinFrame = { ...IDLE_FRAME, ...(docked && openDoor ? { door: 'open' as const } : {}), ...(occupancy ? { seatOccupancy: occupancy } : {}),
     passengerJourney: passenger, arrival: { id: arrivalId, progress: docked ? 1 : 0 }, boardingStatus: 'request_received',
     passengerInfo: { title: 'Bus arriving', message: 'Your arrival has been recognised. Please stay behind the marked boarding line.' } };
   const steps: ScenarioStep[] = docked
@@ -115,12 +118,10 @@ export function actionsToScenario(result: Result | null, context: Context, runni
       preparing,
     ];
   let t = dockMs;
-  const deployRamp = has(actions, 'DEPLOY_AUTOMATIC_SHORT_RAMP');
-  const openDoor = has(actions, 'OPEN_SINGLE_ENTRANCE') || context.vehicle_context?.single_entrance_state === 'OPEN' || deployRamp;
   const rampAction = action('DEPLOY_AUTOMATIC_SHORT_RAMP');
   const doorAction = action('OPEN_SINGLE_ENTRANCE') ?? rampAction;
   if (deployRamp) { t += 300; steps.push({ at: t, label: 'Kneeling', action: rampAction, frame: { kneeling: true } }); }
-  if (openDoor) {
+  if (openDoor && !docked) {
     t += 300; steps.push({ at: t, label: 'Door opening', action: doorAction, frame: { door: 'opening' } });
     t += DOOR_MS; steps.push({ at: t, label: 'Door open', action: doorAction, frame: { door: 'open' } });
   }
@@ -170,15 +171,17 @@ export function boardingScenario(result: Result | null, context: Context, journe
       { at: 4500, label: 'Guiding stroller to wheelchair space', action: 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE', camera: 'cutaway',
         frame: { passengerJourney: passenger('navigating', milestones.parkingProgress), passengerInfo: { title: 'Park the stroller',
           message: `Position the stroller in the wheelchair space. Your ${assignedPlace} remains reserved for you.` } } },
-      { at: 8000, label: 'Stroller parked · passenger beside it', action: 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE', camera: 'interior',
+      // The bay sits behind the 'interior' camera (it looks rearward from the front): parking and the walk to the
+      // front-row seats stay in the cutaway, so the parked stroller and the seat are both on screen.
+      { at: 8000, label: 'Stroller parked · passenger beside it', action: 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE',
         frame: { passengerJourney: passenger('navigating', milestones.parkingProgress), passengerInfo: { title: 'Stroller parking preview',
           message: `The stroller is shown in the wheelchair space. After the operator assists, walk to ${assignedPlace}.` } } },
-      { at: 11000, label: `Stroller parked · walking to ${place}`, action: 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE', camera: 'cutaway',
+      { at: 11000, label: `Stroller parked · walking to ${place}`, action: 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE',
         frame: { passengerJourney: passenger('navigating', 1), passengerInfo: { title: guidanceTitle,
           message: `Leave the stroller in the wheelchair space and follow the ${nearby ? 'short ' : ''}highlighted path to ${place}.` } } },
-      { at: 15000, label: `Passenger approaching ${assignedPlace}`, action: 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE', camera: 'interior',
+      { at: 15000, label: `Passenger approaching ${assignedPlace}`, action: 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE',
         frame: { passengerInfo: { title: guidanceTitle, message: `Your assigned ${nearby ? 'nearby ' : ''}seat is ${target.id}. The stroller remains in the wheelchair space.` } } },
-      { at: 19000, label: `Passenger reached ${target.id} · stroller remains in bay`, camera: 'cutaway', action: 'WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION',
+      { at: 19000, label: `Passenger reached ${target.id} · stroller remains in bay`, action: 'WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION',
         frame: { passengerJourney: passenger('seated', 1), seatOccupancy: { [target.id]: true }, passengerInfo: { title: 'Awaiting operator confirmation',
           message: `The passenger is shown seated in ${target.id}${nearby ? ', close to the stroller' : ''}. The stroller remains in the wheelchair space. The operator must confirm safe positioning.` } } },
       { at: STROLLER_BOARDING_MS, label: 'Waiting for operator confirmation', action: 'WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION',

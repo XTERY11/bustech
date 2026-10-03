@@ -139,15 +139,17 @@ export function guidance(journey, context, result, now = Date.now(), queue = {})
     }
     return say('Ready to board', result.passenger_communication?.display_text ?? 'Please board when the safety operator signals.');
   }
+  // A stroller passenger first parks the stroller in the bay (equipment_target), then walks alone to the seat.
+  const onBoardTitle = journey.boarding_target?.type === 'WHEELCHAIR_BAY' ? 'Follow the wheelchair-space guidance'
+    : journey.equipment_target ? `Park the stroller, then follow guidance to seat ${journey.seat}` : `Follow guidance to seat ${journey.seat}`;
   if (journey.stage === 'ON_BOARD' && result?.cabin_navigation?.steps?.length) {
-    return say(journey.boarding_target?.type === 'WHEELCHAIR_BAY' ? 'Follow the wheelchair-space guidance' : `Follow guidance to seat ${journey.seat}`,
-      result.cabin_navigation.steps.map(step => step.text).join(' '));
+    return say(onBoardTitle, result.cabin_navigation.steps.map(step => step.text).join(' '));
   }
   if (journey.stage === 'ON_BOARD') return journey.boarding_target?.type === 'WHEELCHAIR_BAY'
-    ? say('Follow the wheelchair-space guidance', 'Move to the wheelchair space beside the entrance. The safety operator must confirm positioning and securement before departure.')
-    : journey.equipment_target ? say(`Park the stroller, then follow guidance to seat ${journey.seat}`,
+    ? say(onBoardTitle, 'Move to the wheelchair space beside the entrance. The safety operator must confirm positioning and securement before departure.')
+    : journey.equipment_target ? say(onBoardTitle,
       `Park the stroller in the wheelchair bay following the safety operator's instructions, then follow the highlighted path to assigned seat ${journey.seat}. Please wait for the operator's confirmation.`)
-    : say(`Follow guidance to seat ${journey.seat}`, `Follow the highlighted path to seat ${journey.seat} near the entrance. Please sit down and wait for the safety operator's confirmation.`);
+    : say(onBoardTitle, `Follow the highlighted path to seat ${journey.seat} near the entrance. Please sit down and wait for the safety operator's confirmation.`);
   if (journey.reason === 'expired') return say('Booking expired', 'Your booking has expired. Please submit a new assistance request.');
   if (journey.reason === 'cancelled') return say('Booking cancelled', 'Your assistance request has been cancelled.');
   return say('No active booking', 'Book assistance in the app before you travel.');

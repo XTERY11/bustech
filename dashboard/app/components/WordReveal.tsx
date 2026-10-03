@@ -6,13 +6,15 @@ type Line = { words: string[]; start: number };
 
 /** Client-side word reveal for a complete reasoning summary received over SSE. */
 export function WordReveal({ lines, running }: { lines: string[]; running: boolean }) {
+  // By content: every hub snapshot carries a new array with the same summary, which must not restart the reveal.
+  const text = lines.join('\n');
   const prepared = useMemo<Line[]>(() => {
-    return lines.reduce<Line[]>((items, line) => {
+    return (text ? text.split('\n') : []).reduce<Line[]>((items, line) => {
       const words = line.trim().split(/\s+/).filter(Boolean);
       const start = items.reduce((count, item) => count + item.words.length, 0);
       return [...items, { words, start }];
     }, []);
-  }, [lines]);
+  }, [text]);
   const total = prepared.reduce((count, line) => count + line.words.length, 0);
   const [shown, setShown] = useState(0);
 
@@ -39,7 +41,7 @@ export function WordReveal({ lines, running }: { lines: string[]; running: boole
       window.clearTimeout(start);
       if (cleanupTimer) window.clearInterval(cleanupTimer);
     };
-  }, [lines, total]);
+  }, [prepared, total]);
 
   if (!lines.length) {
     return <p className="thinkingWaiting">{running ? 'Reading the latest signals and checking safety constraints…' : 'Run a demo preset, or wait for camera and app signals.'}</p>;

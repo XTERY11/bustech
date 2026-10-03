@@ -237,6 +237,9 @@ test('stroller guidance consumes both targets; the next booking is served by a f
   assert.deepEqual(s.journey.animation.equipment_target, s.result.equipment_target);
   assert.ok(s.navigation.steps.some(step => step.maneuver === 'PARK_STROLLER'));
   assert.match(s.navigation.instruction, /stroller.*wheelchair\s+bay/i);
+  // Round 3 on the phone: the title names both the parking and the seat, the text is the step list.
+  assert.equal(s.journey.guidance.title, `Park the stroller, then follow guidance to seat ${target.id}`);
+  assert.equal(s.journey.guidance.display_text, s.navigation.steps.map(step => step.text).join(' '));
   assert.ok(h.hub.cabin.occupied_seat_ids.includes(target.id));
   assert.equal(h.hub.cabin.wheelchair_bay_occupied, true);
   assert.equal(h.calls(), 1, 'parking does not spend an additional model call');
@@ -494,7 +497,8 @@ test('cancel from any stage returns to IDLE and the next booking works on a fres
   };
   for (const [name, put] of Object.entries(stages)) {
     const h = harness(t); h.send('booking', booking(), 'first'); await h.hub.run(); put(h);
-    h.send('booking', { active: false });
+    // The operator's Reset clears any stage (after boarding only the operator flag ends the journey).
+    h.send('booking', { active: false, operator_reset: true });
     assert.deepEqual([h.hub.snapshot().journey.stage, h.hub.snapshot().navigation], ['IDLE', null], name);
     h.add(ARRIVAL_MS + PRESENCE_LOST_MS); assert.equal(h.hub.snapshot().journey.stage, 'IDLE');
     h.send('booking', booking(), 'second'); await h.hub.run();
@@ -671,7 +675,7 @@ test('waiting guidance names the passengers ahead; one booking keeps the text it
   assert.equal(reconcile({ ...docked, pending_exit: true }, { plan_status: 'READY', boarding_target: { type: 'SEAT', id: 'S03' } }, 1000 + DOCKED_ARRIVAL_MS).stage, 'ON_BOARD');
 });
 
-// --- One phone, one passenger after another: the phone's reset ends a boarded journey ---------------------------------
+// --- One phone, one passenger after another: the operator's Reset ends a boarded journey, the phone's Finish does not --
 
 test('single phone: book, board, reset, next passenger, each on a fresh bus with every place free', async t => {
   const h = harness(t);
@@ -684,8 +688,8 @@ test('single phone: book, board, reset, next passenger, each on a fresh bus with
     if (need === 'STROLLER') assert.deepEqual(s.result.equipment_target, { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' }, 'the stroller parks in the bay');
     h.send('perception', enter(need, `${id}-v`)); h.add(3000); h.send('perception', exit(need, `${id}-v`)); h.add(ARRIVAL_MS);
     assert.deepEqual([h.hub.snapshot().journey.stage, h.hub.snapshot().journey.animation.duration_ms], ['ON_BOARD', need === 'STROLLER' ? STROLLER_BOARDING_MS : BOARDING_MS]);
-    h.add(2000); // the reset button, during the boarding animation
-    assert.deepEqual(h.send('booking', { active: false, cancels: id }), { accepted: true, duplicate: false, changed: true, journey_id: id });
+    h.add(2000); // the dashboard's Reset button, during the boarding animation
+    assert.deepEqual(h.send('booking', { active: false, cancels: id, operator_reset: true }), { accepted: true, duplicate: false, changed: true, journey_id: id });
     s = h.hub.snapshot();
     assert.deepEqual([s.journey.journey_id, s.journey.stage, s.journey.reason, s.journey.completed, s.journey.animation, s.navigation, s.journey.guidance.title],
       [id, 'IDLE', 'completed', true, null, null, 'No active booking'], `${id}: reset`);
@@ -708,9 +712,9 @@ test('reset: before boarding it is an ordinary cancel; twice, unknown or after t
   // Board, reset, reset again, reset an unknown journey: nothing after the first reset changes.
   h.send('booking', booking('WHEELCHAIR'), 'w'); await h.planAll();
   h.send('perception', enter('WHEELCHAIR', 'v-w')); h.send('perception', exit('WHEELCHAIR', 'v-w')); h.add(ARRIVAL_MS);
-  h.send('booking', { active: false, cancels: 'w' });
+  h.send('booking', { active: false, cancels: 'w', operator_reset: true });
   const after = h.hub.snapshot();
-  assert.deepEqual(h.send('booking', { active: false, cancels: 'w' }), { accepted: true, duplicate: false, changed: false, journey_id: null });
+  assert.deepEqual(h.send('booking', { active: false, cancels: 'w', operator_reset: true }), { accepted: true, duplicate: false, changed: false, journey_id: null });
   assert.deepEqual(h.send('booking', { active: false, cancels: 'no-such-journey' }), { accepted: true, duplicate: false, changed: false, journey_id: null });
   assert.deepEqual(h.hub.snapshot().journeys, after.journeys); assert.deepEqual(h.hub.snapshot().journey, after.journey);
   h.add(FINISHED_RETAIN_MS); h.add(BOOKING_TTL_MS);
@@ -721,11 +725,44 @@ test('reset: before boarding it is an ordinary cancel; twice, unknown or after t
   h.send('booking', booking('CANE'), 'c-2'); await h.planAll();
   h.send('perception', exit('WHEELCHAIR', 'v-w2')); h.add(ARRIVAL_MS);
   assert.equal(h.hub.snapshot().journey.journey_id, 'c-2', 'once the wheelchair is on board the waiting cane is shown');
-  h.send('booking', { active: false, cancels: 'w-2' });
+  h.send('booking', { active: false, cancels: 'w-2', operator_reset: true });
   assert.deepEqual([h.entry('w-2').reason, h.hub.snapshot().journey.journey_id, h.hub.cabin.wheelchair_bay_occupied], ['completed', 'c-2', true]);
   // Without a journey_id the reset ends the boarded journey on screen.
   h.send('perception', enter('CANE', 'v-c2')); h.send('perception', exit('CANE', 'v-c2')); h.add(DOCKED_ARRIVAL_MS);
   assert.equal(h.hub.snapshot().journey.stage, 'ON_BOARD');
-  h.send('booking', { active: false });
+  h.send('booking', { active: false, operator_reset: true });
   assert.deepEqual([h.entry('c-2').stage, h.entry('c-2').reason, h.hub.cabin.wheelchair_bay_occupied], ['IDLE', 'completed', false]);
+});
+
+test("phone Finish after boarding changes nothing on the dashboard; the next booking still starts at once on a fresh bus", async t => {
+  const h = harness(t);
+  h.send('booking', booking('WHEELCHAIR'), 'w'); await h.planAll();
+  h.send('perception', enter('WHEELCHAIR', 'v-w')); h.send('perception', exit('WHEELCHAIR', 'v-w')); h.add(ARRIVAL_MS);
+  const boardedView = h.hub.snapshot();
+  assert.equal(boardedView.journey.stage, 'ON_BOARD');
+  h.add(2000);
+  // The App's Finish, exactly as it sends it today (no operator flag): acknowledged, the boarded journey stays.
+  assert.deepEqual(h.send('booking', { active: false, accessibility_need: 'WHEELCHAIR', cancels: 'w' }), { accepted: true, duplicate: false, changed: true, journey_id: 'w' });
+  let s = h.hub.snapshot();
+  for (const key of ['journey', 'navigation', 'result', 'summary']) assert.deepEqual(s[key], boardedView[key], key);
+  assert.deepEqual([h.entry('w').stage, h.entry('w').reason, h.entry('w').passenger_finished], ['ON_BOARD', 'boarding_preview', true]);
+  assert.equal(h.hub.cabin.wheelchair_bay_occupied, true, 'the phone does not reset the simulated bus');
+  assert.equal(h.send('booking', { active: false, cancels: 'w' }).changed, false, 'a second Finish is harmless');
+  // The phone books the next passenger without any operator reset: it starts at once, on a fresh bus with the bay free.
+  h.send('booking', booking('WHEELCHAIR'), 'w-2'); await h.planAll();
+  s = h.hub.snapshot();
+  assert.deepEqual([s.journey.journey_id, s.journey.stage, s.result.boarding_target, h.hub.cabin.wheelchair_bay_occupied],
+    ['w-2', 'BOOKED', { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' }, false]);
+  // Before boarding the phone's cancel is still an ordinary cancel.
+  h.send('booking', { active: false, accessibility_need: 'WHEELCHAIR', cancels: 'w-2' });
+  assert.deepEqual([h.entry('w-2').stage, h.entry('w-2').reason], ['IDLE', 'cancelled']);
+  // Phone Finish, then the operator's Reset: the boarded journey ends and the screen is idle.
+  const p = harness(t);
+  p.send('booking', booking('STROLLER'), 's'); await p.planAll();
+  p.send('perception', enter('STROLLER', 'v-s')); p.send('perception', exit('STROLLER', 'v-s')); p.add(ARRIVAL_MS);
+  p.send('booking', { active: false, cancels: 's' });
+  assert.deepEqual([p.hub.snapshot().journey.stage, p.hub.cabin.wheelchair_bay_occupied], ['ON_BOARD', true]);
+  p.send('booking', { active: false, cancels: 's', operator_reset: true });
+  s = p.hub.snapshot();
+  assert.deepEqual([s.journey.stage, s.journey.reason, s.navigation, s.result, p.hub.cabin.wheelchair_bay_occupied], ['IDLE', 'completed', null, null, false]);
 });

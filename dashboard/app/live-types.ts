@@ -11,7 +11,7 @@ export type BoardingTarget = { type: 'SEAT' | 'WHEELCHAIR_BAY'; id: string };
 export type NavigationStep = { step: number; maneuver: 'START' | 'STRAIGHT' | 'TURN_LEFT' | 'TURN_RIGHT' | 'PARK_STROLLER' | 'ARRIVE'; distance_m: number | null; text: string };
 export type CabinNavigation = { layout_id: string; origin: { type: 'ENTRANCE'; id: 'SINGLE_ENTRANCE'; facing: 'INTO_BUS' }; target: BoardingTarget;
   equipment_target?: BoardingTarget | null; steps: NavigationStep[]; mode: 'map_based'; simulated: true; requires_operator: true };
-export type JourneyAnimation = { id: string; phase: 'arrival' | 'boarding'; aid: string; started_at: number; duration_ms: number; target: BoardingTarget | null; equipment_target?: BoardingTarget | null };
+export type JourneyAnimation = { id: string; phase: 'arrival' | 'boarding'; aid: string; started_at: number; duration_ms: number; target: BoardingTarget | null; equipment_target?: BoardingTarget | null; docked?: boolean };
 export type Navigation = { id: string; revision: number; phase: 'TO_STOP' | 'WAIT_AT_STOP' | 'BOARD_BUS' | 'TO_SEAT' | 'TO_WHEELCHAIR_BAY'; destination: { type: 'BUS_STOP' | 'SEAT' | 'WHEELCHAIR_BAY'; id: string }; instruction: string; simulated: true; animation?: JourneyAnimation | null;
   equipment_target?: BoardingTarget | null; steps?: NavigationStep[]; cabin_route?: CabinNavigation | null };
 export type Summary = { request_id: string; decision_summary: string[] };

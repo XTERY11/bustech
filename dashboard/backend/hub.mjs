@@ -118,6 +118,8 @@ export class SignalHub extends EventEmitter {
     return { ...structuredClone(rec.journey), guidance: guidance(rec.journey, context, rec.result, now, queue),
       queued: rec.endedAt === null && rec.id !== this.currentId, position: this.positionOf(rec),
       plan_status: rec.result?.plan_status ?? null, planning: Boolean(this.active) && this.activeTarget === rec,
+      // The phone pressed Finish after boarding; the dashboard still shows the boarded journey until Reset.
+      passenger_finished: Boolean(rec.passengerFinished),
       navigation: navigation(rec.journey, context, rec.result, now, queue) };
   }
   snapshot() {
@@ -373,9 +375,10 @@ export class SignalHub extends EventEmitter {
     let changed = true, rec = null;
     if (channel === 'booking' && isBoarding(payload)) rec = this.addBooking(entry);
     else if (channel === 'booking') {
-      changed = Boolean(cancelled) || !this.live().length && !this.lastEnded;
-      if (cancelled) this.endBooking(cancelled);
-      if (changed && !this.live().length) this.idleScreen();
+      changed = !this.live().length && !this.lastEnded;
+      if (cancelled) changed = this.endBooking(cancelled, { operator: payload.operator_reset === true }) || changed;
+      // A phone Finish on a boarded journey ends nothing: the boarded journey stays on screen.
+      if (changed && !this.live().length && cancelled?.journey.stage !== 'ON_BOARD') this.idleScreen();
     } else changed = this.perceive(entry, before, seenBefore !== hash(withoutAge(payload)));
     this.tick();
     this.publish('signal', { channel, event_id: eventId, changed, snapshot: this.snapshot() });
@@ -402,13 +405,22 @@ export class SignalHub extends EventEmitter {
     return this.current() ?? (live.length === 1 ? live[0] : null) ?? (boarded(focus) ? focus : null);
   }
   /**
-   * The phone's cancel. Before boarding: an ordinary cancel ('cancelled'). After boarding it is the phone's reset
-   * ("next passenger"): the journey ends at once as 'completed' and, if nobody waits, the simulated bus is fresh.
+   * A cancel (active:false). Before boarding: an ordinary cancel ('cancelled'), from the phone or the operator.
+   * After boarding the phone and the dashboard end the journey independently: the phone's Finish (no flag) only
+   * marks the booking passenger_finished, so the dashboard keeps the boarded journey and its animation; the next
+   * booking starts at once anyway (the stop freed at ON_BOARD). Only the operator's Reset (operator_reset:true)
+   * ends a boarded journey at once as 'completed' and, if nobody waits, gives a fresh simulated bus.
+   * Returns true when something changed.
    */
-  endBooking(rec) {
-    if (!boarded(rec)) return this.finish(rec, 'cancelled');
+  endBooking(rec, { operator = false } = {}) {
+    if (!boarded(rec)) { this.finish(rec, 'cancelled'); return true; }
+    if (!operator) {
+      if (rec.passengerFinished) return false;
+      rec.passengerFinished = true; return true;
+    }
     this.finish(rec, 'completed');
     if (!this.live().length) this.freshBus();
+    return true;
   }
   addBooking(entry) {
     // The list is empty and nobody is in progress: after a bus was used, the passenger is met by a fresh one.

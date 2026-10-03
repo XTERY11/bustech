@@ -109,8 +109,8 @@ try {
     await until(() => events.some(e => e.type === 'navigation' && e.data.navigation?.id === journeyId && e.data.navigation.destination.id === target.id));
     report.push({ category: need, model: result.meta.model, target: target.id, equipment_target: result.equipment_target, navigation: snapshot.navigation.phase, steps: snapshot.navigation.steps,
       api_calls: result.meta.api_calls, total_tokens: result.meta.usage.total_tokens, latency_ms: result.meta.latency_ms });
-    // The phone's reset ("next passenger"): the boarded journey ends as completed and the bus is fresh again.
-    assert.equal((await post('/api/booking', { event_id: `reset-${randomUUID()}`, observed_at: new Date(clock).toISOString(), payload: { active: false, cancels: journeyId } })).journey_id, journeyId);
+    // The dashboard's Reset (operator_reset): the boarded journey ends as completed and the bus is fresh again.
+    assert.equal((await post('/api/booking', { event_id: `reset-${randomUUID()}`, observed_at: new Date(clock).toISOString(), payload: { active: false, cancels: journeyId, operator_reset: true } })).journey_id, journeyId);
     const after = await state();
     assert.deepEqual([after.journey.stage, after.journey.reason, after.navigation], ['IDLE', 'completed', null]);
   }

@@ -91,8 +91,8 @@ SwiftPM 实际跑通，真实中枢的 `/api/state` 也能解码。
 | 离开后待上车 | `pending_exit:true`（到站准备未满 10 s） | 立刻显示 "Please board the bus" | 继续显示 guidance，不提前说上车 |
 | 第 3 轮：上车 | `stage=="ON_BOARD"`、`completed:true`、`reason:"boarding_preview"`；guidance 为车内路线全文 | 依靠自己检测的 exit | 按 stage 进入第 3 轮 |
 | 座位 / 轮椅位 | `journey.boarding_target {type:"SEAT"|"WHEELCHAIR_BAY", id}`，`journey.seat`（规划完成后第 1 轮就有）；ON_BOARD 时也在 `navigation.destination` | 未解码，只在 passenger_communication 文本里出现 | 第 3 轮显示大号编号（如 "S02" / "Wheelchair bay"），也可在第 1 轮显示"已为你预留" |
-| 车内分步导航 | `navigation.steps[]`：`{step, maneuver: START/STRAIGHT/TURN_LEFT/TURN_RIGHT/ARRIVE, distance_m|null, text}`，仅 ON_BOARD 非空；`navigation.cabin_route.steps` 规划完成后就有 | 无 | 第 3 轮列出步骤，maneuver 用图标；距离是模拟近似值，不做逐步完成判定 |
-| 动画 | `journey.animation`: `{id, phase:"arrival"|"boarding", aid, started_at(中枢 epoch ms), duration_ms(10000/16000), target}`；aid 为 wheelchair/stroller/cane/crutch/walker/visual/hearing/none | 无 | 按 `id` 去重（心跳、重连不重播）；进度=(中枢现在−started_at)/duration_ms，用 SSE 事件的 `at` 或 HTTP `Date` 估算时钟差；`aid` 选类别动画 |
+| 车内分步导航 | `navigation.steps[]`：`{step, maneuver: START/STRAIGHT/TURN_LEFT/TURN_RIGHT/PARK_STROLLER/ARRIVE, distance_m|null, text}`（`PARK_STROLLER` 只出现在婴儿车路线中，distance_m 为 null；婴儿车另有 `equipment_target` = 轮椅位，`boarding_target` 仍是乘客座位），仅 ON_BOARD 非空；`navigation.cabin_route.steps` 规划完成后就有 | 无 | 第 3 轮列出步骤，maneuver 用图标；距离是模拟近似值，不做逐步完成判定 |
+| 动画 | `journey.animation`: `{id, phase:"arrival"|"boarding", aid, started_at(中枢 epoch ms), duration_ms, target, equipment_target?, docked?}`；duration_ms：到站 10000（同一辆车的后一位 3000，带 `docked:true`），上车 16000，婴儿车上车 22000；aid 为 wheelchair/stroller/cane/crutch/walker/visual/hearing/none | 无 | 按 `id` 去重（心跳、重连不重播）；进度=(中枢现在−started_at)/duration_ms，用 SSE 事件的 `at` 或 HTTP `Date` 估算时钟差；`aid` 选类别动画 |
 | 取消 / 过期 / 被替换 | `stage=="IDLE"`，`reason` 为 `cancelled`/`expired`；`navigation:null`；被别人预约替换时 `journey.journey_id` 不再是本单 | 本地 300 s 计时加 `channels.booking.event_id` 比对 | 用 `journey.journey_id` 比对（取消后变成本单的 `app-cancel-…` id，`journey.mjs:17`），按 `reason` 显示；本地 300 s 只在 `completed==false` 时兜底 |
 
 ## 4. 最小改动清单（按优先级）

@@ -82,7 +82,8 @@
 - 接受：`202 {accepted: true, journey_id, queued, position}`。`queued`/`position` 是新字段（排队时为 true / 前面有几单），旧中枢只回 `accepted`。
 - 拒绝：同类别已有一单时 `409 {error: "NEED_ALREADY_BOOKED", need, existing_journey_id}`。App 显示 "A request for this type of assistance is already active. Please try again after that passenger has boarded."，不自动重试；用户点 Try Again 时重新生成 `observed_at` 再发。
 - 取消：同样的格式，`active: false`，并在 `payload` 里加 `cancels: "<要取消的那单的 event_id>"`。旧中枢的预约 schema 允许多余字段并在入库前丢弃，所以旧中枢照样接受，只是不看 `cancels`。
-- 结束（复位）：按 "Finish" 时发的就是上面这条取消。对已上车（`completed`）的旅程，中枢把它当作复位：旅程立即结束，条目 `reason: "completed"`，车复位。App 先清空本地状态再发请求，只发一次，失败或超时都忽略，不重试。dashboard 上的 Reset 按钮发同样的请求（`cancels` 为当前显示的旅程），没有手机时也能在乘客之间清屏。
+- 结束：按 "Finish" 时发的就是上面这条取消（App 不用改）。手机和 dashboard 各自结束：对已上车（`completed`）的旅程，中枢只确认（202），dashboard 上的旅程、上车动画和车都不变，只在 `journeys[]` 里这一条加 `passenger_finished: true`。App 先清空本地状态再发请求，只发一次，失败或超时都忽略，不重试。手机随后预约下一位时，新预约立即开始，dashboard 切到新乘客，没有别人排队时换新车。
+- dashboard 的 Reset 按钮发同样的取消，另加 `operator_reset: true`：只有带这个标记，已上车的旅程才立即结束（`reason: "completed"`，空闲画面，换新车）。没上车时，手机取消和 Reset 都是普通取消（`reason: "cancelled"`）。
 - 手机时钟比电脑快 5 秒以上时，中枢会拒收（`observed_at` 在未来）。
 
 ### 4.2 App 读取的
@@ -93,7 +94,7 @@
 
 - 有 `journeys`：只用 `journey_id` 等于自己 `event_id` 的那一条和它自己的 `navigation`；`result`（座位方案、播报）只在这一单正在服务时才算自己的。
 - 有 `journeys` 但里面没有自己：视为中枢已结束这单（刚预约的前 10 秒除外）。已经上车的显示 "Journey finished"，没上车的显示 "Booking expired"。不再退回旧的触发信号逻辑。
-- 条目 `reason: "completed"`（结束/复位后）：正常结束，显示 "Journey finished" 和 "Finish" 按钮，不显示 "Booking cancelled"。
+- 条目 `reason: "completed"`（dashboard 按 Reset 后）：正常结束，显示 "Journey finished" 和 "Finish" 按钮，不显示 "Booking cancelled"。
 - 结束后马上约下一位：上一单的条目还会在 `journeys` 里留约 2 分钟，App 只认新预约的 `event_id`，不受影响。
 - 没有 `journeys`（旧中枢）：和以前一样，只认 `journey.journey_id` 等于自己的 `journey`。
 - 中枢还列着这单、而且没有结束时（排队中、在站台冻结、已上车），App 不再按自己的 300 秒计时判过期，以中枢为准。
@@ -106,9 +107,10 @@
 | `journey.matched` | 进站的辅具是否与预约一致 | 第二轮显示"已识别"还是"请等待" |
 | `journey.guidance.title` / `display_text` / `audio_text` | 这一刻该告诉乘客的话 | 直接显示和朗读 |
 | `journey.boarding_target` | `{type: "SEAT", id: "S03"}` 或 `{type: "WHEELCHAIR_BAY", …}` | 显示分配的位置 |
-| `navigation.steps` | 车内分段导航，上车后才有内容 | 第三轮的编号步骤 |
+| `journey.equipment_target` / `navigation.equipment_target` | 婴儿车：`{type: "WHEELCHAIR_BAY", id: "WHEELCHAIR_BAY"}`（推车停放位置）；其他类别为 null | 婴儿车乘客的座位仍是 `boarding_target`；推车停在轮椅位。可在座位旁加一行 "Stroller: wheelchair bay"（目前 App 未显示） |
+| `navigation.steps` | 车内分段导航，上车后才有内容；婴儿车有 15 步，其中一步 `maneuver: "PARK_STROLLER"`（把推车停进轮椅位） | 第三轮的编号步骤（`PARK_STROLLER` 目前显示默认箭头图标，可换成推车图标） |
 | `journey.animation` | `{id, phase, aid, started_at, duration_ms}` | 孪生页自己使用，App 不用处理 |
-| `journey.reason` | `booked` / `entered` / `unmatched` / `not_boarding` / `left_stop` / `boarding_preview` / `cancelled`；新增 `completed`（上车后结束/复位，正常结束）、`waiting_turn`（已到站，但前一位正在上车）、`no_place`（这辆车没有无障碍位置了，等工作人员） | 补充提示；后两种用黄色等待样式显示中枢的文字 |
+| `journey.reason` | `booked` / `entered` / `unmatched` / `not_boarding` / `left_stop` / `boarding_preview` / `cancelled`；新增 `completed`（上车后 dashboard 按 Reset，正常结束）、`waiting_turn`（已到站，但前一位正在上车）、`no_place`（这辆车没有无障碍位置了，等工作人员） | 补充提示；后两种用黄色等待样式显示中枢的文字 |
 | `journey.revision` | 每次变化加一 | 丢弃迟到的旧状态 |
 | `journeys[].queued` / `position` | 是否在排队 / 前面还有几单 | 第一轮下方加一行 "N passengers ahead of you"（文字仍以 guidance 为准） |
 | `journeys[].navigation` | 这一单自己的导航，排队时为 null | 第三轮的编号步骤 |
@@ -125,7 +127,7 @@
 | 约 5 秒 | 触发信号一 → `AT_STOP`，`matched` | 第 2 步；"Bus arriving"，约 4 秒后 "Preparing to board"；孪生里公交驶入 |
 | 约 14 秒 | 触发信号二到达，先挂起 | 不变 |
 | 约 15 秒 | `ON_BOARD` | 第 3 步；位置大字；孪生播放上车动画；车内步骤；步骤下方出现 "Finish" |
-| 按下 Finish | 收到 `cancels`，旅程结束（`reason: "completed"`），车复位 | 立即回到选类别界面，可以约下一位 |
+| 按下 Finish | 收到 `cancels`，只记 `passenger_finished: true`；dashboard 继续显示已上车和动画，直到操作员按 Reset 或下一位预约 | 立即回到选类别界面，可以约下一位 |
 
 公交进站动画固定 10 秒。乘客在这之前离开区域，中枢会等动画结束再进入第三轮。同一辆车的后几位乘客，车已经停在站台，进站阶段（`animation.phase: "arrival"`）的 `duration_ms` 更短；孪生页在 5 秒以内时不再播放驶入，直接开门、放坡道。
 

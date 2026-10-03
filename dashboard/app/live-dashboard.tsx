@@ -262,9 +262,9 @@ export default function Dashboard() {
   }
 
   /**
-   * Operator reset between passengers, without a phone: the App's own cancellation naming the journey shown.
-   * After boarding the hub treats it as a reset (journey ends with reason `completed`, bus reset); before
-   * boarding it cancels that booking.
+   * Operator reset between passengers: the App's cancellation naming the journey shown, plus operator_reset:true.
+   * Only with this flag does the hub end a boarded journey (reason `completed`, clean idle screen, fresh bus); the
+   * phone's Finish leaves it on this screen. Before boarding it cancels that booking.
    */
   async function resetJourney() {
     if (!journey?.journey_id || resetting) return;
@@ -273,7 +273,7 @@ export default function Dashboard() {
     try {
       await postSignal(apiBase, token, '/api/booking', { event_id: `reset-${crypto.randomUUID()}`, observed_at: new Date().toISOString(), payload: {
         active: false, intent: 'BOARDING', route_id: request.route_id ?? 'DEMO_ROUTE', stop_id: request.stop_id ?? 'DEMO_STOP',
-        accessibility_need: journey.need ?? 'UNKNOWN', cancels: journey.journey_id } });
+        accessibility_need: journey.need ?? 'UNKNOWN', cancels: journey.journey_id, operator_reset: true } });
     } catch (failure) {
       setError(failure instanceof Error ? `Reset not accepted: ${failure.message}` : 'Could not connect to the server');
     } finally {
@@ -317,7 +317,7 @@ export default function Dashboard() {
   // the stop (BOOKED / AT_STOP). The hub frees the slot at ON_BOARD, so the next passenger can start at once.
   const replayBusy = inputSource === 'external' && (journey?.stage === 'BOOKED' || journey?.stage === 'AT_STOP'
     || journeys.some(entry => entry.stage === 'BOOKED' || entry.stage === 'AT_STOP'));
-  const navigationTitle = navigation ?({ TO_STOP: 'Go to the boarding point', WAIT_AT_STOP: 'Wait at the boarding point', BOARD_BUS: 'Your bus is ready', TO_SEAT: 'Your assigned seat', TO_WHEELCHAIR_BAY: 'Your wheelchair space' })[navigation.phase] : running ? 'Preparing passenger guidance' : journey?.guidance.title ?? 'Waiting for an app booking';
+  const navigationTitle = navigation ?({ TO_STOP: 'Go to the boarding point', WAIT_AT_STOP: 'Wait at the boarding point', BOARD_BUS: 'Your bus is ready', TO_SEAT: navigation.equipment_target ? 'Park the stroller, then your seat' : 'Your assigned seat', TO_WHEELCHAIR_BAY: 'Your wheelchair space' })[navigation.phase] : running ? 'Preparing passenger guidance' : journey?.guidance.title ?? 'Waiting for an app booking';
 
   const communication = [
     { label: 'Signal hub', value: connected ? 'Connected' : 'Offline', tone: connected ? 'online' : 'offline' },
