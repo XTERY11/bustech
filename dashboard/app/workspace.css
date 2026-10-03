@@ -49,6 +49,7 @@
 .studioContent .stageMedia { margin-top:8px; border-width:2px; border-radius:8px; }
 .studioContent .view--overview .stageMedia { height:clamp(250px,37vh,480px); aspect-ratio:auto; }
 .studioContent .twinConsole { margin-top:8px; }
+.studioContent .view--overview .twinConsole { display:none; }
 .studioContent .twinExternalDisplay { min-height:0; padding:10px 12px; border-width:2px; border-radius:8px; }
 .studioContent .twinExternalDisplay>p { margin-top:6px; font-size:13px; line-height:1.55; max-height:56px !important; }
 .studioContent .twinConsoleLabel { font-size:10px; }
