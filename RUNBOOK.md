@@ -71,7 +71,7 @@ BRIDGE_WINDOW=1 BRIDGE_RECORD=1 bash start_demo.sh "http://172.20.10.4:4747/vide
 | 2 | 带着辅具走进区域，站住 | 约 0.5 秒后画面变红，出现 `TRIGGER` |
 | 3 | **在区域里等公交进站、开门、放好坡道** | **约 10 秒**，等孪生显示 "Ready to board" |
 | 4 | 朝车的方向（默认往画面深处）走出区域 | 走出后约 2 秒，画面恢复绿色 |
-| 5 | 看上车动画和车内指引 | 动画约 16 秒 |
+| 5 | 看上车动画和车内指引 | 动画约 16 秒，婴儿车 22 秒 |
 | 6 | 下一轮：其他人离开区域，回到步骤 1 | — |
 
 用命令代替 App 发预约（把 `WHEELCHAIR` 换成 `STROLLER` 或 `CANE`；后两类把 `"assistance_requested"` 改成 `["ADDITIONAL_BOARDING_TIME"]`、`"ramp_preference"` 改成 `"UNSPECIFIED"`）：
@@ -80,6 +80,24 @@ BRIDGE_WINDOW=1 BRIDGE_RECORD=1 bash start_demo.sh "http://172.20.10.4:4747/vide
 curl -X POST http://127.0.0.1:8787/api/booking -H 'Content-Type: application/json' \
   -d '{"event_id":"app-'$(date +%s)'","observed_at":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","payload":{"active":true,"intent":"BOARDING","route_id":"DEMO_ROUTE","stop_id":"DEMO_STOP","accessibility_need":"WHEELCHAIR","ramp_preference":"REQUESTED","assistance_requested":["WHEELCHAIR_RAMP"],"preferred_interaction":"BOTH","language":"en-SG"}}'
 ```
+
+### 2.4 手机 App 连进来
+
+1. 启动命令最前面加 `LAN=1`，例如 `LAN=1 BRIDGE_WINDOW=1 bash start_demo.sh "http://172.20.10.4:4747/video"`（回放自检时是 `LAN=1 bash start_demo.sh demos/captures/venue`）。终端会打印两行：
+   ```
+   LAN mode: dashboard http://<IP>:3000  hub http://<IP>:8787  camera http://<IP>:8790
+   Access token (App / dashboard Connection settings): <token>
+   ```
+2. 手机和电脑连同一个网络。在 App 的 Settings → BusTech signal hub 里打开开关，选 HTTP，填 `<IP>`、端口 `8787` 和 `<token>`。第一次连接时允许"本地网络"权限。
+3. 可以先在手机 Safari 打开 `http://<IP>:8787/api/health`，看到 `"ok":true` 说明网络是通的。
+4. 之后步骤 1 的预约就在 App 里提交，手机上应看到的内容见第 3 节"手机 App"一栏。
+
+注意：
+
+- token 每次启动演示都会换，App 重启后也要重新填。
+- 打印的 IP 取自电脑的 en0 网卡。连手机热点时如果 IP 是空的或不对，用 `ipconfig getifaddr en0`（或 en1）核对。
+- 用命令代替 App 发预约时，LAN 模式下要加 `-H 'Authorization: Bearer <token>'`。
+- **多部手机**：可以同时连接（都填同一个 IP 和 token），但中枢同一时间只有一个预约。一部手机上车完成后，另一部再预约，可以连续演示；如果第二部手机在第一部走完之前预约，第一部的旅程会被替换。
 
 ---
 
@@ -116,21 +134,23 @@ curl -X POST http://127.0.0.1:8787/api/booking -H 'Content-Type: application/jso
 | 公交进站和车辆准备 | 固定 10 秒 | 模拟公交驶入、下蹲、开门、伸坡道 | **在区域里等满 10 秒再走**，否则孪生比人慢 |
 | 最短停留 | 2 秒 | 区分"等车后上车"和"路过" | 不要一进就出 |
 | 离站确认 | 2 秒 | 区域里连续 2 秒没有人才算离开 | 人走出后，**其他人不要站在区域里**，否则一直不算离开 |
-| 上车动画 | 约 16 秒 | 车内引导 | 播完再开始下一轮 |
-| 预约有效期 | 5 分钟 | 过期后预约作废 | 预约后 5 分钟内进站，否则重新预约 |
+| 心跳中断 | 8 秒 | 区域里有人时检测桥约每 2 秒报一次；中枢 8 秒没收到这次进站的消息，就当人已离开 | 已显示 "Ready to board"：直接进入上车阶段；还没到：回到 "Booked"，等乘客再进站 |
+| 上车动画 | 约 16 秒，婴儿车 22 秒 | 车内引导 | 不必等播完：下一位的预约一到，就换成新的旅程和新的模拟公交 |
+| 预约有效期 | 5 分钟，从预约时刻算 | 过期后预约作废 | 预约后 5 分钟内进站，否则重新预约。进站且类别一致后暂停计时；之后又回到 "Booked" 时若已超过 5 分钟，预约立即作废 |
 
 一轮顺利的话：预约 → 约 2 秒后进站 → 等 10 秒 → 离开 → 约 2 秒后进入上车阶段 → 16 秒动画，合计约半分钟。
 
 ---
 
-### 现场要避免的四件事
+### 现场要避免的五件事
 
-- 走出区域后的 10 秒内不要再走回区域。
-- 有人在区域里时不要停止或重启检测桥，否则离站信号丢失，旅程会停在"到站"。
+- 朝车走出区域后又走回来，等于取消离站：要再朝车走出一次才进入上车阶段（不会自己上车，也不会卡住）。
+- 有人在区域里时不要停止或重启检测桥：8 秒后中枢当人已离开（已 "Ready to board" 的直接上车，否则回到 "Booked"），与现场不符。
 - 同一个中枢只接一个检测桥：接真实摄像头前先停掉回放。
 - 中枢重启后，预约要重新发。
+- 上一位乘客离开区域后再发下一位的预约：留在区域里的人若带着同类辅具（如连续两位轮椅），会被当成下一位已到站；不同类辅具只显示 "Unmatched" 等待。
 
-接摄像头前可以先跑一遍不需要摄像头的握手自检（13 种情况，约 3 分钟，需要另开一个空闲端口的中枢，不要对着正在演示的中枢跑）：
+接摄像头前可以先跑一遍不需要摄像头的握手自检（15 种情况，含轮椅→婴儿车→手杖→轮椅连续四轮，约 4 分钟，需要另开一个空闲端口的中枢，不要对着正在演示的中枢跑）：
 
 ```bash
 cd dashboard && BRIDGE_PORT=8887 node backend/server.mjs          # 终端一

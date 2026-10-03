@@ -2,12 +2,17 @@ import { randomUUID, createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { plan, MODES, revalidateForSimulation } from './planner/agent.mjs';
-import { advance, guidance, navigation, reconcile, DOCK_MS, ARRIVAL_MS } from './journey.mjs';
+import { advance, guidance, navigation, reconcile, presenceLost, DOCK_MS, ARRIVAL_MS } from './journey.mjs';
 import { normalizeInput, buildPolicy } from './planner/policy.mjs';
 
 const KEYS = { booking: 'request', perception: 'perception' };
 // The camera bridge repeats an occupied region every 2 s ('present'); older than this, the report is not current.
 export const PRESENCE_MS = 5000;
+// While AT_STOP, the journey's visit counts as gone once the hub (its own receive clock, not the camera's) has heard
+// nothing about it for this long, about 4 missed heartbeats: see presenceLost in journey.mjs. Only visit-bound
+// journeys (zone.visit_id, i.e. senders that send heartbeats) are timed; a manual enter without visit_id is not.
+export const PRESENCE_LOST_MS = 8000;
+export const BOOKING_TTL_MS = 300000;
 const fixture = JSON.parse(readFileSync(new URL('./examples/input.json', import.meta.url), 'utf8'));
 const withoutAge = value => Array.isArray(value) ? value.map(withoutAge).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))) : value && typeof value === 'object'
   ? Object.fromEntries(Object.entries(value).filter(([k]) => !['observation_age_ms', 'request_id', 'confidence'].includes(k)).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, withoutAge(v)])) : value;
@@ -21,6 +26,7 @@ export class SignalHub extends EventEmitter {
     this.seen = new Map(); this.lastKey = null; this.pendingCalls = 0; this.timer = null;
     this.journey = { stage: 'IDLE', revision: 0 }; this.localNext = false;
     this.cabin = structuredClone(fixture.vehicle_context.cabin); this.journeyTimers = []; this.navigationKey = null;
+    this.presence = null;
   }
   context() {
     if (this.source === 'demo') return structuredClone(this.demoContext);
@@ -71,7 +77,9 @@ export class SignalHub extends EventEmitter {
     this.journeyTimers.forEach(clearTimeout); this.journeyTimers = [];
     if (this.source !== 'external') return;
     const times = [];
-    if (this.channels.booking?.payload.active && this.journey.stage !== 'IDLE' && !this.journey.completed) times.push(this.channels.booking.observedAt + 300000);
+    if (this.channels.booking?.payload.active && this.journey.stage !== 'IDLE' && !this.journey.completed) times.push(this.channels.booking.observedAt + BOOKING_TTL_MS);
+    const seenAt = this.presenceAt();
+    if (seenAt !== null) times.push(seenAt + PRESENCE_LOST_MS);
     if (this.journey.animation?.phase === 'arrival') {
       times.push(this.journey.animation.started_at + DOCK_MS, this.journey.animation.started_at + ARRIVAL_MS);
     }
@@ -80,15 +88,25 @@ export class SignalHub extends EventEmitter {
       timer.unref?.(); this.journeyTimers.push(timer);
     }
   }
+  /** Hub receive time of the last signal about the visit an AT_STOP journey waits on, or null when not timed. */
+  presenceAt() {
+    const j = this.journey;
+    if (j.stage !== 'AT_STOP' || j.pending_exit || j.completed || !j.visit_id || this.presence?.visit_id !== j.visit_id) return null;
+    return this.presence.at;
+  }
   tick() {
     if (this.source !== 'external') return;
-    const booking = this.channels.booking;
-    if (booking?.payload.active && this.journey.stage !== 'IDLE' && !this.journey.completed && this.now() - booking.observedAt >= 300000) {
+    const booking = this.channels.booking, seenAt = this.presenceAt();
+    let changed = seenAt !== null && this.now() - seenAt >= PRESENCE_LOST_MS && this.applyJourney(presenceLost(this.journey, seenAt + PRESENCE_LOST_MS));
+    // The TTL is frozen while a matched passenger is at the stop; back in BOOKED it counts from the booking again.
+    const waiting = this.journey.stage === 'AT_STOP' && this.journey.matched;
+    if (booking?.payload.active && this.journey.stage !== 'IDLE' && !this.journey.completed && !waiting && this.now() - booking.observedAt >= BOOKING_TTL_MS) {
       this.invalidate();
       this.applyJourney({ ...this.journey, stage: 'IDLE', reason: 'expired', need: null, matched: false, pending_exit: false, animation: null, boarding_target: null, equipment_target: null, seat: null });
       clearTimeout(this.timer); this.lastKey = `${this.mode}:${this.decisionKey()}`;
-      this.publishState();
-    } else if (this.applyJourney(reconcile(this.journey, this.result, this.now()))) this.publishState();
+      changed = true;
+    } else if (this.applyJourney(reconcile(this.journey, this.result, this.now()))) changed = true;
+    if (changed) this.publishState();
     this.armJourneyTimers();
   }
   decisionKey() {
@@ -134,6 +152,9 @@ export class SignalHub extends EventEmitter {
       next = advance(next, 'perception', seen.payload, null, { now: this.now() });
     }
     this.applyJourney(next);
+    // The journey's visit was just reported (by this signal, or by the camera report a booking took over).
+    const zone = this.channels.perception?.payload.zone;
+    if (zone?.visit_id && zone.visit_id === this.journey.visit_id) this.presence = { visit_id: zone.visit_id, at: this.channels.perception.receivedAt };
     let changed = channel === 'booking' || before !== this.decisionKey();
     if (channel === 'booking') this.localNext = normalized.request.active !== true || normalized.request.intent !== 'BOARDING';
     if (changed && channel === 'perception') {

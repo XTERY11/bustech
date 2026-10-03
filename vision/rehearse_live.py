@@ -14,7 +14,9 @@ bookings, so point it at a hub nobody is presenting from:
     cd vision && .venv/bin/python rehearse_live.py --bridge-url http://127.0.0.1:8887
     .venv/bin/python rehearse_live.py --bridge-url ... --only already_in_region walked_off_sideways
 
-Waits are real (bus arrival 10 s, empty region 2 s); the whole run takes about 3 minutes.
+Waits are real (bus arrival 10 s, empty region 2 s, lost presence 8 s); the whole run takes about 4-5 minutes. The
+5-minute booking TTL (frozen while a matched passenger is at the stop) is covered by the hub's unit tests with an
+injected clock, not here.
 """
 from __future__ import annotations
 
@@ -34,6 +36,8 @@ from yolo_bridge import perception_payload
 
 HEARTBEAT, EXIT_SECONDS, MIN_DWELL = 2.0, 2.0, 2.0  # yolo_bridge.py defaults
 ARRIVAL = 10.0                                     # journey.mjs ARRIVAL_MS
+PRESENCE_LOST = 8.0                                # hub.mjs PRESENCE_LOST_MS
+BOARDING = {'STROLLER': 22.0}                      # journey.mjs STROLLER_BOARDING_MS; others BOARDING_MS 16 s
 
 
 def booking(need):
@@ -296,14 +300,18 @@ class Rehearsal:
         self.booked('not_boarding')
 
     def back_during_pending_exit(self):
-        """Left towards the bus before it arrived, then came back into the region before the 10 s were over."""
+        """Left towards the bus before it arrived, came back before the 10 s were over: waits again; the next exit boards."""
         self.book('CANE'); self.ready()
-        self.camera.enter('CANE'); self.at_stop(); time.sleep(2.2); self.camera.leave()
+        self.camera.enter('CANE'); self.at_stop(); arrived = time.monotonic() + ARRIVAL
+        time.sleep(2.2); self.camera.leave()
         self.expect('pending_exit', lambda r, _: r['pending_exit'] is True)
         self.camera.enter('CANE')
-        # Product decision (see report): today the re-entry is ignored and the journey boards anyway.
-        self.boarded()
+        self.expect('the re-entry cancels the held exit', lambda r, _: r['stage'] == 'AT_STOP' and r['matched'] and r['pending_exit'] is False
+                    and r['visit'] == self.camera.visit)
+        self.hold('back at the stop: no boarding when the bus is ready', lambda r, _: r['stage'] == 'AT_STOP', arrived + 1.5 - time.monotonic())
+        self.expect('"Ready to board"', lambda r, _: r['phase'] == 'BOARD_BUS')
         self.camera.leave()
+        self.boarded(timeout=3, seat_type='SEAT')
 
     def low_confidence(self):
         """The aid is first seen below the hub's 0.75 gate; a better view later in the same visit matches."""
@@ -326,15 +334,48 @@ class Rehearsal:
         self.boarded()
 
     def lost_exit(self):
-        """The bridge restarts after the passenger has left, so no exit ever comes; the next visit takes over."""
+        """The bridge restarts before the bus was ready, so no exit comes: after 8 s without news, wait again in BOOKED."""
         self.book('WHEELCHAIR'); self.ready()
         self.camera.enter('WHEELCHAIR'); self.at_stop(); time.sleep(1)
         self.camera.restart(startup=0.5)
-        # Product decision (see report): without heartbeats the journey stays AT_STOP (until the next visit or the
-        # 5 min booking TTL); the bus is shown as arrived and waiting.
-        self.hold('no heartbeats: still AT_STOP', lambda r, _: r['stage'] == 'AT_STOP', 5)
+        self.hold('no heartbeats for a while: still AT_STOP', lambda r, _: r['stage'] == 'AT_STOP', 5)
+        self.booked('presence_lost', timeout=PRESENCE_LOST)
         self.camera.enter('WHEELCHAIR'); self.at_stop(); time.sleep(2.5); self.camera.leave()
         self.boarded()
+
+    def lost_exit_after_ready(self):
+        """Told "Ready to board", then the bridge stops reporting (its exit is lost): taken as boarded after 8 s."""
+        self.book('STROLLER'); self.ready()
+        self.camera.enter('STROLLER'); self.at_stop()
+        self.expect('"Ready to board"', lambda r, _: r['phase'] == 'BOARD_BUS', ARRIVAL + 2)
+        self.camera.restart(startup=0.5)
+        self.hold('no heartbeats for a while: still AT_STOP', lambda r, _: r['stage'] == 'AT_STOP', 5)
+        self.boarded(timeout=PRESENCE_LOST, seat_type='SEAT')
+
+    def sequence(self):
+        """Wheelchair, stroller, cane, wheelchair back to back on one hub; each booking during the last boarding animation."""
+        previous, boarded_at = None, None
+        for need, stay, seat_type in (('WHEELCHAIR', ARRIVAL + 0.5, 'WHEELCHAIR_BAY'), ('STROLLER', 3, 'SEAT'),
+                                      ('CANE', ARRIVAL + 0.5, 'SEAT'), ('WHEELCHAIR', 3, 'WHEELCHAIR_BAY')):
+            self.book(need)
+            self.expect('the booking replaced the previous journey', lambda r, s: (s.get('journey') or {}).get('journey_id') != (previous or {}).get('journey_id'))
+            snapshot = self.ready()
+            j = snapshot['journey']
+            if previous:
+                running = time.monotonic() - boarded_at
+                assert running < BOARDING.get(previous['need'], 16.0), f'the previous boarding animation was over ({running:.1f} s)'
+                self.timeline.say(f'ok     booked {running:.1f} s into the previous {previous["need"]} boarding animation')
+            fresh = (j['stage'] == 'BOOKED' and j['need'] == need and j['journey_id'] != (previous or {}).get('journey_id')
+                     and not j['completed'] and not j['pending_exit'] and j['animation'] is None and j['visit_id'] is None
+                     and bool(j['equipment_target']) == (need == 'STROLLER') and j['boarding_target']['type'] == seat_type)
+            assert fresh, f'not a fresh journey: {j}'
+            self.timeline.say(f'ok     fresh {need} journey on a fresh bus: target {j["boarding_target"]["id"]}')
+            self.camera.enter(need); self.at_stop()
+            time.sleep(stay); self.camera.leave()
+            if stay < ARRIVAL:
+                self.expect('pending_exit while the bus is still arriving', lambda r, _: r['pending_exit'] is True)
+            previous = self.boarded(seat_type=seat_type)['journey']
+            boarded_at = time.monotonic()
 
     def camera_clock_skew(self):
         """Camera clock 6 s ahead of the hub: rejected, but must not block the queue; 3 s ahead works."""
@@ -355,7 +396,7 @@ class Rehearsal:
 
     SCENARIOS = ['baseline', 'already_in_region', 'booked_while_leaving', 'occupied_by_other_aid', 'handover_in_one_visit', 'passers_by',
                  'walked_off_sideways', 'too_short_stay', 'back_during_pending_exit', 'low_confidence',
-                 'bridge_restart_mid_visit', 'lost_exit', 'camera_clock_skew']
+                 'bridge_restart_mid_visit', 'lost_exit', 'lost_exit_after_ready', 'camera_clock_skew', 'sequence']
 
     def reset(self):
         """No booking and an empty region before each scenario."""

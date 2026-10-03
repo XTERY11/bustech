@@ -26,7 +26,15 @@ export function advance(journey, channel, payload, _planStatus, { eventId, now =
   const labels = payload?.target_match_confirmed === true ? [...new Set((payload.yolo_detections ?? [])
     .filter(d => d.confidence >= 0.75 && !['NONE', 'UNKNOWN'].includes(d.label)).map(d => d.label))].sort() : [];
   if (zone.triggered === true && (!zone.event || ['enter', 'present'].includes(zone.event))) {
-    if (next.pending_exit) return journey;
+    if (next.pending_exit) {
+      // Came back into the region before the held exit boarded: cancel it and wait at the stop again (the arrival
+      // animation keeps running); the next proper exit boards. Anybody else entering leaves the held exit alone.
+      if (!matches(next.need, labels)) return journey;
+      next.pending_exit = false; next.labels = labels; next.matched = true; next.reason = 'entered';
+      next.visit_id = zone.visit_id ?? next.visit_id ?? null;
+      next.roi_id = zone.roi_id ?? next.roi_id ?? null;
+      return next;
+    }
     if (next.visit_id && zone.visit_id && next.visit_id !== zone.visit_id && zone.event !== 'enter') return journey;
     if (zone.event === 'enter' && zone.visit_id && next.visit_id !== zone.visit_id) next.animation = null;
     next.stage = 'AT_STOP'; next.labels = labels; next.matched = matches(next.need, labels);
@@ -47,6 +55,18 @@ export function advance(journey, channel, payload, _planStatus, { eventId, now =
     }
   }
   return next;
+}
+
+/**
+ * The camera stopped reporting the visit the journey waits on (no exit: the bridge stopped or restarted after the
+ * passenger left). One passenger at a time, and the demo must never stick: if the passenger matched and had been
+ * told "Ready to board" (arrival preparation complete) by the time presence was lost, take it as having left to
+ * board (the exit becomes pending and reconcile boards); otherwise wait for the passenger again in BOOKED.
+ */
+export function presenceLost(journey, lostAt) {
+  const prepared = journey.matched && journey.animation?.phase === 'arrival' && lostAt >= journey.animation.started_at + ARRIVAL_MS;
+  if (prepared) return { ...journey, pending_exit: true, reason: 'presence_lost' };
+  return { ...journey, stage: 'BOOKED', labels: [], matched: false, visit_id: null, animation: null, reason: 'presence_lost' };
 }
 
 /** The initial LLM result can arrive after either CV event. Never lose that pending exit. */

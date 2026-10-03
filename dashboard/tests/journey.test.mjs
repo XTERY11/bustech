@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { advance, reconcile, matches, ARRIVAL_MS, STROLLER_BOARDING_MS } from '../backend/journey.mjs';
-import { SignalHub, PRESENCE_MS } from '../backend/hub.mjs';
+import { SignalHub, PRESENCE_MS, PRESENCE_LOST_MS, BOOKING_TTL_MS } from '../backend/hub.mjs';
 import { plan } from '../backend/planner/agent.mjs';
 
 const booking = (need = 'WHEELCHAIR') => ({ active: true, intent: 'BOARDING', route_id: 'DEMO_ROUTE', stop_id: 'DEMO_STOP', accessibility_need: need,
   ramp_preference: need === 'WHEELCHAIR' ? 'REQUESTED' : 'UNSPECIFIED', assistance_requested: need === 'WHEELCHAIR' ? ['WHEELCHAIR_RAMP'] : ['ADDITIONAL_BOARDING_TIME'], preferred_interaction: 'BOTH', language: 'en-SG' });
 const enter = (label = 'WHEELCHAIR', visit = 'visit-1') => ({ yolo_detections: [{ label, confidence: 0.95 }], target_match_confirmed: true, zone: { triggered: true, roi_id: 'stop', event: 'enter', ...(visit ? { visit_id: visit } : {}) } });
 const exit = (label = 'WHEELCHAIR', visit = 'visit-1') => ({ yolo_detections: [], target_match_confirmed: false, zone: { triggered: false, roi_id: 'stop', event: 'exit', left: [label], ...(visit ? { visit_id: visit } : {}) } });
+const present = (label = 'WHEELCHAIR', visit = 'visit-1') => ({ ...enter(label, visit), zone: { ...enter(label, visit).zone, event: 'present' } });
 const ready = { plan_status: 'READY', boarding_target: { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' } };
 
 function harness(t, customPlanner) {
@@ -205,7 +206,8 @@ test('same-ID retries are idempotent; a new booking ID deliberately starts a fre
 
 test('after a completed journey the next booking is met by a fresh simulated bus with the bay free again', async t => {
   const h = harness(t); h.send('booking', booking()); await h.hub.run();
-  h.send('perception', enter()); h.add(ARRIVAL_MS); h.send('perception', exit());
+  // The passenger waits for the bus (the bridge's heartbeats keep the visit present), then leaves.
+  h.send('perception', enter()); h.add(ARRIVAL_MS / 2); h.send('perception', present()); h.add(ARRIVAL_MS / 2); h.send('perception', exit());
   assert.equal(h.hub.cabin.wheelchair_bay_occupied, true);
   h.send('booking', booking()); await h.hub.run();
   assert.equal(h.hub.result.plan_status, 'READY'); assert.equal(h.hub.result.boarding_target.id, 'WHEELCHAIR_BAY');
@@ -307,4 +309,175 @@ test('cancellation in the safety-revalidation microtask cannot publish an old RE
   assert.equal((await h.hub.run()).discarded, true);
   assert.equal(h.hub.result, null); assert.equal(h.hub.snapshot().journey.stage, 'IDLE');
   assert.equal(h.events.filter(e => e.type === 'result').length, 0);
+});
+
+// --- Continuous one-at-a-time runs: coming back, lost exit, TTL at the stop, sequential bookings ---------------------
+
+test('coming back during pending_exit cancels the held exit; the next proper exit boards', async t => {
+  const h = harness(t); h.send('booking', booking()); await h.hub.run();
+  h.send('perception', enter()); const animation = h.hub.snapshot().journey.animation;
+  h.add(2000); h.send('perception', exit());
+  assert.equal(h.hub.snapshot().journey.pending_exit, true);
+  h.send('perception', enter('STROLLER', 'visit-x'));
+  assert.equal(h.hub.snapshot().journey.pending_exit, true, 'somebody else entering leaves the held exit alone');
+  h.send('perception', exit('STROLLER', 'visit-x'));
+  h.add(1000); h.send('perception', enter('WHEELCHAIR', 'visit-2'));
+  let j = h.hub.snapshot().journey;
+  assert.deepEqual([j.stage, j.pending_exit, j.matched, j.visit_id], ['AT_STOP', false, true, 'visit-2']);
+  assert.deepEqual(j.animation, animation, 'the arrival animation is not restarted');
+  h.add(7000); h.send('perception', present('WHEELCHAIR', 'visit-2'));
+  j = h.hub.snapshot().journey;
+  assert.equal(j.stage, 'AT_STOP', 'arrival finished but the passenger is back at the stop: no boarding');
+  assert.equal(h.hub.snapshot().navigation.phase, 'BOARD_BUS');
+  h.add(2000); h.send('perception', exit('WHEELCHAIR', 'visit-2'));
+  assert.deepEqual([h.hub.snapshot().journey.stage, h.hub.snapshot().journey.completed], ['ON_BOARD', true]);
+  // Pure state machine: a re-entry on the same visit (a present) also cancels; an unconfirmed label does not.
+  const b = advance({ stage: 'IDLE' }, 'booking', booking(), null, { eventId: 'b' });
+  const held = advance(advance(b, 'perception', enter()), 'perception', exit());
+  assert.equal(advance(held, 'perception', present()).pending_exit, false);
+  assert.equal(advance(held, 'perception', { ...enter('WHEELCHAIR', 'visit-3'), target_match_confirmed: false }), held);
+});
+
+test('lost exit: a matched passenger told "Ready to board" whose visit is no longer reported is taken as boarded', async t => {
+  const h = harness(t); h.send('booking', booking('STROLLER')); await h.hub.run();
+  h.send('perception', enter('STROLLER'));
+  for (let at = 2000; at <= ARRIVAL_MS; at += 2000) { h.add(2000); h.send('perception', present('STROLLER')); }
+  assert.match(h.hub.snapshot().journey.guidance.title, /Ready to board/);
+  h.add(PRESENCE_LOST_MS - 1);
+  assert.equal(h.hub.snapshot().journey.stage, 'AT_STOP', 'one more heartbeat could still come');
+  h.add(1);
+  const s = h.hub.snapshot();
+  assert.deepEqual([s.journey.stage, s.journey.completed, s.journey.pending_exit, s.navigation.phase], ['ON_BOARD', true, false, 'TO_SEAT']);
+  assert.equal(s.journey.animation.duration_ms, STROLLER_BOARDING_MS);
+  assert.equal(h.hub.cabin.wheelchair_bay_occupied, true);
+  assert.ok(h.events.some(e => e.type === 'snapshot' && e.data.journey?.stage === 'ON_BOARD'), 'the transition is published');
+});
+
+test('lost exit before the bus was ready, or of an unmatched aid, waits for the passenger again in BOOKED', async t => {
+  const h = harness(t); h.send('booking', booking()); await h.hub.run();
+  h.send('perception', enter()); h.add(1000); h.send('perception', present());
+  h.add(PRESENCE_LOST_MS); // lost 9 s after the enter, before the 10 s arrival preparation was complete
+  let j = h.hub.snapshot().journey;
+  assert.deepEqual([j.stage, j.matched, j.visit_id, j.animation, j.reason, h.hub.snapshot().navigation.phase],
+    ['BOOKED', false, null, null, 'presence_lost', 'TO_STOP']);
+  h.send('perception', enter('STROLLER', 'visit-2'));
+  assert.deepEqual([h.hub.snapshot().journey.stage, h.hub.snapshot().journey.matched], ['AT_STOP', false]);
+  h.add(PRESENCE_LOST_MS); assert.equal(h.hub.snapshot().journey.stage, 'BOOKED');
+  // The passenger comes back and boards normally.
+  h.send('perception', enter('WHEELCHAIR', 'visit-3')); h.send('perception', exit('WHEELCHAIR', 'visit-3')); h.add(ARRIVAL_MS);
+  assert.equal(h.hub.snapshot().journey.stage, 'ON_BOARD');
+});
+
+test('no bridge, a manual enter without visit_id, and a held exit are not timed out by presence', async t => {
+  const h = harness(t); h.send('booking', booking()); await h.hub.run();
+  h.add(60000); assert.equal(h.hub.snapshot().journey.stage, 'BOOKED', 'bookings only: nothing changes');
+  h.send('perception', enter('WHEELCHAIR', null)); h.add(30000);
+  assert.equal(h.hub.snapshot().journey.stage, 'AT_STOP', 'manual curl signals send no heartbeats');
+  h.send('perception', exit('WHEELCHAIR', null)); assert.equal(h.hub.snapshot().journey.stage, 'ON_BOARD');
+  const p = harness(t); p.send('booking', booking()); await p.hub.run();
+  p.send('perception', enter()); p.add(1000); p.send('perception', exit());
+  p.add(PRESENCE_LOST_MS);
+  assert.deepEqual([p.hub.snapshot().journey.stage, p.hub.snapshot().journey.pending_exit], ['AT_STOP', true], 'a held exit is not a lost visit');
+  p.add(ARRIVAL_MS); assert.equal(p.hub.snapshot().journey.stage, 'ON_BOARD');
+});
+
+test('TTL is frozen while a matched passenger waits at the stop and counts from the booking once back in BOOKED', async t => {
+  const h = harness(t); h.send('booking', booking()); await h.hub.run();
+  h.send('perception', enter());
+  for (let at = 0; at < BOOKING_TTL_MS + 20000; at += 2000) { h.add(2000); h.send('perception', present()); }
+  let j = h.hub.snapshot().journey;
+  assert.deepEqual([j.stage, j.matched, j.reason], ['AT_STOP', true, 'entered']);
+  h.send('perception', { ...exit(), zone: { ...exit().zone, boarding: false } });
+  j = h.hub.snapshot().journey;
+  assert.deepEqual([j.stage, j.reason], ['IDLE', 'expired']);
+  // A held exit is matched too: it still boards after a long wait.
+  const p = harness(t); p.send('booking', booking()); await p.hub.run();
+  p.send('perception', enter());
+  for (let at = 0; at < BOOKING_TTL_MS; at += 2000) { p.add(2000); p.send('perception', present()); }
+  p.send('perception', exit()); assert.equal(p.hub.snapshot().journey.stage, 'ON_BOARD');
+  // An unmatched aid at the stop does not hold the booking.
+  const u = harness(t); u.send('booking', booking()); await u.hub.run();
+  u.send('perception', enter('STROLLER'));
+  for (let at = 0; at < BOOKING_TTL_MS; at += 2000) { u.add(2000); u.send('perception', present('STROLLER')); }
+  assert.equal(u.hub.snapshot().journey.reason, 'expired');
+});
+
+test('sequential passengers: each booking starts a fresh journey at once, even during the previous boarding animation', async t => {
+  const h = harness(t);
+  const ride = async (need, id) => {
+    h.send('booking', booking(need), id);
+    const fresh = h.hub.snapshot().journey;
+    assert.deepEqual([fresh.stage, fresh.journey_id, fresh.need, fresh.completed, fresh.pending_exit, fresh.animation, fresh.visit_id, fresh.seat, fresh.boarding_target, fresh.equipment_target],
+      ['BOOKED', id, need, false, false, null, null, null, null, null], `${id} starts clean`);
+    assert.equal(h.hub.snapshot().navigation, null, 'no navigation left over from the previous passenger');
+    assert.equal(h.hub.cabin.wheelchair_bay_occupied, false); assert.deepEqual(h.hub.cabin.occupied_seat_ids, structuredClone(h.hub.context().vehicle_context.cabin.occupied_seat_ids));
+    await h.hub.run();
+    assert.equal(h.hub.result.plan_status, 'READY', `${id}: a fresh simulated bus has room`);
+    h.send('perception', enter(need, `${id}-v`)); h.add(3000); h.send('perception', exit(need, `${id}-v`));
+    h.add(ARRIVAL_MS);
+    const s = h.hub.snapshot();
+    assert.deepEqual([s.journey.stage, s.journey.completed, s.journey.animation.phase], ['ON_BOARD', true, 'boarding']);
+    assert.equal(Boolean(s.journey.equipment_target), need === 'STROLLER');
+    h.add(1000); // the next booking arrives while the boarding animation (16/22 s) is still playing
+  };
+  await ride('WHEELCHAIR', 'b-1'); await ride('STROLLER', 'b-2'); await ride('CANE', 'b-3'); await ride('WHEELCHAIR', 'b-4');
+  assert.equal(h.calls(), 4);
+});
+
+test('a new booking replaces a journey stuck anywhere; old timers cannot complete the new one', async t => {
+  const stuck = {
+    booked: () => {},
+    unmatched: h => h.send('perception', enter('STROLLER', 'v-old')),
+    matched: h => h.send('perception', enter('WHEELCHAIR', 'v-old')),
+    pending_exit: h => { h.send('perception', enter('WHEELCHAIR', 'v-old')); h.send('perception', exit('WHEELCHAIR', 'v-old')); },
+  };
+  for (const [name, put] of Object.entries(stuck)) {
+    const h = harness(t); h.send('booking', booking(), 'old'); await h.hub.run(); put(h);
+    h.add(PRESENCE_MS + 1); h.send('booking', booking('CANE'), 'new'); // (a recent occupant is taken over: see below)
+    let j = h.hub.snapshot().journey;
+    assert.deepEqual([j.stage, j.journey_id, j.pending_exit, j.visit_id, j.animation], ['BOOKED', 'new', false, null, null], name);
+    await h.hub.run(); h.add(ARRIVAL_MS); h.add(PRESENCE_LOST_MS);
+    assert.equal(h.hub.snapshot().journey.stage, 'BOOKED', `${name}: nothing of the old journey fires into the new one`);
+    // The old visit's late exit does not touch the new journey either.
+    h.send('perception', exit('WHEELCHAIR', 'v-old'));
+    assert.equal(h.hub.snapshot().journey.stage, 'BOOKED');
+    h.send('perception', enter('CANE', 'v-new')); h.send('perception', exit('CANE', 'v-new')); h.add(ARRIVAL_MS);
+    assert.equal(h.hub.snapshot().journey.stage, 'ON_BOARD', `${name}: the new passenger boards`);
+  }
+});
+
+test('the previous passenger still in the region: another aid stays unmatched, the same aid is taken over', async t => {
+  const h = harness(t); h.send('booking', booking()); await h.hub.run();
+  h.send('perception', enter()); h.add(3000); h.send('perception', exit()); h.add(ARRIVAL_MS);
+  assert.equal(h.hub.snapshot().journey.stage, 'ON_BOARD');
+  h.send('perception', enter('WHEELCHAIR', 'back')); // walked back into the region after boarding
+  h.send('booking', booking('STROLLER'), 'stroller');
+  let j = h.hub.snapshot().journey;
+  assert.deepEqual([j.stage, j.matched, j.animation], ['AT_STOP', false, null], 'shown as waiting, the bus does not come');
+  h.send('perception', exit('WHEELCHAIR', 'back'));
+  assert.equal(h.hub.snapshot().journey.stage, 'BOOKED');
+  // Two wheelchair users in a row: a matching occupant is taken over as the new passenger's arrival (one at a time:
+  // the operator books the next passenger once the previous one has left the region).
+  h.send('perception', enter('WHEELCHAIR', 'back-2')); h.send('booking', booking(), 'wheelchair-2'); await h.hub.run();
+  j = h.hub.snapshot().journey;
+  assert.deepEqual([j.stage, j.matched, j.visit_id, j.animation?.phase], ['AT_STOP', true, 'back-2', 'arrival']);
+});
+
+test('cancel from any stage returns to IDLE and the next booking works on a fresh bus', async t => {
+  const stages = {
+    BOOKED: () => {},
+    AT_STOP: h => h.send('perception', enter()),
+    pending_exit: h => { h.send('perception', enter()); h.send('perception', exit()); },
+    ON_BOARD: h => { h.send('perception', enter()); h.send('perception', exit()); h.add(ARRIVAL_MS); },
+  };
+  for (const [name, put] of Object.entries(stages)) {
+    const h = harness(t); h.send('booking', booking(), 'first'); await h.hub.run(); put(h);
+    h.send('booking', { active: false });
+    assert.deepEqual([h.hub.snapshot().journey.stage, h.hub.snapshot().navigation], ['IDLE', null], name);
+    h.add(ARRIVAL_MS + PRESENCE_LOST_MS); assert.equal(h.hub.snapshot().journey.stage, 'IDLE');
+    h.send('booking', booking(), 'second'); await h.hub.run();
+    assert.equal(h.hub.result.boarding_target?.id, 'WHEELCHAIR_BAY', `${name}: the bay is free for the next wheelchair`);
+    h.send('perception', enter('WHEELCHAIR', 'v-2')); h.send('perception', exit('WHEELCHAIR', 'v-2')); h.add(ARRIVAL_MS);
+    assert.equal(h.hub.snapshot().journey.stage, 'ON_BOARD', name);
+  }
 });
