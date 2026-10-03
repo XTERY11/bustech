@@ -35,10 +35,13 @@ export function advance(journey, channel, payload, _planStatus, { eventId, now =
     if (next.visit_id && zone.visit_id !== next.visit_id) return journey;
     if (next.roi_id && zone.roi_id !== next.roi_id) return journey;
     const left = zone.left ?? [];
-    if (next.matched && matches(next.need, left) && left.some(label => next.labels.includes(label))) {
+    // zone.boarding === false: the bridge judged that the passenger did not leave towards the bus (a short
+    // stay, or walked off another way), so we wait for them again. true or absent behaves as before.
+    if (next.matched && zone.boarding !== false && matches(next.need, left) && left.some(label => next.labels.includes(label))) {
       next.pending_exit = true; next.reason = 'left_stop';
     } else {
       next.stage = 'BOOKED'; next.labels = []; next.matched = false; next.visit_id = null; next.animation = null;
+      if (zone.boarding === false) next.reason = 'not_boarding';
     }
   }
   return next;

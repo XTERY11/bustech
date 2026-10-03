@@ -108,6 +108,8 @@ CV reports observations; it does not read bookings or authorize vehicle movement
 
 The optional `zone.visit_id` joins one region activation's `enter`, `present` and `exit`. The bridge generates a 12-character UUID for each activation. It identifies a visit, not a person. Keep the ID unchanged when retrying or sending heartbeats for that visit. Older senders can retain their existing ROI and event metadata.
 
+On `exit` the bridge may add `zone.boarding` (boolean, its estimate of boarding intent) and `zone.dwell_seconds` (how long the region was occupied). `boarding: false` (a short stay, or the passenger walked off another way) is not boarding: the journey returns to `BOOKED` with `reason: 'not_boarding'` and waits for the passenger again. `true` or an absent field keeps the behaviour above.
+
 ### Validated destinations
 
 The 18-action contract adds `GUIDE_PASSENGER_TO_ASSIGNED_PLACE` between boarding confirmation and seated/belted confirmation. The server supplies its `{target_type, target_id}` parameters. `Result.boarding_target` is `null`, `{type:'SEAT',id:'S01'…'S16'}` or `{type:'WHEELCHAIR_BAY',id:'WHEELCHAIR_BAY'}`.

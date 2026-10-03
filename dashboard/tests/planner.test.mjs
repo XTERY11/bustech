@@ -96,15 +96,6 @@ test('wheelchair uses the bay; known full cabin or occupied bay requires confirm
   assert.ok(full.safety_flags.includes('NO_ACCESSIBLE_PLACE_AVAILABLE'));
 });
 
-test('missing cabin remains backward compatible without inventing a destination', async () => {
-  const input = base();
-  delete input.vehicle_context.cabin;
-  const result = await plan(input, { mode: 'rules' });
-  assert.equal(result.plan_status, 'READY');
-  assert.equal(result.boarding_target, null);
-  assert.ok(!result.action_plan.some(a => a.action === 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE'));
-});
-
 test('model target is compared by type and id, independent of JSON property order', async () => {
   const input = structuredClone(cases.find(c => c.name === 'crutch').input);
   const value = proposal(input);

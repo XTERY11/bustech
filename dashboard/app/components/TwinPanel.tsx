@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Context, Journey, Result } from '../live-types';
 import { actionLabel } from '../lib/actionLabels';
-import { buildScenario, cabinSeatOccupancy, playScenario, IDLE_FRAME, type ScenarioStep } from '../lib/twinScenario';
+import { boardingScenario, buildScenario, cabinSeatOccupancy, playScenario, IDLE_FRAME, type ScenarioStep } from '../lib/twinScenario';
 
 /**
  * Embedded bus digital twin. The twin runs in an iframe (public/twin/index.html,
@@ -52,12 +52,22 @@ export function TwinPanel({ result, context, running, journey = null, basePath =
   // BOOKED: the plan exists but the passenger is not at the stop, so the bus waits;
   // AT_STOP: the camera has matched the passenger, so the plan is carried out;
   // ON_BOARD: a matching exit begins a presentation preview; operator confirmation is still required.
+  // "Preview boarding" plays the same boarding guidance on demand for decoupled demos (presets, or a READY
+  // plan without a camera exit). It is local to this viewer and never changes the hub's journey; it ends
+  // as soon as the plan, the journey stage or the hub's animation changes.
   const stage = journey?.stage ?? null;
   const boarded = stage === 'ON_BOARD';
+  const previewAnchor = JSON.stringify([result?.request_id ?? '', stage, journey?.journey_id ?? '', journey?.animation?.id ?? '', running]);
+  const [preview, setPreview] = useState<string | null>(null);
+  const previewing = !boarded && preview === previewAnchor;
+  const previewTarget = journey?.boarding_target ?? result?.boarding_target;
+  const canPreview = !boarded && !running && result?.plan_status === 'READY' && Boolean(previewTarget);
+  const boardingPose = boarded || previewing;
   const steps = useMemo(() => {
+    if (previewing) return boardingScenario(result, context, journey && { ...journey, animation: null });
     return buildScenario(result, context, running, journey);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the keys capture every input that changes the timeline
-  }, [key]);
+  }, [key, previewing]);
   const route = String(context.request?.route_id ?? context.vehicle_context?.route_id ?? 'DEMO_ROUTE');
 
   useEffect(() => {
@@ -76,7 +86,7 @@ export function TwinPanel({ result, context, running, journey = null, basePath =
   const send = (message: Record<string, unknown>) => frame.current?.contentWindow?.postMessage(message, '*');
   useEffect(() => {
     if (!ready) return;
-    if (!boarded) {
+    if (!boardingPose) {
       send({ type: 'twin:telemetry', frame: IDLE_FRAME });
       send({ type: 'twin:camera', preset: 'overview' });
     } else {
@@ -88,7 +98,7 @@ export function TwinPanel({ result, context, running, journey = null, basePath =
     const replay = playedNonce.current !== playbackNonce;
     playedNonce.current = playbackNonce;
     const animation = currentJourney.current?.animation;
-    const elapsed = !replay && animation ? Math.max(0, Date.now() - animation.started_at) : 0;
+    const elapsed = !replay && !previewing && animation ? Math.max(0, Date.now() - animation.started_at) : 0;
     const reset = window.setTimeout(() => setStep(null), 0);
     const stop = playScenario(steps, (f, s) => {
       send({ type: 'twin:telemetry', frame: f });
@@ -96,7 +106,7 @@ export function TwinPanel({ result, context, running, journey = null, basePath =
       setStep(s);
     }, elapsed);
     return () => { window.clearTimeout(reset); stop(); };
-  }, [ready, steps, playbackNonce, iframeEpoch, boarded]);
+  }, [ready, steps, playbackNonce, iframeEpoch, boardingPose, previewing]);
 
   const guidanceTitle = journey?.guidance.title;
   const guidanceText = journey?.guidance.display_text;
@@ -118,7 +128,7 @@ export function TwinPanel({ result, context, running, journey = null, basePath =
   const visibleActions = activeAction && !firstActions.some(item => item.step === activeAction.step)
     ? [...firstActions.slice(0, 3), activeAction]
     : firstActions;
-  const statusLabel = boarded ? (step ? step.label : 'Passenger boarding')
+  const statusLabel = boardingPose ? (step ? step.label : 'Passenger boarding')
     : stage === 'BOOKED' && result?.plan_status === 'READY' ? 'Plan ready · waiting for the passenger at the stop'
     : result?.plan_status === 'NEEDS_CONFIRMATION'
     ? 'Safety hold · bus remains stationary'
@@ -150,6 +160,10 @@ export function TwinPanel({ result, context, running, journey = null, basePath =
       <span className="stageFooterStatus"><strong>{statusLabel}</strong>{activeAction && <small>Now: {actionLabel(activeAction.action)}</small>}</span>
       <span className="stageFooterControls">
         <span className="stageMeta">{steps.length ? `${done}/${steps.length} steps` : 'Simulated actions'}</span>
+        {!boarded && <button className="replayAnimation previewBoarding" disabled={!ready || (!previewing && !canPreview)} onClick={() => {
+          setPreview(previewing ? null : previewAnchor);
+          setPlaybackNonce(value => value + 1);
+        }} aria-label={previewing ? 'End the boarding preview' : 'Preview passenger boarding and cabin guidance'}>{previewing ? '■ End preview' : '▶ Preview boarding'}</button>}
         <button className="replayAnimation" disabled={!result || running || !steps.length} onClick={() => {
           setPlaybackNonce(value => value + 1);
         }} aria-label="Replay validated bus animation">↻ Replay</button>
