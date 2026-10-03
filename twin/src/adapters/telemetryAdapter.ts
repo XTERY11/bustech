@@ -4,6 +4,7 @@ import type {
   DoorState,
   FixedSeatId,
   PassengerAid,
+  PassengerDestination,
   PassengerJourney,
   PassengerJourneyStage,
   RampState,
@@ -54,6 +55,7 @@ const BOARDING: BoardingStatus[] = ['idle', 'request_received', 'preparing', 're
 const PASSENGER_AIDS = new Set<PassengerAid>(['wheelchair', 'cane', 'crutch', 'walker', 'stroller', 'visual', 'hearing', 'none']);
 const PASSENGER_STAGES = new Set<PassengerJourneyStage>(['hidden', 'waiting', 'boarding', 'navigating', 'seated', 'secured']);
 const FIXED_SEATS = new Set(SEATS.filter((seat) => seat.kind !== 'foldable').map((seat) => seat.id));
+const STROLLER_SEATS = new Set(['S02', 'S03', 'S05', 'S06', 'S08', 'S09']);
 const JOURNEY_ID = /^[A-Za-z0-9_.:-]{1,200}$/;
 
 /** Invalid arrival frames leave the preceding pose intact. */
@@ -82,6 +84,16 @@ export function normalizePassengerJourney(value: unknown): PassengerJourney | nu
   if (destination.type === 'SEAT' && !FIXED_SEATS.has(destination.id)) return undefined;
   if (destination.type === 'WHEELCHAIR_BAY' && destination.id !== 'WHEELCHAIR_BAY') return undefined;
   if (raw.progress !== undefined && (typeof raw.progress !== 'number' || !Number.isFinite(raw.progress) || raw.progress < 0 || raw.progress > 1)) return undefined;
+  let equipmentDestination: PassengerDestination | null | undefined;
+  if (raw.equipmentDestination === null) equipmentDestination = null;
+  else if (raw.equipmentDestination !== undefined) {
+    const equipment = raw.equipmentDestination;
+    if (raw.aid !== 'stroller' || destination.type !== 'SEAT' || !STROLLER_SEATS.has(destination.id)
+      || !equipment || typeof equipment !== 'object' || Array.isArray(equipment)) return undefined;
+    const target = equipment as Record<string, unknown>;
+    if (target.type !== 'WHEELCHAIR_BAY' || target.id !== 'WHEELCHAIR_BAY') return undefined;
+    equipmentDestination = { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' };
+  }
 
   return {
     journeyId: raw.journeyId,
@@ -91,6 +103,7 @@ export function normalizePassengerJourney(value: unknown): PassengerJourney | nu
       ? { type: 'SEAT', id: destination.id as FixedSeatId }
       : { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' },
     ...(typeof raw.progress === 'number' ? { progress: raw.progress } : {}),
+    ...(equipmentDestination !== undefined ? { equipmentDestination } : {}),
   };
 }
 

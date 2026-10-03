@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { plan, revalidateForSimulation } from '../backend/planner/agent.mjs';
 import { DeepSeekClient, DeepSeekError } from '../backend/planner/deepseek.mjs';
-import { normalizeInput, buildPolicy, ruleProposal, boardingTargetFor } from '../backend/planner/policy.mjs';
+import { normalizeInput, buildPolicy, ruleProposal, boardingTargetFor, equipmentTargetFor, templateNavigationSteps } from '../backend/planner/policy.mjs';
 import { SEAT_IDS } from '../backend/planner/contracts.mjs';
+import { cabinRouteFor } from '../backend/planner/cabinRoute.mjs';
 const cases = JSON.parse(readFileSync(new URL('../backend/examples/demo_cases.json', import.meta.url), 'utf8'));
 const base = () => structuredClone(cases[0].input);
+const stroller = () => structuredClone(cases.find(c => c.name === 'stroller').input);
 const mock = value => ({ model: 'mock', usage: { total_tokens: 10 }, value });
 const proposal = input => ruleProposal(normalizeInput(input), buildPolicy(normalizeInput(input)));
 
@@ -201,7 +203,7 @@ test('all fixtures use the same mixed cabin occupancy as the twin', () => {
 test('trusted cabin destinations are echoed in the result, guidance action and short summary', async () => {
   for (const [name, target] of [['wheelchair_auto', { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' }], ['crutch', { type: 'SEAT', id: 'S03' }]]) {
     const result = await plan(cases.find(c => c.name === name).input, { mode: 'rules' });
-    assert.equal(result.schema_version, '2.2');
+    assert.equal(result.schema_version, '2.3');
     assert.deepEqual(result.boarding_target, target);
     assert.deepEqual(result.action_plan.find(a => a.action === 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE').parameters, { target_type: target.type, target_id: target.id });
     assert.ok(result.decision_summary.length <= 3);
@@ -266,7 +268,7 @@ test('missing cabin and occupied wheelchair bay or foldable seat cannot yield an
   }
 });
 
-test('ramp assistance for a cane or stroller does not assign a wheelchair bay', async () => {
+test('ramp assistance does not send a cane or stroller passenger to the wheelchair bay', async () => {
   for (const need of ['CANE', 'STROLLER']) {
     const input = base();
     input.request.accessibility_need = need;
@@ -274,7 +276,8 @@ test('ramp assistance for a cane or stroller does not assign a wheelchair bay', 
     assert.equal(result.plan_status, 'READY');
     assert.deepEqual(result.boarding_target, { type: 'SEAT', id: 'S03' });
     assert.ok(result.action_plan.some(a => a.action === 'DEPLOY_AUTOMATIC_SHORT_RAMP'));
-    assert.ok(!result.action_plan.some(a => a.action === 'PREPARE_WHEELCHAIR_AREA'));
+    assert.equal(result.action_plan.some(a => a.action === 'PREPARE_WHEELCHAIR_AREA'), need === 'STROLLER', 'Only the stroller needs equipment parking preparation');
+    assert.deepEqual(result.equipment_target, need === 'STROLLER' ? { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' } : null);
   }
 });
 
@@ -353,7 +356,7 @@ test('the model verbalises a trusted route in English for a passenger requesting
   assert.equal(called, 1);
   assert.equal(result.meta.source, 'llm');
   assert.equal(result.meta.validation_passed, true);
-  assert.equal(result.schema_version, '2.2');
+  assert.equal(result.schema_version, '2.3');
   assert.equal(result.cabin_navigation.mode, 'map_based');
   assert.equal(result.cabin_navigation.simulated, true);
   assert.equal(result.cabin_navigation.requires_operator, true);
@@ -423,6 +426,255 @@ test('fresh-state revalidation checks map origin, target, maneuvers, distances a
     r => { r.cabin_navigation.steps.find(step => step.maneuver === 'TURN_RIGHT').maneuver = 'TURN_LEFT'; },
     r => { r.cabin_navigation.steps.find(step => step.maneuver === 'STRAIGHT').distance_m = 12; },
     r => { r.cabin_navigation.steps.find(step => step.maneuver === 'TURN_RIGHT').text = 'Turn left.'; },
+  ]) {
+    const tampered = structuredClone(result); mutate(tampered);
+    assert.equal(revalidateForSimulation(tampered, input).valid, false);
+  }
+});
+
+test('stroller equipment parks in the bay before the passenger walks to the nearby assigned seat', async () => {
+  const input = stroller();
+  const result = await plan(input, { client: { async complete(messages) {
+    const { context, policy } = JSON.parse(messages[1].content);
+    assert.deepEqual(policy.equipment_target, { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' });
+    assert.deepEqual(policy.navigation_route.equipment_target, policy.equipment_target);
+    return mock(ruleProposal(context, policy));
+  } } });
+  assert.equal(result.meta.source, 'llm');
+  assert.equal(result.meta.validation_passed, true);
+  assert.equal(result.schema_version, '2.3');
+  assert.deepEqual(result.boarding_target, { type: 'SEAT', id: 'S03' });
+  assert.deepEqual(result.equipment_target, { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' });
+  assert.deepEqual(result.cabin_navigation.equipment_target, result.equipment_target);
+  assert.equal(result.cabin_navigation.steps.length, 15);
+  const parkedAt = result.cabin_navigation.steps.findIndex(step => step.maneuver === 'PARK_STROLLER');
+  assert.equal(parkedAt, 6);
+  assert.match(result.cabin_navigation.steps[parkedAt].text, /stroller.*wheelchair bay.*operator/i);
+  assert.deepEqual(result.cabin_navigation.steps.slice(parkedAt + 1, parkedAt + 3).map(step => step.maneuver), ['TURN_RIGHT', 'TURN_RIGHT']);
+  assert.match(result.cabin_navigation.steps.at(-1).text, /seat S03.*operator/);
+  assert.equal(result.action_plan.some(action => action.action === 'PREPARE_WHEELCHAIR_AREA'), true);
+  assert.deepEqual(result.action_plan.find(action => action.action === 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE').parameters,
+    { target_type: 'SEAT', target_id: 'S03', equipment_target: { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' } });
+  assert.match(result.passenger_communication.display_text, /Park the stroller in the wheelchair bay.*seat S03/);
+  assert.match(result.decision_summary.join(' '), /stroller.*wheelchair bay.*seat S03/i);
+  assert.ok(result.decision_summary.length <= 3);
+  assert.equal(result.execution_authorized, false);
+  assert.equal(result.boarding_complete, false);
+});
+
+test('stroller bookings prefer S02 and S03, remain stable across reruns, then fall back to verified farther seats', async () => {
+  const input = stroller(), assigned = new Set();
+  input.vehicle_context.cabin.occupied_seat_ids = [];
+  for (let index = 0; index < 24; index++) {
+    input.booking_event_id = `stroller-booking-${index}`;
+    const target = boardingTargetFor(input);
+    assert.ok(['S02', 'S03'].includes(target.id));
+    assigned.add(target.id);
+  }
+  assert.equal(assigned.size, 2);
+  input.booking_event_id = 'stable-stroller-booking';
+  const target = boardingTargetFor(input);
+  for (const mode of ['rules', 'single', 'two_turn']) {
+    input.request_id = `stroller-rerun-${mode}`;
+    const result = await plan(input, { mode, client: { async complete(messages, { phase }) {
+      const { context, policy } = JSON.parse(messages[1].content);
+      return mock(phase === 'summary' ? { request_id: context.request_id, decision_summary: ['A stroller bay and nearby seat are assigned.'] } : ruleProposal(context, policy));
+    } } });
+    assert.equal(result.meta.validation_passed, true);
+    assert.deepEqual(result.boarding_target, target);
+    assert.equal(result.cabin_navigation.steps.length, 15);
+  }
+  delete input.booking_event_id;
+  input.vehicle_context.cabin.occupied_seat_ids = ['S03'];
+  assert.deepEqual(boardingTargetFor(input), { type: 'SEAT', id: 'S02' });
+  input.vehicle_context.cabin.occupied_seat_ids.push('S02');
+  const fallback = await plan(input, { client: { async complete(messages) {
+    const { context, policy } = JSON.parse(messages[1].content);
+    return mock(ruleProposal(context, policy));
+  } } });
+  assert.equal(fallback.plan_status, 'READY');
+  assert.equal(fallback.meta.source, 'llm');
+  assert.deepEqual(fallback.boarding_target, { type: 'SEAT', id: 'S05' });
+  assert.deepEqual(fallback.equipment_target, { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' });
+  assert.match(fallback.decision_summary.join(' '), /nearby seats are occupied.*seat S05/);
+  assert.equal(fallback.cabin_navigation.steps.length, 15);
+  assert.equal(fallback.cabin_navigation.steps[11].distance_m, 1.6);
+  input.vehicle_context.cabin.occupied_seat_ids.push('S05');
+  assert.equal(boardingTargetFor(input).id, 'S06');
+  input.vehicle_context.cabin.occupied_seat_ids.push('S06');
+  assert.equal(boardingTargetFor(input).id, 'S08');
+  input.vehicle_context.cabin.occupied_seat_ids.push('S08');
+  assert.equal(boardingTargetFor(input).id, 'S09');
+  input.vehicle_context.cabin.occupied_seat_ids.push('S09');
+  const full = await plan(input, { client: { complete() { assert.fail('No verified low-floor seat must bypass the cloud'); } } });
+  assert.equal(full.plan_status, 'NEEDS_CONFIRMATION');
+  assert.equal(full.meta.source, 'safety_rules');
+  assert.equal(full.boarding_target, null);
+  assert.equal(full.equipment_target, null);
+  assert.equal(full.cabin_navigation, null);
+  assert.match(full.decision_summary.join(' '), /No suitable unoccupied low-floor seat is available after stroller parking/);
+});
+
+test('farther stroller seats use the closest available column with stable booking-seeded choice and a full parking route', async () => {
+  const input = stroller();
+  input.vehicle_context.cabin.occupied_seat_ids = ['S02', 'S03'];
+  const choices = new Set();
+  for (let index = 0; index < 24; index++) {
+    input.booking_event_id = `far-stroller-${index}`;
+    const target = boardingTargetFor(input);
+    assert.ok(['S05', 'S06'].includes(target.id), 'The middle column takes precedence over the farthest column');
+    choices.add(target.id);
+  }
+  assert.equal(choices.size, 2);
+  input.booking_event_id = 'stable-far-stroller';
+  const target = boardingTargetFor(input);
+  for (const mode of ['rules', 'single', 'two_turn']) {
+    input.request_id = `far-stroller-${mode}`;
+    const result = await plan(input, { mode, client: { async complete(messages, { phase }) {
+      const { context, policy } = JSON.parse(messages[1].content);
+      return mock(phase === 'summary' ? { request_id: context.request_id, decision_summary: ['The stroller parks before walking to the assigned seat.'] } : ruleProposal(context, policy));
+    } } });
+    assert.equal(result.meta.validation_passed, true);
+    assert.equal(result.plan_status, 'READY');
+    assert.deepEqual(result.boarding_target, target);
+    assert.equal(result.cabin_navigation.steps[6].maneuver, 'PARK_STROLLER');
+    assert.equal(result.cabin_navigation.steps[11].distance_m, 1.6);
+    assert.match(result.cabin_navigation.steps.at(-1).text, new RegExp(`seat ${target.id}`));
+    assert.equal(revalidateForSimulation(result, input).valid, true);
+    const changed = structuredClone(input); changed.vehicle_context.cabin.occupied_seat_ids.push(target.id);
+    assert.equal(revalidateForSimulation(result, changed).valid, false);
+  }
+  input.vehicle_context.cabin.occupied_seat_ids.push('S05', 'S06');
+  delete input.booking_event_id;
+  const farthest = await plan(input, { mode: 'rules' });
+  assert.deepEqual(farthest.boarding_target, { type: 'SEAT', id: 'S08' });
+  assert.equal(farthest.cabin_navigation.steps[11].distance_m, 2.3);
+  assert.ok(!farthest.cabin_navigation.steps.slice(7).some(step => /stroller/i.test(step.text)), 'The passenger walks alone after parking');
+});
+
+test('an occupied bay or foldable seat blocks the entire stroller plan even when nearby or farther passenger seats are free', async () => {
+  for (const mutate of [
+    x => { x.vehicle_context.cabin.wheelchair_bay_occupied = true; },
+    x => { x.vehicle_context.cabin.occupied_seat_ids.push('F01'); },
+    x => { delete x.vehicle_context.cabin; },
+  ]) {
+    const input = stroller();
+    input.vehicle_context.cabin.occupied_seat_ids.push('S02', 'S03');
+    mutate(input);
+    assert.equal(boardingTargetFor(input), null);
+    assert.equal(equipmentTargetFor(input), null);
+    const result = await plan(input, { client: { complete() { assert.fail('An unavailable parking area must bypass cloud'); } } });
+    assert.equal(result.plan_status, 'NEEDS_CONFIRMATION');
+    assert.equal(result.boarding_target, null);
+    assert.equal(result.equipment_target, null);
+    assert.equal(result.cabin_navigation, null);
+    assert.ok(!result.action_plan.some(action => action.action === 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE'));
+    assert.ok(!result.action_plan.some(action => action.action === 'DEPLOY_AUTOMATIC_SHORT_RAMP'));
+  }
+});
+
+test('a stroller booking and wheelchair-button request require explicit category confirmation, never a silent bay assignment', async () => {
+  const input = stroller(); input.vehicle_context.wheelchair_button_pressed = true;
+  assert.equal(boardingTargetFor(input), null);
+  assert.equal(equipmentTargetFor(input), null);
+  const result = await plan(input, { client: { async complete(messages) {
+    const { context, policy } = JSON.parse(messages[1].content);
+    return mock(ruleProposal(context, policy));
+  } } });
+  assert.equal(result.plan_status, 'NEEDS_CONFIRMATION');
+  assert.ok(result.safety_flags.includes('CONFLICTING_ASSISTANCE_CATEGORY'));
+  assert.equal(result.boarding_target, null);
+  assert.equal(result.equipment_target, null);
+  assert.equal(result.cabin_navigation, null);
+  assert.ok(!result.action_plan.some(action => ['GUIDE_PASSENGER_TO_ASSIGNED_PLACE', 'DEPLOY_AUTOMATIC_SHORT_RAMP'].includes(action.action)));
+});
+
+test('wheelchair passengers stay with their wheelchair at the bay; other categories have no separate equipment destination', async () => {
+  for (const name of ['wheelchair_auto', 'crutch', 'visual', 'hearing']) {
+    const result = await plan(cases.find(c => c.name === name).input, { mode: 'rules' });
+    assert.equal(result.equipment_target, null);
+    assert.equal(result.cabin_navigation.equipment_target ?? null, null);
+    assert.ok(!result.cabin_navigation.steps.some(step => step.maneuver === 'PARK_STROLLER'));
+    if (name === 'wheelchair_auto') assert.deepEqual(result.boarding_target, { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' });
+  }
+});
+
+test('missing or forged equipment destinations and direct-to-seat model routes fail closed', async () => {
+  const input = stroller();
+  for (const mutate of [
+    p => { delete p.equipment_target; },
+    p => { p.equipment_target = null; },
+    p => { p.equipment_target = { type: 'SEAT', id: 'S02' }; },
+    p => { p.equipment_target = { type: 'WHEELCHAIR_BAY', id: 'OTHER_BAY' }; },
+    p => { p.equipment_target.extra = 'confirmed'; },
+    p => { p.boarding_target = { type: 'SEAT', id: 'S09' }; },
+    p => { p.boarding_target = { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' }; },
+    p => { p.navigation_steps = templateNavigationSteps(cabinRouteFor(p.boarding_target)); },
+  ]) {
+    const bad = proposal(input); mutate(bad);
+    const result = await plan(input, { client: { async complete() { return mock(bad); } } });
+    assert.equal(result.meta.error, 'MODEL_OUTPUT_REJECTED');
+    assert.equal(result.meta.source, 'safe_fallback');
+    assert.equal(result.boarding_target, null);
+    assert.equal(result.equipment_target, null);
+    assert.equal(result.cabin_navigation, null);
+  }
+  const reordered = proposal(input); reordered.equipment_target = { id: 'WHEELCHAIR_BAY', type: 'WHEELCHAIR_BAY' };
+  const result = await plan(input, { client: { async complete() { return mock(reordered); } } });
+  assert.equal(result.meta.validation_passed, true, 'Equipment equality is semantic, not JSON property order');
+  const cane = structuredClone(cases.find(c => c.name === 'crutch').input), forged = proposal(cane);
+  forged.equipment_target = { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' };
+  assert.equal((await plan(cane, { client: { async complete() { return mock(forged); } } })).meta.error, 'MODEL_OUTPUT_REJECTED');
+  const farther = stroller(); farther.vehicle_context.cabin.occupied_seat_ids.push('S02', 'S03');
+  const wrong = proposal(farther); wrong.boarding_target = { type: 'SEAT', id: 'S09' };
+  wrong.navigation_steps = templateNavigationSteps(cabinRouteFor(wrong.boarding_target, wrong.equipment_target));
+  const rejected = await plan(farther, { client: { async complete() { return mock(wrong); } } });
+  assert.equal(rejected.meta.error, 'MODEL_OUTPUT_REJECTED', 'The model cannot bypass an available closer column');
+  assert.equal(rejected.boarding_target, null);
+});
+
+test('stroller parking language and the two-stage route cannot be omitted, reversed, or forged by the model', async () => {
+  const input = stroller(), parking = p => p.navigation_steps.find(step => step.maneuver === 'PARK_STROLLER');
+  for (const mutate of [
+    p => { p.navigation_steps.splice(6, 1); },
+    p => { parking(p).maneuver = 'ARRIVE'; },
+    p => { parking(p).text = 'Park the stroller and wait for the operator.'; },
+    p => { parking(p).text = 'Park the stroller in the wheelchair bay.'; },
+    p => { parking(p).text = 'Secure the stroller in the wheelchair bay with the operator; the bus may depart.'; },
+    p => { parking(p).text = 'Park the stroller at seat S03 and wait for the operator.'; },
+    p => { parking(p).text = 'Do not park the stroller in the wheelchair bay; ask the operator.'; },
+    p => { p.navigation_steps[7].maneuver = 'TURN_LEFT'; p.navigation_steps[7].text = 'Turn left.'; },
+    p => { p.navigation_steps[8].text = 'Turn right with the stroller.'; },
+    p => { p.navigation_steps[9].text = 'Push the stroller straight for 0.2 metres.'; },
+    p => { p.navigation_steps.at(-1).text = 'Arrive at the wheelchair bay and wait for the operator.'; },
+  ]) {
+    const bad = proposal(input); mutate(bad);
+    const result = await plan(input, { client: { async complete() { return mock(bad); } } });
+    assert.equal(result.meta.error, 'MODEL_OUTPUT_REJECTED');
+    assert.equal(result.equipment_target, null);
+    assert.equal(result.cabin_navigation, null);
+  }
+});
+
+test('stroller revalidation checks parking occupancy, passenger seat, via route metadata and trusted guide parameters', async () => {
+  const input = stroller(), result = await plan(input, { mode: 'rules' });
+  assert.equal(revalidateForSimulation(result, input).valid, true);
+  for (const mutate of [
+    x => { x.vehicle_context.cabin.wheelchair_bay_occupied = true; },
+    x => { x.vehicle_context.cabin.occupied_seat_ids.push('F01'); },
+    x => { x.vehicle_context.cabin.occupied_seat_ids.push(result.boarding_target.id); },
+    x => { x.vehicle_context.wheelchair_button_pressed = true; },
+  ]) {
+    const changed = structuredClone(input); mutate(changed);
+    assert.equal(revalidateForSimulation(result, changed).valid, false);
+  }
+  for (const mutate of [
+    r => { r.equipment_target = null; },
+    r => { delete r.cabin_navigation.equipment_target; },
+    r => { r.cabin_navigation.equipment_target.id = 'OTHER_BAY'; },
+    r => { r.cabin_navigation.steps = templateNavigationSteps(cabinRouteFor(r.boarding_target)); },
+    r => { r.cabin_navigation.steps[6].text = 'Park the stroller in the wheelchair bay.'; },
+    r => { r.action_plan.find(action => action.action === 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE').parameters.equipment_target.id = 'OTHER_BAY'; },
   ]) {
     const tampered = structuredClone(result); mutate(tampered);
     assert.equal(revalidateForSimulation(tampered, input).valid, false);

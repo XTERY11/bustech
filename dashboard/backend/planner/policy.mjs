@@ -5,6 +5,9 @@ import { cabinRouteFor } from './cabinRoute.mjs';
 export const THRESHOLDS = Object.freeze({ vehicle_age_ms: 1500, perception_age_ms: 1500, app_age_ms: 300000, yolo_confidence: 0.75, geometry_confidence: 0.85 });
 // Only low-floor destinations with a clear approach in the simulated cabin are suitable.
 const SEAT_TIERS = Object.freeze([['S03', 'S02', 'S09', 'S06'], ['S05', 'S08']]);
+// Keep the stroller close when possible; otherwise walk, without the parked aid,
+// to the next clear low-floor seat column. Never cross occupied window seats.
+const STROLLER_SEAT_TIERS = Object.freeze([['S03', 'S02'], ['S05', 'S06'], ['S08', 'S09']]);
 const seatScore = value => {
   let hash = 2166136261;
   for (const character of value) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
@@ -27,34 +30,50 @@ export function boardingTargetFor(context) {
   const r = context.request ?? {}, v = context.vehicle_context ?? {}, cabin = v.cabin;
   if (!cabin || cabin.layout_id !== 'byd-b70a02-photo-v1' || !Array.isArray(cabin.occupied_seat_ids)) return null;
   const occupied = new Set(cabin.occupied_seat_ids);
-  if (r.accessibility_need === 'WHEELCHAIR' || v.wheelchair_button_pressed === true) {
+  const stroller = r.accessibility_need === 'STROLLER';
+  if (stroller && (v.wheelchair_button_pressed === true || cabin.wheelchair_bay_occupied !== false || occupied.has('F01'))) return null;
+  if (!stroller && (r.accessibility_need === 'WHEELCHAIR' || v.wheelchair_button_pressed === true)) {
     return cabin.wheelchair_bay_occupied === false && !occupied.has('F01')
       ? { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' } : null;
   }
-  const candidates = SEAT_TIERS.map(tier => tier.filter(id => !occupied.has(id))).find(tier => tier.length);
+  const tiers = stroller ? STROLLER_SEAT_TIERS : SEAT_TIERS;
+  const candidates = tiers.map(tier => tier.filter(id => !occupied.has(id))).find(tier => tier.length);
   if (!candidates) return null;
   const seed = context.booking_event_id;
   const seat = seed ? candidates.reduce((best, id) => seatScore(`${seed}:${id}`) > seatScore(`${seed}:${best}`) ? id : best) : candidates[0];
   return { type: 'SEAT', id: seat };
 }
 
+export function equipmentTargetFor(context) {
+  const cabin = context.vehicle_context?.cabin;
+  return context.request?.accessibility_need === 'STROLLER' && cabin?.layout_id === 'byd-b70a02-photo-v1'
+    && context.vehicle_context.wheelchair_button_pressed !== true
+    && cabin.wheelchair_bay_occupied === false && Array.isArray(cabin.occupied_seat_ids) && !cabin.occupied_seat_ids.includes('F01')
+    ? { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' } : null;
+}
+
 export function buildPolicy(context) {
   const r = context.request ?? {}, p = context.perception ?? {}, v = context.vehicle_context ?? {};
   const h = v.hardware_capabilities ?? {}, g = p.geometry ?? {};
   const flags = [], facts = [], required = [], optional = [];
-  let status = 'READY', scenario = 'general', boardingTarget = null;
+  let status = 'READY', scenario = 'general', boardingTarget = null, equipmentTarget = null;
   const add = (...actions) => { for (const a of actions) if (!required.includes(a)) required.push(a); };
   const needs = (flag, fact) => { status = 'NEEDS_CONFIRMATION'; flags.push(flag); facts.push(fact); add('REQUEST_ONBOARD_SAFETY_OPERATOR'); };
   const finish = () => {
     const target = status === 'READY' ? boardingTarget : null;
+    const equipment = target ? equipmentTarget : null;
     if (target) {
       add('GUIDE_PASSENGER_TO_ASSIGNED_PLACE');
-      facts.splice(Math.min(facts.length, 2), 0, target.type === 'SEAT'
+      facts.splice(Math.min(facts.length, 2), 0, equipment
+        ? ['S02', 'S03'].includes(target.id)
+          ? `Park the stroller in the free wheelchair bay, then walk alone to nearby unoccupied seat ${target.id}.`
+          : `The nearby seats are occupied. Park the stroller in the free wheelchair bay, then walk alone to unoccupied seat ${target.id}.`
+        : target.type === 'SEAT'
         ? `Seat ${target.id} is unoccupied and assigned for this passenger.`
         : 'The wheelchair bay is unoccupied and assigned for this passenger.');
     }
     const allowed = [...new Set([...required, ...optional])].sort((a, b) => ACTIONS.indexOf(a) - ACTIONS.indexOf(b));
-    return { plan_status: status, scenario, boarding_target: target, navigation_route: target ? cabinRouteFor(target) : null, required_actions: allowed.filter(a => required.includes(a)), allowed_actions: allowed, facts, safety_flags: flags };
+    return { plan_status: status, scenario, boarding_target: target, equipment_target: equipment, navigation_route: target ? cabinRouteFor(target, equipment) : null, required_actions: allowed.filter(a => required.includes(a)), allowed_actions: allowed, facts, safety_flags: flags };
   };
   if (v.emergency_stop_active === true) {
     status = 'CANNOT_EXECUTE'; scenario = 'emergency'; flags.push('EMERGENCY_STOP');
@@ -94,6 +113,12 @@ export function buildPolicy(context) {
   if (appFresh && (!r.route_id || !r.stop_id || !v.route_id || !v.stop_id || r.route_id !== v.route_id || r.stop_id !== v.stop_id)) {
     scenario = 'confirm'; needs('ROUTE_OR_STOP_MISMATCH', 'The booking route or stop does not match the current vehicle context.'); return finish();
   }
+  if (need === 'STROLLER' && button) {
+    scenario = 'confirm';
+    needs('CONFLICTING_ASSISTANCE_CATEGORY', 'A stroller booking conflicts with a wheelchair-button request. Ask the operator to confirm the passenger and equipment.');
+    if (v.ramp_state === 'STOWED') add('KEEP_RAMPS_STOWED');
+    return finish();
+  }
   if (v.entrance_clear !== true) {
     scenario = 'wait'; add('CHECK_SINGLE_ENTRANCE_CLEARANCE');
     needs('ENTRANCE_NOT_CLEAR', 'Entrance clearance is unconfirmed. Keep waiting.'); return finish();
@@ -108,16 +133,20 @@ export function buildPolicy(context) {
   const rampRequested = requests.includes('WHEELCHAIR_RAMP') || r.ramp_preference === 'REQUESTED' && appFresh || button;
   const wheelchair = need === 'WHEELCHAIR' || button;
   boardingTarget = boardingTargetFor(context);
+  equipmentTarget = equipmentTargetFor(context);
   if (!boardingTarget) {
     scenario = 'wait';
     needs(v.cabin ? 'NO_ACCESSIBLE_PLACE_AVAILABLE' : 'CABIN_STATE_UNCONFIRMED', !v.cabin
       ? 'Cabin occupancy is unconfirmed. Keep the bus stopped and ask the safety operator to assist.'
+      : need === 'STROLLER' ? equipmentTarget
+        ? 'No suitable unoccupied low-floor seat is available after stroller parking. Ask the safety operator to assist.'
+        : 'The stroller parking bay or its foldable seat is occupied. Ask the safety operator to assist.'
       : wheelchair ? 'The wheelchair bay or its foldable seat is occupied. Ask the safety operator to assist.'
       : 'No suitable unoccupied low-floor seat is available. Ask the safety operator to assist.');
     return finish();
   }
   add('CHECK_SINGLE_ENTRANCE_CLEARANCE', 'KEEP_SINGLE_ENTRANCE_CLEAR', 'EXTEND_DWELL_TIME', 'WAIT_FOR_BOARDING_CONFIRMATION', 'WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION');
-  if (wheelchair) add('PREPARE_WHEELCHAIR_AREA');
+  if (wheelchair || need === 'STROLLER') add('PREPARE_WHEELCHAIR_AREA');
 
   if (declined && rampRequested) {
     scenario = 'confirm'; needs('CONFLICTING_RAMP_REQUEST', 'A declined ramp conflicts with another ramp request. Confirm the passenger preference first.');
@@ -176,11 +205,12 @@ export function templateNavigationSteps(route) {
     : step.maneuver === 'STRAIGHT' ? `Continue straight for ${step.distance_m} metres.`
     : step.maneuver === 'TURN_LEFT' ? 'Turn left.'
     : step.maneuver === 'TURN_RIGHT' ? 'Turn right.'
+    : step.maneuver === 'PARK_STROLLER' ? 'Park the stroller in the wheelchair bay and wait for the safety operator.'
     : `Arrive at ${destination} and wait for the safety operator.` }));
 }
 
 export function ruleProposal(context, policy) {
-  return { request_id: context.request_id, plan_status: policy.plan_status, decision_summary: policy.facts.slice(0, 3), actions: policy.required_actions, boarding_target: policy.boarding_target, navigation_steps: templateNavigationSteps(policy.navigation_route) };
+  return { request_id: context.request_id, plan_status: policy.plan_status, decision_summary: policy.facts.slice(0, 3), actions: policy.required_actions, boarding_target: policy.boarding_target, equipment_target: policy.equipment_target, navigation_steps: templateNavigationSteps(policy.navigation_route) };
 }
 
 function navigationTextErrors(step, route) {
@@ -202,6 +232,9 @@ function navigationTextErrors(step, route) {
   } else if (step.maneuver === 'TURN_LEFT' || step.maneuver === 'TURN_RIGHT') {
     const direction = step.maneuver === 'TURN_LEFT' ? 'left' : 'right';
     if (!new RegExp(`\\b(?:turn\\s+(?:to\\s+(?:your\\s+|the\\s+)?)?${direction}|${direction}\\s+turn)\\b`, 'i').test(message) || (direction === 'left' ? right : left) || straight) invalid('NAVIGATION_TEXT_DIRECTION_MISMATCH');
+  } else if (step.maneuver === 'PARK_STROLLER') {
+    if (route.equipment_target?.type !== 'WHEELCHAIR_BAY' || !/\bstroller\b/i.test(message) || !/\bwheelchair\s+bay\b/i.test(message)
+      || !/\boperator\b/i.test(message) || !/\b(?:park|position)\b/i.test(message) || namedSeats.length || left || right || straight) invalid('NAVIGATION_TEXT_STROLLER_PARKING_MISMATCH');
   } else {
     const targetMentioned = route.target.type === 'SEAT'
       ? new RegExp(`\\bseat\\s+${route.target.id}\\b`, 'i').test(message)
@@ -221,16 +254,21 @@ export function validateProposal(proposal, context, policy) {
   if (!targetMatches) errors.push('BOARDING_TARGET_MISMATCH');
   if (proposal.boarding_target?.type === 'SEAT' && proposal.boarding_target.id === 'WHEELCHAIR_BAY') errors.push('BOARDING_TARGET_INVALID');
   if (proposal.boarding_target?.type === 'WHEELCHAIR_BAY' && proposal.boarding_target.id !== 'WHEELCHAIR_BAY') errors.push('BOARDING_TARGET_INVALID');
+  const equipmentMatches = proposal.equipment_target === null && policy.equipment_target === null ||
+    proposal.equipment_target?.type === policy.equipment_target?.type && proposal.equipment_target?.id === policy.equipment_target?.id;
+  if (!equipmentMatches) errors.push('EQUIPMENT_TARGET_MISMATCH');
   const route = policy.navigation_route;
   if (!route) {
     if (proposal.navigation_steps !== null) errors.push('NAVIGATION_STEPS_NOT_ALLOWED');
   } else if (!Array.isArray(proposal.navigation_steps) || proposal.navigation_steps.length !== route.steps.length) {
     errors.push('NAVIGATION_STEPS_MISMATCH');
   } else {
+    const parkedAt = route.steps.findIndex(step => step.maneuver === 'PARK_STROLLER');
     for (let i = 0; i < route.steps.length; i++) {
       const expected = route.steps[i], actual = proposal.navigation_steps[i];
       if (actual.step !== expected.step || actual.maneuver !== expected.maneuver || actual.distance_m !== expected.distance_m) errors.push(`NAVIGATION_ROUTE_MISMATCH:${expected.step}`);
       errors.push(...navigationTextErrors(actual, route));
+      if (parkedAt >= 0 && i > parkedAt && /\bstroller\b/i.test(actual.text)) errors.push(`NAVIGATION_TEXT_STROLLER_ALREADY_PARKED:${expected.step}`);
     }
   }
   for (const a of proposal.actions) if (!policy.allowed_actions.includes(a)) errors.push(`FORBIDDEN_ACTION:${a}`);
@@ -251,7 +289,8 @@ export function parametersFor(action, context) {
   if (action === 'CONFIRM_ROUTE_IDENTITY') return { route_id: context.vehicle_context.route_id };
   if (action === 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE') {
     const target = boardingTargetFor(context);
-    return target ? { target_type: target.type, target_id: target.id } : {};
+    const equipment = equipmentTargetFor(context);
+    return target ? { target_type: target.type, target_id: target.id, ...(equipment ? { equipment_target: equipment } : {}) } : {};
   }
   if (action === 'WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION') return { source: 'ONBOARD_SAFETY_OPERATOR', wheelchair_securement: 'IF_APPLICABLE_OPERATOR_CONFIRMED' };
   return {};
@@ -263,7 +302,9 @@ export function passengerCommunication(context, policy, actions) {
   const passengerRoute = route === 'DEMO_ROUTE' ? '400' : route?.replaceAll('_', ' ');
   const identity = actions.includes('CONFIRM_ROUTE_IDENTITY') && passengerRoute ? `Route ${passengerRoute}. ` : '';
   const target = actions.includes('GUIDE_PASSENGER_TO_ASSIGNED_PLACE') ? policy.boarding_target : null;
-  const destination = target?.type === 'SEAT'
+  const destination = target && policy.equipment_target
+    ? ` Park the stroller in the wheelchair bay with the safety operator, then proceed to seat ${target.id}.`
+    : target?.type === 'SEAT'
     ? ` Proceed to seat ${target.id} when the safety operator invites you to board.`
     : target?.type === 'WHEELCHAIR_BAY' ? ' Proceed to the wheelchair bay and follow the safety operator\'s securement instructions.' : '';
   const message = identity + (policy.scenario === 'emergency'
@@ -278,5 +319,5 @@ export function safeFallback(context, errorCode) {
   const emergency = context.vehicle_context?.emergency_stop_active === true;
   const actions = emergency ? ['ABORT_ASSISTANCE_SEQUENCE', 'REQUEST_ONBOARD_SAFETY_OPERATOR'] : ['REQUEST_ONBOARD_SAFETY_OPERATOR'];
   if (!emergency && context.vehicle_context?.motion_state === 'STOPPED' && fresh(context.vehicle_context?.observation_age_ms, THRESHOLDS.vehicle_age_ms)) actions.unshift('HOLD_AT_STOP');
-  return { proposal: { request_id: context.request_id ?? 'invalid-request', plan_status: emergency ? 'CANNOT_EXECUTE' : 'NEEDS_CONFIRMATION', decision_summary: ['Input or model output failed validation. Await operator assistance.'], actions, boarding_target: null, navigation_steps: null }, flags: [errorCode] };
+  return { proposal: { request_id: context.request_id ?? 'invalid-request', plan_status: emergency ? 'CANNOT_EXECUTE' : 'NEEDS_CONFIRMATION', decision_summary: ['Input or model output failed validation. Await operator assistance.'], actions, boarding_target: null, equipment_target: null, navigation_steps: null }, flags: [errorCode] };
 }

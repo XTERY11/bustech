@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { PassengerAid, PassengerJourney as PassengerJourneyState } from '../../types/vehicle';
-import { buildPassengerPath, journeyStageTarget, samplePassengerPath, type Point3 } from '../../simulation/passengerPath';
+import { buildPassengerPath, buildStrollerJourneyPath, journeyStageTarget, journeyVisibility, samplePassengerPath, sampleStrollerJourney, STROLLER_FORWARD_OFFSET, type Point3 } from '../../simulation/passengerPath';
 
 type MutableGroup = THREE.Group | null;
 
@@ -63,7 +63,12 @@ function MobilityAid({ aid }: { aid: PassengerAid }) {
     </group>)}
     <Bar from={[-0.34, 0.88, 0.24]} to={[0.34, 0.88, 0.24]} />
   </group>;
-  if (aid === 'stroller') return <group position={[0, 0, 0.62]}>
+  if (aid === 'stroller') return <group position={[0, 0, STROLLER_FORWARD_OFFSET]}><StrollerEquipment /></group>;
+  return null;
+}
+
+function StrollerEquipment() {
+  return <group name="StrollerEquipment">
     {[-1, 1].flatMap((side) => [-1, 1].map((front) => <mesh key={`${side}:${front}`} position={[side * 0.24, 0.15, front * 0.23]} rotation={[0, Math.PI / 2, 0]}>
       <torusGeometry args={[0.105, 0.026, 8, 18]} /><meshStandardMaterial color="#2d353c" roughness={0.75} />
     </mesh>))}
@@ -74,10 +79,9 @@ function MobilityAid({ aid }: { aid: PassengerAid }) {
     </mesh>
     <Bar from={[-0.25, 0.93, 0.13]} to={[0.25, 0.93, 0.13]} radius={0.035} color="#27343a" />
   </group>;
-  return null;
 }
 
-function WalkingPassenger({ aid, moving }: { aid: PassengerAid; moving: boolean }) {
+function WalkingPassenger({ aid, moving, showMobilityAid = true }: { aid: PassengerAid; moving: boolean; showMobilityAid?: boolean }) {
   const leftArm = useRef<MutableGroup>(null), rightArm = useRef<MutableGroup>(null);
   const leftLeg = useRef<MutableGroup>(null), rightLeg = useRef<MutableGroup>(null);
   const body = useRef<THREE.Group>(null);
@@ -96,7 +100,7 @@ function WalkingPassenger({ aid, moving }: { aid: PassengerAid; moving: boolean 
     <mesh position={[0, 1.08, 0]} castShadow><capsuleGeometry args={[0.19, 0.43, 6, 12]} /><meshStandardMaterial color="#e0a946" roughness={0.8} /></mesh>
     <Limb side={-1} kind="arm" limbRef={leftArm} /><Limb side={1} kind="arm" limbRef={rightArm} />
     <Limb side={-1} kind="leg" limbRef={leftLeg} /><Limb side={1} kind="leg" limbRef={rightLeg} />
-    <MobilityAid aid={aid} />
+    {showMobilityAid && <MobilityAid aid={aid} />}
     {aid === 'hearing' && <group>
       {[-1, 1].map((side) => <mesh key={side} position={[side * 0.137, 1.44, 0]}><sphereGeometry args={[0.029, 10, 8]} /><meshStandardMaterial color="#43d3d0" emissive="#198e92" emissiveIntensity={1.4} /></mesh>)}
     </group>}
@@ -156,10 +160,15 @@ function GuidancePath({ path, active, cutaway }: { path: readonly Point3[]; acti
 /** Presentation-only passenger motion driven by the optional telemetry state. */
 export const PassengerJourneyActor = memo(function PassengerJourneyActor({ journey, cutaway }: { journey?: PassengerJourneyState | null; cutaway: boolean }) {
   const actor = useRef<THREE.Group>(null);
+  const equipment = useRef<THREE.Group>(null);
   const invalidate = useThree((state) => state.invalidate);
   const progress = useRef(0);
   const previousJourney = useRef<string>();
-  const path = useMemo(() => journey ? buildPassengerPath(journey.destination) : null, [journey?.journeyId, journey?.destination.type, journey?.destination.id]);
+  const strollerPlan = useMemo(() => journey?.aid === 'stroller'
+    ? buildStrollerJourneyPath(journey.destination, journey.equipmentDestination) : null,
+  [journey?.journeyId, journey?.aid, journey?.destination.type, journey?.destination.id, journey?.equipmentDestination?.type, journey?.equipmentDestination?.id]);
+  const path = useMemo(() => strollerPlan?.path ?? (journey ? buildPassengerPath(journey.destination) : null),
+  [journey?.journeyId, journey?.destination.type, journey?.destination.id, strollerPlan]);
 
   useEffect(() => {
     if (!journey) {
@@ -177,8 +186,7 @@ export const PassengerJourneyActor = memo(function PassengerJourneyActor({ journ
     invalidate();
   }, [journey, invalidate]);
 
-  const seatHandoff = journey?.destination.type === 'SEAT' && (journey.stage === 'seated' || journey.stage === 'secured');
-  const visible = !!journey && journey.stage !== 'hidden' && !seatHandoff;
+  const visibility = journey ? journeyVisibility(journey.stage, journey.destination, !!strollerPlan) : { passenger: false, equipment: false };
   const guiding = !!journey && (journey.stage === 'boarding' || journey.stage === 'navigating');
 
   useFrame((_, delta) => {
@@ -191,21 +199,30 @@ export const PassengerJourneyActor = memo(function PassengerJourneyActor({ journ
     if (Math.abs(difference) > 0.0005) {
       progress.current += Math.sign(difference) * Math.min(Math.abs(difference), speed * Math.min(delta, 0.1));
       invalidate();
-    }
-    const sample = samplePassengerPath(path, progress.current);
+    } else progress.current = target; // Snap the small remaining hint to the exact parking stop.
+    const split = strollerPlan ? sampleStrollerJourney(strollerPlan, progress.current) : null;
+    const sample = split?.passenger ?? samplePassengerPath(path, progress.current);
     actor.current.position.set(...sample.position);
     actor.current.rotation.y = Math.atan2(sample.tangent[0], sample.tangent[2]);
-    actor.current.visible = visible;
+    actor.current.visible = visibility.passenger;
+    if (equipment.current && split) {
+      equipment.current.position.set(...split.equipment.position);
+      equipment.current.rotation.y = Math.atan2(split.equipment.tangent[0], split.equipment.tangent[2]);
+      equipment.current.visible = visibility.equipment;
+    }
     if (guiding) invalidate();
   });
 
   if (!journey || !path) return null;
   return <group name="PassengerJourney">
     <GuidancePath path={path} active={guiding} cutaway={cutaway} />
-    <group ref={actor} visible={visible} userData={{ simulated: true, journeyId: journey.journeyId, destination: journey.destination }}>
+    <group ref={actor} visible={visibility.passenger} userData={{ simulated: true, journeyId: journey.journeyId, destination: journey.destination }}>
       {journey.aid === 'wheelchair'
         ? <WheelchairPassenger moving={guiding} />
-        : <WalkingPassenger aid={journey.aid} moving={guiding} />}
+        : <WalkingPassenger aid={journey.aid} moving={guiding} showMobilityAid={!strollerPlan} />}
     </group>
+    {strollerPlan && <group ref={equipment} visible={visibility.equipment} userData={{ simulated: true, parkedDestination: journey.equipmentDestination }}>
+      <StrollerEquipment />
+    </group>}
   </group>;
 });

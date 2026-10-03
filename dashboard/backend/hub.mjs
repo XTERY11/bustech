@@ -60,6 +60,8 @@ export class SignalHub extends EventEmitter {
       // Simulated reservation, NOT physical occupancy or an authorization to depart.
       if (next.boarding_target.type === 'SEAT') this.cabin.occupied_seat_ids = [...new Set([...this.cabin.occupied_seat_ids, next.boarding_target.id])];
       else this.cabin.wheelchair_bay_occupied = true;
+      // A stroller consumes both its parking space and the accompanying person's nearby seat.
+      if (next.equipment_target?.type === 'WHEELCHAIR_BAY') this.cabin.wheelchair_bay_occupied = true;
     }
     return true;
   }
@@ -81,7 +83,7 @@ export class SignalHub extends EventEmitter {
     const booking = this.channels.booking;
     if (booking?.payload.active && this.journey.stage !== 'IDLE' && !this.journey.completed && this.now() - booking.observedAt >= 300000) {
       this.invalidate();
-      this.applyJourney({ ...this.journey, stage: 'IDLE', reason: 'expired', need: null, matched: false, pending_exit: false, animation: null, boarding_target: null, seat: null });
+      this.applyJourney({ ...this.journey, stage: 'IDLE', reason: 'expired', need: null, matched: false, pending_exit: false, animation: null, boarding_target: null, equipment_target: null, seat: null });
       clearTimeout(this.timer); this.lastKey = `${this.mode}:${this.decisionKey()}`;
       this.publishState();
     } else if (this.applyJourney(reconcile(this.journey, this.result, this.now()))) this.publishState();

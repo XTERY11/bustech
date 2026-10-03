@@ -37,6 +37,8 @@ export function TwinPanel({ result, context, running, journey = null, basePath =
     requestId: result?.request_id ?? '',
     status: result?.plan_status ?? '',
     actions: result?.action_plan ?? [],
+    boardingTarget: result?.boarding_target ?? null,
+    equipmentTarget: result?.equipment_target ?? null,
     entrance: context.vehicle_context?.single_entrance_state ?? '',
     route: context.request?.route_id ?? context.vehicle_context?.route_id ?? '',
     active: context.request?.active,
@@ -45,6 +47,8 @@ export function TwinPanel({ result, context, running, journey = null, basePath =
     matched: journey?.matched,
     journeyId: journey?.journey_id,
     need: journey?.need,
+    journeyBoardingTarget: journey?.boarding_target ?? null,
+    journeyEquipmentTarget: journey?.equipment_target ?? null,
     animation: journey?.animation ?? null,
     running,
   });

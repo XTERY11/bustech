@@ -11,6 +11,53 @@ export interface PathSample {
 
 const AISLE_Z = 0.24;
 const EPSILON = 1e-6;
+export const STROLLER_FORWARD_OFFSET = 0.62;
+
+export interface StrollerJourneyPath {
+  path: readonly Point3[];
+  parkingProgress: number;
+  parkingPoint: Point3;
+  equipmentPosition: Point3;
+}
+
+function pathLength(path: readonly Point3[]): number {
+  return path.slice(1).reduce((total, point, index) => total + Math.hypot(
+    point[0] - path[index][0], point[1] - path[index][1], point[2] - path[index][2],
+  ), 0);
+}
+
+/** Push a stroller to its bay, leave it there, then walk to a supported aisle-side seat. */
+export function buildStrollerJourneyPath(destination: PassengerDestination, equipmentDestination?: PassengerDestination | null): StrollerJourneyPath | null {
+  if (equipmentDestination?.type !== 'WHEELCHAIR_BAY' || equipmentDestination.id !== 'WHEELCHAIR_BAY'
+    || destination.type !== 'SEAT' || !['S02', 'S03', 'S05', 'S06', 'S08', 'S09'].includes(destination.id)) return null;
+  const seat = SEATS.find(candidate => candidate.id === destination.id)!;
+  const bayPath = buildPassengerPath(equipmentDestination)!;
+  const parkingPoint: Point3 = [CABIN.wheelchairBay.x, CABIN.floorY, CABIN.wheelchairBay.z + STROLLER_FORWARD_OFFSET];
+  const approach = [...bayPath.slice(0, -1), parkingPoint];
+  const path: readonly Point3[] = [...approach,
+    [CABIN.wheelchairBay.x, CABIN.floorY, AISLE_Z],
+    [seat.position[0], CABIN.floorY, AISLE_Z], seat.position];
+  return { path, parkingProgress: pathLength(approach) / pathLength(path), parkingPoint,
+    equipmentPosition: [CABIN.wheelchairBay.x, CABIN.floorY, CABIN.wheelchairBay.z] };
+}
+
+/** Equipment is a separate stable sample after parking, including seat hand-off. */
+export function sampleStrollerJourney(plan: StrollerJourneyPath, rawProgress: number): { passenger: PathSample; equipment: PathSample; equipmentParked: boolean } {
+  let passenger = samplePassengerPath(plan.path, rawProgress);
+  if (Math.abs(rawProgress - plan.parkingProgress) <= EPSILON) passenger = { position: plan.parkingPoint, tangent: [0, 0, -1] };
+  const equipmentParked = rawProgress >= plan.parkingProgress - EPSILON;
+  if (equipmentParked) return { passenger, equipment: { position: plan.equipmentPosition, tangent: [0, 0, -1] }, equipmentParked };
+  const yaw = Math.atan2(passenger.tangent[0], passenger.tangent[2]);
+  return { passenger, equipment: { position: [passenger.position[0] + Math.sin(yaw) * STROLLER_FORWARD_OFFSET,
+    passenger.position[1], passenger.position[2] + Math.cos(yaw) * STROLLER_FORWARD_OFFSET], tangent: passenger.tangent }, equipmentParked };
+}
+
+/** A seated person hands off to cabin occupancy; parked equipment does not. */
+export function journeyVisibility(stage: PassengerJourneyStage, destination: PassengerDestination, separateEquipment: boolean): { passenger: boolean; equipment: boolean } {
+  const active = stage !== 'hidden';
+  const seatHandoff = destination.type === 'SEAT' && (stage === 'seated' || stage === 'secured');
+  return { passenger: active && !seatHandoff, equipment: active && separateEquipment };
+}
 
 /**
  * Build a collision-avoiding centre line in the bus body coordinate frame.

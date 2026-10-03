@@ -3,7 +3,7 @@ import type { BoardingTarget, Context, Journey, Result } from '../live-types';
 /** Presentation frames only: no animation feeds back into vehicle safety state. */
 type Aid = 'wheelchair' | 'cane' | 'crutch' | 'walker' | 'stroller' | 'visual' | 'hearing' | 'none';
 type PassengerStage = 'hidden' | 'waiting' | 'boarding' | 'navigating' | 'seated' | 'secured';
-type PassengerFrame = { journeyId: string; aid: Aid; stage: PassengerStage; destination: BoardingTarget; progress?: number };
+type PassengerFrame = { journeyId: string; aid: Aid; stage: PassengerStage; destination: BoardingTarget; equipmentDestination?: BoardingTarget | null; progress?: number };
 export type TwinFrame = {
   door?: 'closed' | 'opening' | 'open' | 'closing';
   ramp?: 'retracted' | 'extending' | 'extended' | 'retracting';
@@ -17,7 +17,7 @@ export type TwinFrame = {
   arrival?: { id: string; progress: number } | null;
 };
 export type ScenarioStep = { at: number; label: string; action?: string; frame: TwinFrame; camera?: 'overview' | 'entrance' | 'ramp' | 'cutaway' | 'interior' };
-export const DOCK_MS = 4200, ARRIVAL_MS = 10000, BOARDING_MS = 16000;
+export const DOCK_MS = 4200, ARRIVAL_MS = 10000, BOARDING_MS = 16000, STROLLER_BOARDING_MS = 22000;
 const DOOR_MS = 1200, RAMP_MS = 2000, KNEEL_MS = 1600;
 export const IDLE_FRAME: TwinFrame = { door: 'closed', ramp: 'retracted', kneeling: false, boardingStatus: 'idle', announcement: { active: false, text: '' }, passengerInfo: null, passengerJourney: null, arrival: null };
 const SEAT_IDS = [...Array.from({ length: 16 }, (_, index) => `S${String(index + 1).padStart(2, '0')}`), 'F01'];
@@ -26,6 +26,32 @@ const aidFor = (value?: string | null): Aid => ({
   WHEELCHAIR: 'wheelchair', CANE: 'cane', CRUTCH: 'crutch', WALKER: 'walker', STROLLER: 'stroller',
   VISUAL_ASSISTANCE: 'visual', HEARING_ASSISTANCE: 'hearing',
 } as Record<string, Aid>)[value ?? ''] ?? (['wheelchair', 'cane', 'crutch', 'walker', 'stroller', 'visual', 'hearing'].includes(value ?? '') ? value as Aid : 'none');
+
+const equipmentFor = (result: Result | null, journey?: Journey | null) =>
+  journey?.animation?.equipment_target ?? journey?.equipment_target ?? result?.equipment_target ?? null;
+const STROLLER_SEATS: Record<string, { x: number; z: number }> = {
+  S02: { x: -0.66, z: -0.29 }, S03: { x: -0.66, z: 0.77 },
+  S05: { x: 0.04, z: -0.29 }, S06: { x: 0.04, z: 0.77 },
+  S08: { x: 0.74, z: -0.29 }, S09: { x: 0.74, z: 0.77 },
+};
+const validStrollerAssignment = (target?: BoardingTarget | null, equipment?: BoardingTarget | null) =>
+  target?.type === 'SEAT' && Object.hasOwn(STROLLER_SEATS, target.id) && equipment?.type === 'WHEELCHAIR_BAY' && equipment.id === 'WHEELCHAIR_BAY';
+
+/** Presentation anchors mirror the twin path; tests check them against its cabin geometry. */
+export function strollerPathMilestones(target: BoardingTarget): { entranceProgress: number; parkingProgress: number } | null {
+  if (target.type !== 'SEAT' || !Object.hasOwn(STROLLER_SEATS, target.id)) return null;
+  const floorY = 0.36, entranceX = (-1.92 - 0.72) / 2, sideZ = 2.3 / 2, rampLength = 1.06, aisleZ = 0.24;
+  const bayX = -1.55, bayZ = -0.54, { x: seatX, z: seatZ } = STROLLER_SEATS[target.id];
+  const approach = [
+    [entranceX, 0.025, sideZ + rampLength + 0.66], [entranceX, 0.04, sideZ + rampLength + 0.04],
+    [entranceX, floorY, sideZ - 0.03], [entranceX, floorY, aisleZ], [bayX, floorY, aisleZ], [bayX, floorY, bayZ + 0.62],
+  ];
+  const fullPath = [...approach, [bayX, floorY, aisleZ], [seatX, floorY, aisleZ], [seatX, floorY, seatZ]];
+  const length = (points: number[][]) => points.slice(1).reduce((sum, point, index) =>
+    sum + Math.hypot(...point.map((value, axis) => value - points[index][axis])), 0);
+  const total = length(fullPath);
+  return { entranceProgress: length(approach.slice(0, 3)) / total, parkingProgress: length(approach) / total };
+}
 
 /** Reconstruct the trusted cabin baseline; the arriving passenger is added only after reaching it. */
 export function cabinSeatOccupancy(context: Context, target?: BoardingTarget | null): Record<string, boolean> | undefined {
@@ -45,7 +71,8 @@ function waitingPassenger(result: Result | null, context: Context, journey?: Jou
   // A placeholder destination only positions the waiting actor; it never authorises boarding.
   const destination = journey?.boarding_target ?? result?.boarding_target ??
     (aid === 'wheelchair' ? { type: 'WHEELCHAIR_BAY' as const, id: 'WHEELCHAIR_BAY' } : { type: 'SEAT' as const, id: 'S03' });
-  return { journeyId: journey?.journey_id ?? result?.request_id ?? 'waiting', aid, stage: 'waiting', destination, progress: 0 };
+  return { journeyId: journey?.journey_id ?? result?.request_id ?? 'waiting', aid, stage: 'waiting', destination,
+    equipmentDestination: aid === 'stroller' ? equipmentFor(result, journey) : null, progress: 0 };
 }
 
 export function waitingScenario(guidance?: string, passenger: PassengerFrame | null = null, occupancy?: Record<string, boolean>): ScenarioStep[] {
@@ -60,6 +87,9 @@ export function actionsToScenario(result: Result | null, context: Context, runni
   const occupancy = cabinSeatOccupancy(context, journey?.boarding_target ?? result?.boarding_target);
   if (!result || result.plan_status !== 'READY') return waitingScenario(
     result?.passenger_communication.display_text ?? (running ? 'Preparing your assistance plan. Please wait.' : undefined), passenger, occupancy);
+  const assignedTarget = journey?.animation?.target ?? journey?.boarding_target ?? result.boarding_target;
+  if (passenger?.aid === 'stroller' && !validStrollerAssignment(assignedTarget, equipmentFor(result, journey))) return waitingScenario(
+    'A free wheelchair space and a supported low-floor seat must be assigned together. Please wait for the safety operator.', passenger, occupancy);
   const actions = result.action_plan.map(item => item.action);
   if (has(actions, 'ABORT_ASSISTANCE_SEQUENCE')) return waitingScenario('Assistance is paused. Please wait for the safety operator.', passenger, occupancy);
   const action = (...names: string[]) => names.find(name => actions.includes(name));
@@ -102,12 +132,48 @@ export function boardingScenario(result: Result | null, context: Context, journe
   const target = journey?.animation?.target ?? journey?.boarding_target ?? result?.boarding_target;
   if (!result || result.plan_status !== 'READY' || !target) return waitingScenario('No validated place has been assigned. Please wait for the safety operator.');
   const aid = aidFor(journey?.animation?.aid ?? journey?.need ?? context.request?.accessibility_need);
+  const equipment = aid === 'stroller' ? equipmentFor(result, journey) : null;
+  if (aid === 'stroller' && !validStrollerAssignment(target, equipment)) return waitingScenario(
+    'A free wheelchair space and a supported low-floor seat must be assigned together. Please wait for the safety operator.', waitingPassenger(result, context, journey));
+  if (aid === 'wheelchair' && (target.type !== 'WHEELCHAIR_BAY' || target.id !== 'WHEELCHAIR_BAY')) return waitingScenario(
+    'A free wheelchair space must be assigned. Please wait for the safety operator.', waitingPassenger(result, context, journey));
   const journeyId = journey?.animation?.id ?? `${result.request_id}:boarding`;
-  const passenger = (stage: PassengerStage, progress: number): PassengerFrame => ({ journeyId, aid, stage, destination: target, progress });
+  const passenger = (stage: PassengerStage, progress: number): PassengerFrame => ({ journeyId, aid, stage, destination: target, equipmentDestination: equipment, progress });
   const actions = result.action_plan.map(item => item.action);
   const ramp = has(actions, 'DEPLOY_AUTOMATIC_SHORT_RAMP');
   const occupancy = cabinSeatOccupancy(context, target);
   const place = target.type === 'SEAT' ? `seat ${target.id}` : 'the wheelchair space';
+  if (aid === 'stroller') {
+    const milestones = strollerPathMilestones(target)!;
+    const nearby = ['S02', 'S03'].includes(target.id);
+    const assignedPlace = `${nearby ? 'nearby' : 'assigned'} ${place}`;
+    const guidanceTitle = nearby ? 'Nearby seat guidance' : 'Assigned seat guidance';
+    return [
+      { at: 0, label: 'Passenger pushing stroller aboard', action: 'WAIT_FOR_BOARDING_CONFIRMATION', camera: ramp ? 'ramp' : 'entrance',
+        frame: { ...IDLE_FRAME, door: 'open', ramp: ramp ? 'extended' : 'retracted', kneeling: ramp,
+          boardingStatus: 'boarding', ...(occupancy ? { seatOccupancy: occupancy } : {}), passengerJourney: passenger('boarding', 0),
+          passengerInfo: { title: 'Stroller boarding', message: `Park the stroller in the wheelchair space, then walk to ${assignedPlace}. Wait for the operator's assistance.` } } },
+      { at: 50, label: 'Passenger entering with stroller', action: 'WAIT_FOR_BOARDING_CONFIRMATION',
+        frame: { passengerJourney: passenger('boarding', milestones.entranceProgress) } },
+      { at: 4500, label: 'Guiding stroller to wheelchair space', action: 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE', camera: 'cutaway',
+        frame: { passengerJourney: passenger('navigating', milestones.parkingProgress), passengerInfo: { title: 'Park the stroller',
+          message: `Position the stroller in the wheelchair space. Your ${assignedPlace} remains reserved for you.` } } },
+      { at: 8000, label: 'Stroller parked · passenger beside it', action: 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE', camera: 'interior',
+        frame: { passengerJourney: passenger('navigating', milestones.parkingProgress), passengerInfo: { title: 'Stroller parking preview',
+          message: `The stroller is shown in the wheelchair space. After the operator assists, walk to ${assignedPlace}.` } } },
+      { at: 11000, label: `Stroller parked · walking to ${place}`, action: 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE', camera: 'cutaway',
+        frame: { passengerJourney: passenger('navigating', 1), passengerInfo: { title: guidanceTitle,
+          message: `Leave the stroller in the wheelchair space and follow the ${nearby ? 'short ' : ''}highlighted path to ${place}.` } } },
+      { at: 15000, label: `Passenger approaching ${assignedPlace}`, action: 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE', camera: 'interior',
+        frame: { passengerInfo: { title: guidanceTitle, message: `Your assigned ${nearby ? 'nearby ' : ''}seat is ${target.id}. The stroller remains in the wheelchair space.` } } },
+      { at: 19000, label: `Passenger reached ${target.id} · stroller remains in bay`, camera: 'cutaway', action: 'WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION',
+        frame: { passengerJourney: passenger('seated', 1), seatOccupancy: { [target.id]: true }, passengerInfo: { title: 'Awaiting operator confirmation',
+          message: `The passenger is shown seated in ${target.id}${nearby ? ', close to the stroller' : ''}. The stroller remains in the wheelchair space. The operator must confirm safe positioning.` } } },
+      { at: STROLLER_BOARDING_MS, label: 'Waiting for operator confirmation', action: 'WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION',
+        frame: { boardingStatus: 'boarding', passengerInfo: { title: 'Operator confirmation required',
+          message: 'The stroller remains parked. The entrance remains in the boarding position until the operator confirms.' } } },
+    ];
+  }
   return [
     { at: 0, label: 'Passenger entering', action: 'WAIT_FOR_BOARDING_CONFIRMATION', camera: ramp ? 'ramp' : 'entrance',
       frame: { ...IDLE_FRAME, door: 'open', ramp: ramp ? 'extended' : 'retracted', kneeling: ramp,
