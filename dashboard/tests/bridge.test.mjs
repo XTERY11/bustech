@@ -16,6 +16,7 @@ test('signals fuse, deduplicate and do not replan for heartbeat/confidence jitte
   const hub = new SignalHub({ autoRun: false, now: () => now, planner: c => { calls++; return plan(c, { mode: 'rules' }); } }); t.after(() => hub.close());
   seed(hub, now); await hub.run(); assert.equal(calls, 1);
   assert.ok(hub.result.action_plan.some(a => a.action === 'DEPLOY_AUTOMATIC_SHORT_RAMP'));
+  assert.deepEqual(hub.result.boarding_target, { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' });
   assert.deepEqual(Object.keys(hub.snapshot().channels).sort(), ['booking', 'perception']);
   assert.equal(hub.result.vehicle_context_source, 'SIMULATED_SCENARIO');
   assert.equal(hub.receive('perception', envelope('yolo-1', detection, now)).duplicate, true);
@@ -81,6 +82,7 @@ test('HTTP + SSE authenticate signals and deliver actual result events', async t
   assert.equal(response.status, 202);
   let output = ''; while (!output.includes('"type":"result"')) output += decoder.decode((await reader.read()).value);
   assert.match(output, /DEPLOY_AUTOMATIC_SHORT_RAMP/);
+  assert.match(output, /WHEELCHAIR_BAY/);
   assert.equal((await fetch(base + '/api/perception', { method: 'POST', headers, body: JSON.stringify(envelope('bad', { yolo_detections: [{ label: 'WHEELCHAIR', confidence: 'high' }] })) })).status, 400);
   assert.equal((await fetch(base + '/api/vehicle', { method: 'POST', headers, body: '{}' })).status, 404);
   assert.equal((await fetch(base + '/api/state', { headers: { ...headers, Origin: 'https://untrusted.example' } })).status, 403);

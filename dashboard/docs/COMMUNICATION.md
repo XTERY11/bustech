@@ -70,7 +70,7 @@ For crutches, use `CRUTCH` without `WHEELCHAIR_RAMP`. Vision and hearing support
 
 ## Simulated scene and snapshots
 
-The server retains the latest booking and detections. It supplies a stopped vehicle, open door, stowed ramp, clear entrance, simulated approval and sample ramp geometry. Route and stop follow the booking. Context includes `presentation_mode: WEB_DEMO`; results report `vehicle_context_source: SIMULATED_SCENARIO`. These are presentation settings, not sensor readings.
+The server retains the latest booking and detections. It supplies a stopped vehicle, open door, stowed ramp, clear entrance, simulated approval, sample ramp geometry and a simulated cabin-occupancy snapshot. The trusted policy assigns an unoccupied seat or wheelchair bay in `boarding_target`; the model may explain but cannot change that target. Route and stop follow the booking. Context includes `presentation_mode: WEB_DEMO`; results report `vehicle_context_source: SIMULATED_SCENARIO`. These are presentation settings, not sensor readings.
 
 Inputs are presentation snapshots. Reception metadata retains their timestamps; the last result stays visible after sending stops. A decision-changing input triggers a new run. Updates arriving close together are combined for about 250 ms. A superseded model response cannot overwrite the newer state.
 
@@ -108,6 +108,8 @@ CV reports observations; it does not read bookings or authorize vehicle movement
 
 The optional `zone.visit_id` joins one region activation's `enter`, `present` and `exit`. The bridge generates a 12-character UUID for each activation. It identifies a visit, not a person. Keep the ID unchanged when retrying or sending heartbeats for that visit. Older senders can retain their existing ROI and event metadata.
 
+On `exit` the bridge may add `zone.boarding` (boolean, its estimate of boarding intent) and `zone.dwell_seconds` (how long the region was occupied). `boarding: false` (a short stay, or the passenger walked off another way) is not boarding: the journey returns to `BOOKED` with `reason: 'not_boarding'` and waits for the passenger again. `true` or an absent field keeps the behaviour above.
+
 ### Validated destinations
 
 The 18-action contract adds `GUIDE_PASSENGER_TO_ASSIGNED_PLACE` between boarding confirmation and seated/belted confirmation. The server supplies its `{target_type, target_id}` parameters. `Result.boarding_target` is `null`, `{type:'SEAT',id:'S01'…'S16'}` or `{type:'WHEELCHAIR_BAY',id:'WHEELCHAIR_BAY'}`.
@@ -122,7 +124,7 @@ Each journey transition, planning completion, cancellation and expiry broadcasts
 
 `journey.animation` is `null` or `{id, phase:'arrival'|'boarding', aid, started_at, duration_ms, target}`. Times are hub epoch milliseconds. Clients deduplicate by animation ID and derive the remaining progress from the start time. Heartbeats, duplicate input IDs, snapshot refreshes and reconnects must not restart animations. The dashboard may also display the short `summary`; the passenger App shows guidance and the assigned position instead of planner implementation details.
 
-The passenger App is a separate project; this repository does not implement phone UI. The hub delivers navigation and authoritative journey snapshots over the existing HTTP/SSE interfaces. Configure the App's hub URL, Bearer token, allowed origin and compatible HTTP/HTTPS setup as described above; the App is responsible for rendering those optional fields.
+The native passenger App is now included under `app/` by main@353765a; this dashboard integration does not modify its UI. The hub delivers navigation and authoritative journey snapshots over the existing HTTP/SSE interfaces. Configure the App's hub URL, Bearer token, allowed origin and compatible HTTP/HTTPS setup as described above; the App is responsible for rendering those optional fields. See `HANDOFF-APP.md` and `RUNBOOK.md` at the repository root.
 
 ### v0.5: directional cabin guidance
 
@@ -137,6 +139,8 @@ For `STROLLER`, `boarding_target` is the person's free seat, preferring S02/S03.
 `Result.cabin_navigation`, `journey`, `journey.animation` and `Snapshot.navigation` carry the optional `equipment_target`. Stroller directions first reach the bay parking point, include a `PARK_STROLLER` maneuver with null distance and operator-assistance text, then continue to the person's seat. Clients should render its `text`; the final seat is not the stroller's destination. The original input endpoints and action enum remain unchanged.
 
 The twin receives optional `passengerJourney.equipmentDestination`. In the new stroller preview, the person stops at the handle position (x=-1.55,z=0.08) while the stroller centres in the bay (x=-1.55,z=-0.54), then walks to the assigned seat. The parked stroller remains visible after the seated actor hand-off. Farther-seat paths use their own aisle distances and parking progress, rather than reusing S03 geometry. Its open-loop boarding preview lasts 22000 ms; other categories remain at 16000 ms. A consumed stroller journey reserves both bay and seat in the simulated cabin. These fields do not authorize real securement or departure.
+
+The latest main serves one passenger per simulated bus: a new booking after a completed journey resets the cabin to the fixture, representing a fresh bus. A booking before completion does not clear occupied resources. The existing journey keeps its assigned targets until it is replaced; no real occupancy or departure is inferred.
 
 ### Delivery and validation
 

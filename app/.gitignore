@@ -1,0 +1,12 @@
+.DS_Store
+DerivedData/
+.build/
+build/
+*.xcuserstate
+xcuserdata/
+*.xccheckout
+*.xcscmblueprint
+Config/Secrets.xcconfig
+.local/
+__pycache__/
+Config/Assistant.local.xcconfig

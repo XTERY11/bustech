@@ -183,6 +183,16 @@ test('presets run the complete preview without CV; missing validated targets nev
   assert.equal(missing.some(step => step.frame.seatOccupancy?.S03), false);
 });
 
+test('manual "Preview boarding" (TwinPanel) plays the booked boarding guidance before any camera exit', () => {
+  // TwinPanel passes the live journey without its hub animation; nothing here touches hub state.
+  const booked = { ...journey('BOOKED', true), animation: null };
+  assert.equal(actuates(buildScenario(result(true), context('WHEELCHAIR'), false, booked)), false, 'automatic path still waits');
+  const steps = boardingScenario(result(true), context('WHEELCHAIR'), booked);
+  assert.equal(steps[0].frame.passengerJourney?.aid, 'wheelchair');
+  assert.deepEqual(steps.find(step => step.at === 12000)?.frame.passengerJourney?.destination, { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' });
+  assert.equal(steps[0].frame.passengerJourney?.journeyId, 'run-1:boarding');
+});
+
 test('elapsed restoration restores partial motion, cumulative cabin state and the latest camera', () => {
   const steps = buildScenario(result(true), context('WHEELCHAIR'), false, journey('AT_STOP', true));
   const arriving = frameAtElapsed(steps, 2150)!;

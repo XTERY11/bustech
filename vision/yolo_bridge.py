@@ -6,7 +6,9 @@ adds two outputs that monitor_zone.py does not have:
 
   1. POST /api/perception to the signal hub, only when the region trigger changes
      (enter -> detections inside the region; exit -> empty list) plus a slow
-     heartbeat while the region stays occupied.
+     heartbeat while the region stays occupied. All three carry zone.visit_id (one per
+     activation); exit adds zone.boarding / zone.dwell_seconds. Posts go through an ordered
+     background queue (ride_signal_client.OrderedSignalQueue) that retries without blocking.
   2. An HTTP server with /stream.mjpg (annotated frames) and /health, so the
      dashboard can show the live camera view.
 
@@ -50,6 +52,7 @@ class SharedFrame:
         self.jpeg = b''
         self.stamp = 0.0
         self.fps = 0.0
+        # last_signal = the newest signal the hub acknowledged (see OrderedSignalQueue.diagnostics)
         self.status = {'triggered': False, 'inside': 0, 'detections': [], 'frames': 0, 'last_signal': None,
                        'pending_signals': 0, 'signal_error': None}
 
@@ -122,6 +125,9 @@ def parse_args():
     p.add_argument('--detect-every', type=int, default=2, help='Run detection on every Nth frame and reuse the result in between')
     p.add_argument('--enter-seconds', type=float, default=0.3, help='How long an aid must be in the region before the trigger')
     p.add_argument('--exit-seconds', type=float, default=2.0, help='How long the region must be empty of people before it clears')
+    p.add_argument('--board-direction', choices=sorted(DIRECTIONS), default=None,
+                   help="Where the bus is, seen from the region; default: the ROI file's board_direction, else 'up' (deeper into the picture)")
+    p.add_argument('--min-dwell', type=float, default=2.0, help='Seconds a passenger must wait in the region before leaving counts as boarding')
     p.add_argument('--width', type=int, default=1280, help='Maximum processed/streamed frame width')
     p.add_argument('--rotate', choices=['none', 'cw', 'ccw', '180'], default='none')
     p.add_argument('--jpeg-quality', type=int, default=80)
@@ -136,6 +142,7 @@ def parse_args():
     p.add_argument('--events', type=Path, help='Optional JSONL log of trigger transitions and hub posts')
     p.add_argument('--record', type=Path, help='Also save the raw frames that were processed to this MP4, for replaying the session later')
     p.add_argument('--snapshots', type=Path, help='Folder for an annotated JPEG at every trigger, label change and clear (plus events.jsonl), for review afterwards')
+    p.add_argument('--capture', type=Path, help='Folder for annotated.mp4 + signals.jsonl (every hub post with its time), which replay_bridge.py plays back without YOLO')
     return p.parse_args()
 
 
@@ -185,6 +192,58 @@ def in_region(box, mask, anchor):
     return overlap >= 0.25 * min((y2 - y1) * (x2 - x1), int(mask.sum()))
 
 
+DIRECTIONS = {'up': (0.0, -1.0), 'down': (0.0, 1.0), 'left': (-1.0, 0.0), 'right': (1.0, 0.0)}
+
+
+def boarding_intent(trail, points, direction, dwell, min_dwell=2.0, recent=1.5, margin=0.02, push=0.03):
+    """Did the passenger leave the stop region towards the bus, or just pass by / walk off?
+
+    trail: (seconds, x, y) of the passenger's anchor (the aid, or the person once the aid is lost) while
+    the region was occupied, normalised to the frame. points: the region polygon, normalised.
+    direction: where the bus is from the region ('up' = deeper into the picture). People at a stop hardly
+    ever walk back, so only clear evidence says "not boarding": a stay shorter than `min_dwell` (passing
+    by), or being last seen outside the region on another side, or moving away from the bus. Returns
+    (True | False | None, reason); None (lost while still in the region, or never seen) counts as boarding.
+    """
+    if dwell < min_dwell:
+        return False, 'short_stay'
+    if not trail:
+        return None, 'not_tracked'
+    dx, dy = DIRECTIONS[direction]
+    along = lambda x, y: x * dx + y * dy
+    far = max(along(x, y) for x, y in points)
+    last = trail[-1]
+    window = [p for p in trail if p[0] >= last[0] - recent]
+    moved = along(window[-1][1], window[-1][2]) - along(window[0][1], window[0][2])
+    if along(last[1], last[2]) >= far - margin:
+        return True, 'past_far_edge'
+    if moved >= push:
+        return True, 'moving_towards_bus'
+    inside = cv2.pointPolygonTest(np.asarray(points, np.float32), (float(last[1]), float(last[2])), True) >= -margin
+    if not inside or moved <= -push:
+        return False, 'left_another_way'
+    return None, 'lost_in_region'
+
+
+def perception_payload(detections, reason, roi_id, visit_id, left=None, intent=None):
+    """Body of one POST /api/perception (the envelope is added by ride_signal_client.py).
+
+    target_match_confirmed: a verified aid is standing in the drawn boarding region. The hub ignores
+    camera detections without it; it still never authorises a ramp without a booking.
+    zone.event: 'enter', 'present' (heartbeat, from reason 'heartbeat') or 'exit'. zone.visit_id binds
+    the enter / present / exit of one activation of the region (not a passenger identity; booking and
+    plan checks belong to the hub). On exit, zone.left names what was there and, from `intent`,
+    zone.boarding (omitted when unknown) and zone.dwell_seconds say whether they left towards the bus.
+    """
+    zone = {'triggered': bool(detections), 'roi_id': roi_id, 'visit_id': visit_id,
+            'event': {'heartbeat': 'present'}.get(reason, reason)}
+    if left:
+        zone['left'] = left
+    if intent:  # on exit: {'boarding': bool | None, 'dwell_seconds': float}
+        zone.update({k: v for k, v in intent.items() if v is not None})
+    return {'yolo_detections': detections[:20], 'target_match_confirmed': bool(detections), 'zone': zone}
+
+
 def open_capture(source):
     cap = cv2.VideoCapture(source, cv2.CAP_DSHOW) if isinstance(source, int) and os.name == 'nt' else cv2.VideoCapture(source)
     if not cap.isOpened() and isinstance(source, int) and os.name == 'nt':
@@ -204,8 +263,9 @@ def main():
     points = load_roi(args.roi)
     if not points:
         raise ValueError(f'No region in {args.roi}. Draw one first: python monitor_zone.py --source {args.source} --roi {args.roi}')
-    if args.anchor is None:
-        args.anchor = json.loads(args.roi.read_text(encoding='utf-8')).get('anchor', 'bottom-center')
+    roi_file = json.loads(args.roi.read_text(encoding='utf-8'))
+    args.anchor = args.anchor or roi_file.get('anchor', 'bottom-center')
+    args.board_direction = args.board_direction or roi_file.get('board_direction', 'up')
     os.environ.setdefault('YOLO_CONFIG_DIR', str(ROOT / '.yolo'))
     import torch
     from ultralytics import YOLO
@@ -231,7 +291,7 @@ def main():
 
     shared = SharedFrame()
     client = None if args.no_signal else RideSignalClient(args.bridge_url, args.bridge_token)
-    delivery = OrderedSignalQueue(client) if client else None
+    delivery = OrderedSignalQueue(client) if client else None  # ordered background delivery with retry
     info = {'source': str(args.source), 'device': device, 'roi': str(args.roi), 'bridge_url': None if args.no_signal else args.bridge_url}
     server = ThreadingHTTPServer((args.mjpeg_host, args.mjpeg_port), make_handler(shared, info, delivery))
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -239,9 +299,10 @@ def main():
     print(f'Preview: http://127.0.0.1:{args.mjpeg_port}/stream.mjpg  Health: http://127.0.0.1:{args.mjpeg_port}/health', flush=True)
 
     roi_id = args.roi.stem
-    visit_id = None
+    visit_id = None           # one id per region activation, shared by its enter / present / exit
     active = False            # region occupied (the trigger)
     since = last_seen = None  # when the current aid entered / when somebody was last in the region
+    trail, entered_at = [], None  # where the aid went while the region was occupied (for boarding_intent)
     if args.snapshots:
         args.snapshots.mkdir(parents=True, exist_ok=True)
         args.events = args.events or args.snapshots / 'events.jsonl'
@@ -249,6 +310,10 @@ def main():
         args.events.parent.mkdir(parents=True, exist_ok=True)
     log = args.events.open('a', encoding='utf-8') if args.events else None
     pending = []  # snapshot names waiting for the frame to be fully drawn
+    if args.capture:
+        args.capture.mkdir(parents=True, exist_ok=True)
+    signals = (args.capture / 'signals.jsonl').open('w', encoding='utf-8') if args.capture else None
+    captured = None  # annotated.mp4 writer, opened on the first frame
 
     def record(event):
         if is_file:
@@ -260,17 +325,16 @@ def main():
         if log:
             log.write(json.dumps(event) + '\n'); log.flush()
 
-    def post(detections, reason, left=None):
+    def post(detections, reason, left=None, intent=None):
+        payload = perception_payload(detections, reason, roi_id, visit_id, left, intent)
+        if signals:  # replay_bridge.py posts the same payload at the same point of annotated.mp4
+            signals.write(json.dumps({'t': round(captured_frames / capture_fps, 2), 'channel': 'perception', 'payload': payload}) + '\n')
+            signals.flush()
         if delivery is None:
             return
-        # A visit binds enter/present/exit for one activation of the region, not a passenger identity.
-        # Booking and plan checks belong to the hub; failed transitions stay queued in capture order.
-        zone = {'triggered': bool(detections), 'roi_id': roi_id, 'visit_id': visit_id,
-                'event': {'heartbeat': 'present'}.get(reason, reason)}
-        if left:
-            zone['left'] = left
-        envelope = delivery.enqueue('perception', {'yolo_detections': detections[:20], 'target_match_confirmed': bool(detections), 'zone': zone},
-                                    observed_at=datetime.now(timezone.utc).isoformat())
+        # Queued, never blocking inference: a failed post is retried unchanged (same event_id, observed_at and
+        # body) before anything newer; only adjacent unsent heartbeats of the same visit are coalesced.
+        envelope = delivery.enqueue('perception', payload, observed_at=datetime.now(timezone.utc).isoformat())
         record({'event': 'SIGNAL_QUEUED', 'event_id': envelope['event_id'], 'reason': reason, 'visit_id': visit_id, 'detections': detections})
 
     cap = open_capture(source)
@@ -281,6 +345,9 @@ def main():
     fps_src = cap.get(cv2.CAP_PROP_FPS)
     fps_src = fps_src if np.isfinite(fps_src) and 0 < fps_src <= 240 else 30
     processed = position = 0
+    # The capture keeps the clock of the source: one frame per source frame for a recording, 15 fps of
+    # wall-clock time for a live camera (frames are repeated or skipped to hold that rate).
+    capture_fps, capture_start, captured_frames = (fps_src if is_file else 15), time.monotonic(), 0
     writer = None
     last_heartbeat = 0.0
     tick_fps = time.monotonic(); fps_count = 0
@@ -294,7 +361,10 @@ def main():
             position += 1
             if not ok:
                 if is_file and args.loop:
-                    cap.release(); cap = open_capture(source); scene.reset(); active, since, last_seen, position = False, None, None, 0; continue
+                    if signals:  # the capture covers one pass of the recording
+                        signals.close(); captured.release(); signals = captured = None
+                        print(f'Capture saved: {args.capture}', flush=True)
+                    cap.release(); cap = open_capture(source); scene.reset(); active, since, last_seen, position = False, None, None, 0; held, visit_id = [], None; continue
                 if is_file:
                     print('Video finished.', flush=True); break
                 raise RuntimeError('Camera/stream stopped delivering frames.')
@@ -352,19 +422,40 @@ def main():
             entered = active and not was_active
             before = sorted(d['label'] for d in held)
             if inside_detections:
-                held = inside_detections
+                # One steady report per visit: an aid half hidden behind its user is detected with a lower
+                # score, so each label keeps the best confidence seen since this visit started.
+                best = {d['label']: d['confidence'] for d in held} if active else {}
+                held = [{**d, 'confidence': max(d['confidence'], best.get(d['label'], 0))} for d in inside_detections]
+            if entered:
+                trail, entered_at = [], now
+            if active or was_active:  # follow the aid that triggered, also after it has left the region
+                follow = {d['label'] for d in held}
+                spots = [(aid['box'], anchor_point(aid['box'], args.anchor)) for aid in aids if aid['label'] in follow]
+                if not spots and trail:  # the aid is out of sight (a cane behind a leg): follow the person nearest to it
+                    near = [(p[:4], anchor_point(p[:4], args.anchor)) for p in persons]
+                    spots = [s for s in near if (s[1][0] / width - trail[-1][1]) ** 2 + (s[1][1] / height - trail[-1][2]) ** 2 < 0.12 ** 2]
+                if spots and trail:
+                    _, (x, y) = min(spots, key=lambda s: (s[1][0] / width - trail[-1][1]) ** 2 + (s[1][1] / height - trail[-1][2]) ** 2)
+                    if (x / width - trail[-1][1]) ** 2 + (y / height - trail[-1][2]) ** 2 < 0.3 ** 2:  # not a different aid
+                        trail.append((now, x / width, y / height))
+                elif spots:
+                    _, (x, y) = max(spots, key=lambda s: in_region(s[0], region_mask, args.anchor))
+                    trail.append((now, x / width, y / height))
             processed += 1
             if active and not entered and sorted(d['label'] for d in held) != before:
                 record({'event': 'LABEL', 'frame': processed, 'labels': sorted(d['label'] for d in held), 'was': before})
             if entered:
                 visit_id = uuid.uuid4().hex[:12]
-                record({'event': 'TRIGGER', 'frame': processed, 'targets_in_region': len(held), 'labels': sorted(d['label'] for d in held)})
+                record({'event': 'TRIGGER', 'frame': processed, 'visit_id': visit_id, 'targets_in_region': len(held), 'labels': sorted(d['label'] for d in held)})
                 post(held, 'enter'); last_heartbeat = time.monotonic()
             elif active and time.monotonic() - last_heartbeat >= args.heartbeat:
                 post(held, 'heartbeat'); last_heartbeat = time.monotonic()
-            elif was_active and not active:  # exit transition
-                record({'event': 'CLEAR', 'frame': processed})
-                post([], 'exit', sorted({d['label'] for d in held})); held = []; visit_id = None
+            elif was_active and not active:  # exit transition: did they leave towards the bus?
+                dwell = (last_seen or now) - (entered_at if entered_at is not None else now)
+                boarding, why = boarding_intent(trail, points, args.board_direction, dwell, args.min_dwell)
+                record({'event': 'CLEAR', 'frame': processed, 'visit_id': visit_id, 'boarding': boarding, 'why': why, 'dwell_seconds': round(dwell, 1),
+                        'last_seen_at': [round(v, 2) for v in trail[-1][1:]] if trail else None})
+                post([], 'exit', sorted({d['label'] for d in held}), {'boarding': boarding, 'dwell_seconds': round(dwell, 1)}); held, visit_id = [], None
             # overlay: region, state bar
             contour = np.round(np.asarray(points) * [width - 1, height - 1]).astype(np.int32)
             color = (0, 0, 255) if active else (60, 210, 60)
@@ -374,6 +465,15 @@ def main():
             state = 'TRIGGER  ' + ' + '.join(sorted({d['label'].lower() for d in held})) if active else 'MONITORING'
             cv2.putText(view, state, (12, 36), cv2.FONT_HERSHEY_SIMPLEX, .95, (0, 70, 255) if active else (255, 255, 255), 2)
             cv2.putText(view, f'inside {len(inside_detections)} | {device} | {shared.fps:.0f} fps', (width - 290, 36), cv2.FONT_HERSHEY_SIMPLEX, .55, (200, 200, 200), 1)
+            if signals:
+                if captured is None:  # H.264 when this OpenCV build has it (about 5x smaller), else MPEG-4
+                    for codec in ('avc1', 'mp4v'):
+                        captured = cv2.VideoWriter(str(args.capture / 'annotated.mp4'), cv2.VideoWriter_fourcc(*codec), capture_fps, (width, height))
+                        if captured.isOpened():
+                            break
+                due = position if is_file else round((time.monotonic() - capture_start) * capture_fps) + 1
+                for _ in range(due - captured_frames):
+                    captured.write(view); captured_frames += 1
             ok_jpeg, buf = cv2.imencode('.jpg', view, [cv2.IMWRITE_JPEG_QUALITY, args.jpeg_quality])
             while ok_jpeg and pending:
                 (args.snapshots / pending.pop()).write_bytes(buf.tobytes())
@@ -395,13 +495,21 @@ def main():
             elif is_file:  # pace file playback at the source frame rate
                 time.sleep(max(0.0, 1 / fps_src - (time.monotonic() - tick)))
     finally:
-        if delivery:
+        if delivery:  # give a just-queued exit a moment to reach the hub; the queue is not persisted
+            deadline = time.monotonic() + 3
+            while delivery.diagnostics()['pending_signals'] and time.monotonic() < deadline:
+                time.sleep(0.05)
             unsent = delivery.close()
             if unsent:
                 record({'event': 'SIGNALS_PENDING_ON_STOP', 'pending_signals': unsent})
         cap.release(); server.shutdown()
         if writer is not None:
             writer.release()
+        if signals:
+            signals.close()
+            if captured is not None:
+                captured.release()
+            print(f'Capture saved: {args.capture}', flush=True)
         if log:
             log.close()
         if not args.no_window:

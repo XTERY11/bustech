@@ -121,6 +121,9 @@ export class SignalHub extends EventEmitter {
     if (this.source === 'demo') { this.channels = {}; this.demoContext = null; this.lastKey = null; }
     this.source = 'external';
     this.channels[channel] = { payload: normalized[KEYS[channel]], observedAt, receivedAt: this.now(), eventId };
+    // The demo serves one passenger per bus: once a journey has completed, the next booking is met by a
+    // fresh simulated bus, so the place the previous passenger used is free again.
+    if (channel === 'booking' && this.journey.completed) this.cabin = structuredClone(fixture.vehicle_context.cabin);
     this.applyJourney(advance(this.journey, channel, normalized[KEYS[channel]], this.result?.plan_status, { eventId, now: this.now() }));
     let changed = channel === 'booking' || before !== this.decisionKey();
     if (channel === 'booking') this.localNext = normalized.request.active !== true || normalized.request.intent !== 'BOARDING';

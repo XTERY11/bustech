@@ -90,6 +90,42 @@ class SceneTest(unittest.TestCase):
         self.assertAlmostEqual(iou([0, 0, 10, 10], [0, 0, 10, 10]), 1.0)
 
 
+class BoardingIntentTest(unittest.TestCase):
+    """Region along the bottom of the picture; the bus is deeper in (up)."""
+    REGION = [(0.35, 0.98), (0.82, 0.97), (0.75, 0.84), (0.37, 0.84)]
+
+    def setUp(self):
+        from yolo_bridge import boarding_intent
+        self.intent = lambda trail, dwell=5.0: boarding_intent(trail, self.REGION, 'up', dwell)
+
+    def test_waits_then_walks_deeper(self):
+        trail = [(t, 0.6, 0.92) for t in range(5)] + [(5.5, 0.6, 0.80), (6.0, 0.6, 0.70)]
+        self.assertEqual(self.intent(trail), (True, 'past_far_edge'))
+
+    def test_still_moving_deeper_when_lost(self):
+        trail = [(t, 0.6, 0.93) for t in range(5)] + [(5.0, 0.6, 0.92), (5.5, 0.6, 0.90), (6.0, 0.6, 0.88)]
+        self.assertEqual(self.intent(trail), (True, 'moving_towards_bus'))
+
+    def test_passing_through_is_not_boarding(self):
+        self.assertEqual(self.intent([(0, 0.4, 0.9), (0.5, 0.7, 0.9)], dwell=0.6), (False, 'short_stay'))
+
+    def test_walking_off_sideways_or_towards_the_camera_is_not_boarding(self):
+        sideways = [(t, 0.6, 0.92) for t in range(5)] + [(5.5, 0.85, 0.93), (6.0, 0.95, 0.93)]
+        self.assertEqual(self.intent(sideways), (False, 'left_another_way'))
+        towards_camera = [(t, 0.6, 0.90) for t in range(5)] + [(5.5, 0.6, 0.96), (6.0, 0.6, 0.99)]
+        self.assertEqual(self.intent(towards_camera), (False, 'left_another_way'))
+
+    def test_aid_never_tracked_is_unknown(self):
+        self.assertEqual(self.intent([]), (None, 'not_tracked'))
+
+    def test_lost_while_still_in_the_region_counts_as_unknown(self):
+        self.assertEqual(self.intent([(t, 0.6, 0.92) for t in range(6)]), (None, 'lost_in_region'))
+
+    def test_moving_away_from_the_bus_is_not_boarding(self):
+        trail = [(t, 0.6, 0.88) for t in range(5)] + [(5.5, 0.6, 0.92), (6.0, 0.6, 0.96)]
+        self.assertEqual(self.intent(trail), (False, 'left_another_way'))
+
+
 class InRegionTest(unittest.TestCase):
     def setUp(self):
         from yolo_bridge import in_region

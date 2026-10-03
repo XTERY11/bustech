@@ -144,9 +144,9 @@ function deriveSequence(s: VehicleState): SequenceStep[] {
     door: 'Door open',
     ramp: 'Ramp extended',
     ready: 'Ready to board',
-    complete: 'Boarding complete',
+    complete: reached('complete') ? 'Safety confirmed' : 'Safety confirmation',
   };
-  if (s.boardingStatus === 'boarding') labels.complete = 'Boarding in progress';
+  if (s.boardingStatus === 'boarding') labels.complete = 'Awaiting safety confirmation';
   const ids = Object.keys(labels) as SequenceStep['id'][];
   let activeAssigned = s.boardingStatus === 'idle';
   return ids.map((id) => {

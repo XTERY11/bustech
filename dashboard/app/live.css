@@ -47,6 +47,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visi
 .replayAnimation { border:1px solid var(--line); border-radius:999px; background:#fff; color:var(--navy); padding:5px 9px; font:inherit; font-size:10px; font-weight:800; cursor:pointer; transition:border-color .18s ease, background .18s ease, transform .18s ease; }
 .replayAnimation:hover:not(:disabled) { border-color:var(--green); background:#f0f9f4; transform:translateY(-1px); }
 .replayAnimation:disabled { cursor:not-allowed; opacity:.42; }
+.previewBoarding:not(:disabled) { border-color:#9bcdb0; background:#eaf7ef; color:var(--green); }
 .stageMeta { font-family:var(--font-geist-mono); font-size:12px; }
 .stageSettings { position:relative; font-size:13px; }.stageSettings .settingsFields { top:28px; }.stageSettings .settingsFields input { width:100%; }
 .simBadge.online { background:#e7f6ec; color:#1d6b3a; border-color:#bfe3cc; }.simBadge.triggered { background:#fde8e8; color:#9a1932; border-color:#f0bbc5; }
@@ -96,7 +97,13 @@ button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visi
 .twinConsoleLabel { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:10px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
 .twinExternalDisplay .twinConsoleLabel { color:#92ad6d; }
 .twinExternalDisplay .twinConsoleLabel strong { color:#efffa6; font-family:var(--font-geist-mono); font-size:14px; }
-.twinExternalDisplay p { position:relative; z-index:1; margin:9px 0 0; display:-webkit-box; overflow:hidden; color:#efffa6; font-family:var(--font-geist-mono); font-size:12px; font-weight:650; line-height:1.45; -webkit-box-orient:vertical; -webkit-line-clamp:3; }
+.twinDisplayScroll { position:relative; z-index:1; max-height:56px; margin-top:8px; overflow:hidden; }
+.twinDisplayScroll.isOverflowing { padding-right:7px; overflow-x:hidden; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; scrollbar-width:thin; scrollbar-color:#7fa14f #1c2832; }
+.twinDisplayScroll::-webkit-scrollbar { width:6px; }
+.twinDisplayScroll::-webkit-scrollbar-track { border-radius:8px; background:#1c2832; }
+.twinDisplayScroll::-webkit-scrollbar-thumb { border-radius:8px; background:#7fa14f; }
+.twinDisplayScroll:focus-visible { outline:1px solid #c7ef82; outline-offset:2px; }
+.twinDisplayScroll p { margin:0; color:#efffa6; font-family:var(--font-geist-mono); font-size:12px; font-weight:650; line-height:1.45; overflow-wrap:anywhere; }
 .twinActions { border:1px solid var(--line); background:#f7f9fc; color:#3a4d62; }
 .twinActions .twinConsoleLabel { color:var(--muted); }
 .twinActions .twinConsoleLabel strong { min-width:22px; height:22px; display:grid; place-items:center; border-radius:7px; background:var(--navy); color:white; }
