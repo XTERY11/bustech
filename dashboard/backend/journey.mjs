@@ -75,6 +75,9 @@ export function guidance(journey, context, result, now = Date.now()) {
     ? say('Go to the bus stop', `Please go to the marked boarding point at ${stop} for route ${route}. Your assistance plan is ready.`)
     : say('Booking received', result?.passenger_communication?.display_text ?? 'We are preparing your assistance plan. Please wait for confirmation.');
   if (journey.stage === 'AT_STOP') {
+    // No label passed the confidence gate yet (a live camera often triggers on a first, partial view; the
+    // bridge's next heartbeat carries the best score of the visit): still checking, not a mismatch.
+    if (!journey.matched && !journey.labels?.length) return say('Please wait at the stop', 'We can see someone at the boarding point and are confirming your assistance. Please wait.');
     if (!journey.matched) return say('Please wait at the stop', 'The detected assistance does not match the booking. Please wait for the safety operator.');
     if (result?.plan_status !== 'READY') return say('We see you at the stop', result?.passenger_communication?.display_text ?? 'Your arrival has been recognised. Please wait while we prepare your assistance plan.');
     const elapsed = now - (journey.animation?.started_at ?? now);

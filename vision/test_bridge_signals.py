@@ -1,10 +1,13 @@
 """What the Sense bridge posts and how replay_bridge.py renews visits; no camera, model or hub."""
 import itertools
+import time
 import unittest
+from email.utils import formatdate
+from unittest.mock import patch
 
 from replay_bridge import fresh_visits
 from ride_signal_client import OrderedSignalQueue
-from yolo_bridge import perception_payload
+from yolo_bridge import hub_clock_offset, perception_payload
 
 CANE = [{'label': 'CANE', 'confidence': .91}]
 
@@ -83,6 +86,19 @@ class ClipChoiceTest(unittest.TestCase):
         self.assertEqual([clip_for(n, clips) for n in ('WHEELCHAIR', 'STROLLER', 'CANE', 'VISUAL_ASSISTANCE', 'HEARING_ASSISTANCE')],
                          ['wheelchair', 'stroller', 'cane', 'cane', 'wheelchair'])
         self.assertEqual(clip_for('STROLLER', {'venue_live': 1}), 'venue_live')
+
+
+
+class HubClockTest(unittest.TestCase):
+    def test_offset_from_the_hub_date_header_and_none_when_unreachable(self):
+        class Reply:
+            def __init__(self, skew): self.headers = {'Date': formatdate(time.time() + skew, usegmt=True)}
+            def __enter__(self): return self
+            def __exit__(self, *_): pass
+        with patch('yolo_bridge.urlopen', return_value=Reply(-7)):
+            self.assertAlmostEqual(hub_clock_offset('http://hub'), -7, delta=1.1)  # this camera is 7 s ahead of the hub
+        with patch('yolo_bridge.urlopen', side_effect=OSError('refused')):
+            self.assertIsNone(hub_clock_offset('http://hub'))
 
 
 if __name__ == '__main__':

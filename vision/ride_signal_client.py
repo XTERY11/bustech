@@ -49,21 +49,43 @@ class RideSignalClient:
         return self.post(f"/api/{channel}", self.envelope(channel, payload, observed_at=observed_at, event_id=event_id))
 
 
+def hub_error_code(failure):
+    """The hub's error code from an HTTPError body ({"error": "INVALID_OBSERVED_AT"}), else None. Only a short
+    upper-case code is kept, never free text."""
+    try:
+        code = json.loads(failure.read().decode("utf-8")).get("error")
+    except Exception:
+        return None
+    return code if isinstance(code, str) and code.isascii() and code.replace("_", "").isalnum() and code.isupper() and len(code) <= 40 else None
+
+
+def is_permanent(failure):
+    """A rejection that an unchanged retry can never fix: the hub refused this envelope itself (HTTP 4xx such as
+    INVALID_OBSERVED_AT, INVALID_SIGNAL, OUT_OF_ORDER_SIGNAL, EVENT_ID_CONFLICT). Not 401/403 (the token, fixed on
+    the hub without touching the envelope), 408 or 429; never connection errors, timeouts or 5xx."""
+    return isinstance(failure, error.HTTPError) and 400 <= failure.code < 500 and failure.code not in (401, 403, 408, 429)
+
+
 class OrderedSignalQueue:
     """Retry in capture order without blocking inference or losing an enter/exit.
 
     Only adjacent, unsent region heartbeats for the same visit may be replaced. An
     in-flight or failed envelope stays unchanged, including its ID and timestamp.
+    A transient failure (hub unreachable, timeout, 5xx, 401/403) is retried before anything
+    newer; an envelope the hub rejects for good (other 4xx) is dropped, so it cannot block
+    every later signal: on_drop(error) is called and diagnostics keep it as signal_error
+    (with the hub's code) until a later signal is accepted, and count it in dropped_signals.
     The outbox is in memory; stopping the process does not persist pending events.
     """
-    def __init__(self, client, retry_seconds=1.0):
-        self.client, self.retry_seconds = client, retry_seconds
+    def __init__(self, client, retry_seconds=1.0, on_drop=None):
+        self.client, self.retry_seconds, self.on_drop = client, retry_seconds, on_drop
         self._queue = deque()
         self._lock = threading.Lock()
         self._sending = None
         self._wake, self._stop = threading.Event(), threading.Event()
         self._worker = None
         self._last_signal = self._last_error = None
+        self._dropped = 0
 
     @staticmethod
     def _heartbeat_key(item):
@@ -100,7 +122,19 @@ class OrderedSignalQueue:
                 self._last_error = {'event_id': envelope['event_id'], 'error': type(failure).__name__}
                 if isinstance(failure, error.HTTPError):
                     self._last_error['status'] = failure.code
+                    code = hub_error_code(failure)
+                    if code:
+                        self._last_error['code'] = code
+                dropped = is_permanent(failure)
+                if dropped:
+                    zone = envelope['payload'].get('zone', {})
+                    self._queue.popleft()
+                    self._dropped += 1
+                    self._last_error.update({'dropped': True, 'reason': zone.get('event'), 'visit_id': zone.get('visit_id')})
+                report = deepcopy(self._last_error)
                 self._sending = None
+            if dropped and self.on_drop:
+                self.on_drop(report)
             return False
         with self._lock:
             self._queue.popleft()
@@ -114,7 +148,8 @@ class OrderedSignalQueue:
 
     def diagnostics(self):
         with self._lock:
-            return {'pending_signals': len(self._queue), 'last_signal': deepcopy(self._last_signal), 'signal_error': deepcopy(self._last_error)}
+            return {'pending_signals': len(self._queue), 'last_signal': deepcopy(self._last_signal), 'signal_error': deepcopy(self._last_error),
+                    'dropped_signals': self._dropped}
 
     def start(self):
         if self._worker is None:

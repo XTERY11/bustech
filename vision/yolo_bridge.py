@@ -24,8 +24,10 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.request import urlopen
 
 import cv2
 import numpy as np
@@ -81,7 +83,7 @@ def make_handler(shared, info, delivery=None):
                 _, stamp, status = shared.get()
                 body = json.dumps({'ok': True, 'source': info['source'], 'device': info['device'], 'roi': info['roi'],
                                    'fps': round(shared.fps, 1), 'frame_age_ms': round((time.monotonic() - stamp) * 1000) if stamp else None,
-                                   'bridge_url': info['bridge_url'], **status,
+                                   'bridge_url': info['bridge_url'], 'hub_clock_offset_s': info.get('hub_clock_offset_s'), **status,
                                    **(delivery.diagnostics() if delivery else {})}).encode()
                 self.send_response(200); self._cors(); self.send_header('Content-Type', 'application/json')
                 self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body); return
@@ -244,6 +246,18 @@ def perception_payload(detections, reason, roi_id, visit_id, left=None, intent=N
     return {'yolo_detections': detections[:20], 'target_match_confirmed': bool(detections), 'zone': zone}
 
 
+def hub_clock_offset(base_url):
+    """Seconds the hub's clock is ahead of this machine (negative: behind), from the Date header of its /api/health
+    (1 s resolution), or None when the hub cannot be reached. Every observed_at is stamped with this machine's clock."""
+    try:
+        sent = time.time()
+        with urlopen(base_url.rstrip('/') + '/api/health', timeout=2) as reply:
+            hub = parsedate_to_datetime(reply.headers['Date']).timestamp()
+        return round(hub - (sent + time.time()) / 2, 1)
+    except (OSError, ValueError, TypeError):
+        return None
+
+
 def open_capture(source):
     cap = cv2.VideoCapture(source, cv2.CAP_DSHOW) if isinstance(source, int) and os.name == 'nt' else cv2.VideoCapture(source)
     if not cap.isOpened() and isinstance(source, int) and os.name == 'nt':
@@ -291,8 +305,16 @@ def main():
 
     shared = SharedFrame()
     client = None if args.no_signal else RideSignalClient(args.bridge_url, args.bridge_token)
-    delivery = OrderedSignalQueue(client) if client else None  # ordered background delivery with retry
-    info = {'source': str(args.source), 'device': device, 'roi': str(args.roi), 'bridge_url': None if args.no_signal else args.bridge_url}
+    # ordered background delivery with retry; an envelope the hub rejects for good is dropped and logged
+    delivery = OrderedSignalQueue(client, on_drop=lambda failure: record({'event': 'SIGNAL_DROPPED', **failure})) if client else None
+    info = {'source': str(args.source), 'device': device, 'roi': str(args.roi), 'bridge_url': None if args.no_signal else args.bridge_url,
+            'hub_clock_offset_s': None}
+    if client:
+        info['hub_clock_offset_s'] = offset = hub_clock_offset(args.bridge_url)
+        if offset is None:
+            print(f'Hub not reachable at {args.bridge_url} yet; signals are queued until it is.', flush=True)
+        elif offset < -2:  # observed_at from this machine would be ahead of the hub; over 5 s the hub rejects every signal
+            print(f'WARNING: this clock is {-offset:.0f} s ahead of the hub (rejected beyond 5 s). Sync both clocks (NTP).', flush=True)
     server = ThreadingHTTPServer((args.mjpeg_host, args.mjpeg_port), make_handler(shared, info, delivery))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print(f'Device: {device}; classes: {names}; anchor: {args.anchor}; device check: {"on" if verifier else "off"}', flush=True)
@@ -350,6 +372,7 @@ def main():
     capture_fps, capture_start, captured_frames = (fps_src if is_file else 15), time.monotonic(), 0
     writer = None
     last_heartbeat = 0.0
+    clock = None  # --realtime: when the recording would have started playing on a live camera
     tick_fps = time.monotonic(); fps_count = 0
     window = 'Bustech | Sense bridge'
     if not args.no_window:
@@ -489,9 +512,12 @@ def main():
                 cv2.imshow(window, view)
                 if cv2.waitKey(1) & 0xff == ord('q'):
                     break
-            if is_file and args.realtime:  # a live camera would have moved on by this many frames
-                for _ in range(max(0, round((time.monotonic() - tick) * fps_src) - 1)):
+            if is_file and args.realtime:  # like a live camera: frames that arrived meanwhile are dropped, none comes early
+                clock = clock if clock is not None and position > 1 else time.monotonic() - position / fps_src
+                behind = (time.monotonic() - clock) * fps_src - position  # frames the camera has delivered since this one
+                for _ in range(max(0, int(behind))):
                     cap.grab(); position += 1
+                time.sleep(max(0.0, -behind / fps_src))
             elif is_file:  # pace file playback at the source frame rate
                 time.sleep(max(0.0, 1 / fps_src - (time.monotonic() - tick)))
     finally:

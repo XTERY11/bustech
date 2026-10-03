@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { advance, reconcile, matches, ARRIVAL_MS } from '../backend/journey.mjs';
-import { SignalHub } from '../backend/hub.mjs';
+import { SignalHub, PRESENCE_MS } from '../backend/hub.mjs';
 import { plan } from '../backend/planner/agent.mjs';
 
 const booking = (need = 'WHEELCHAIR') => ({ active: true, intent: 'BOARDING', route_id: 'DEMO_ROUTE', stop_id: 'DEMO_STOP', accessibility_need: need,
@@ -99,6 +99,26 @@ test('unmatched aid only waits; after boarding, other people at the stop do not 
   assert.deepEqual([h.hub.snapshot().journey.stage, h.hub.snapshot().journey.journey_id], ['BOOKED', 'b-next']);
 });
 
+test('live camera: a booking takes over the visit already in the region, even when its exit comes before a heartbeat', async t => {
+  const present = (label, visit) => ({ ...enter(label, visit), zone: { ...enter(label, visit).zone, event: 'present' } });
+  const h = harness(t);
+  h.send('perception', enter()); h.add(2000); h.send('perception', present('WHEELCHAIR', 'visit-1'));
+  assert.equal(h.hub.snapshot().journey.stage, 'IDLE', 'no booking yet: the camera report is only kept');
+  h.add(1500); h.send('booking', booking()); await h.hub.run();
+  let s = h.hub.snapshot();
+  assert.deepEqual([s.journey.stage, s.journey.matched, s.journey.visit_id, s.navigation.phase], ['AT_STOP', true, 'visit-1', 'WAIT_AT_STOP']);
+  h.send('perception', exit());
+  assert.equal(h.hub.snapshot().journey.pending_exit, true);
+  h.add(ARRIVAL_MS); assert.equal(h.hub.snapshot().journey.stage, 'ON_BOARD');
+  // An unmatched occupant is taken over as unmatched; a report older than PRESENCE_MS or an exit is not taken over.
+  h.send('perception', enter('STROLLER', 'visit-2')); h.send('booking', booking(), 'b-2');
+  assert.deepEqual([h.hub.snapshot().journey.stage, h.hub.snapshot().journey.matched], ['AT_STOP', false]);
+  h.add(PRESENCE_MS + 1); h.send('booking', booking(), 'b-3');
+  assert.equal(h.hub.snapshot().journey.stage, 'BOOKED');
+  h.send('perception', exit('STROLLER', 'visit-2')); h.send('booking', booking(), 'b-4');
+  assert.equal(h.hub.snapshot().journey.stage, 'BOOKED');
+});
+
 test('model completion immediately pushes TO_STOP navigation and an atomic result snapshot', async t => {
   const h = harness(t); h.send('booking', booking()); await h.hub.run();
   assert.equal(h.hub.snapshot().navigation.phase, 'TO_STOP');
@@ -153,6 +173,7 @@ test('confidence drop holds the bus; recovery uses a new animation ID for indepe
   const first = h.hub.snapshot().journey.animation.id;
   h.send('perception', { ...enter(), yolo_detections: [{ label: 'WHEELCHAIR', confidence: 0.5 }], zone: { ...enter().zone, event: 'present' } });
   assert.equal(h.hub.snapshot().journey.animation, null);
+  assert.match(h.hub.snapshot().journey.guidance.display_text, /confirming your assistance/, 'below the gate is not a mismatch');
   h.send('perception', { ...enter(), zone: { ...enter().zone, event: 'present' } });
   assert.notEqual(h.hub.snapshot().journey.animation.id, first);
   assert.equal(h.calls(), 1);

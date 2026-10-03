@@ -6,6 +6,8 @@ import { advance, guidance, navigation, reconcile, DOCK_MS, ARRIVAL_MS } from '.
 import { normalizeInput, buildPolicy } from './planner/policy.mjs';
 
 const KEYS = { booking: 'request', perception: 'perception' };
+// The camera bridge repeats an occupied region every 2 s ('present'); older than this, the report is not current.
+export const PRESENCE_MS = 5000;
 const fixture = JSON.parse(readFileSync(new URL('./examples/input.json', import.meta.url), 'utf8'));
 const withoutAge = value => Array.isArray(value) ? value.map(withoutAge).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))) : value && typeof value === 'object'
   ? Object.fromEntries(Object.entries(value).filter(([k]) => !['observation_age_ms', 'request_id', 'confidence'].includes(k)).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, withoutAge(v)])) : value;
@@ -122,7 +124,14 @@ export class SignalHub extends EventEmitter {
     // The demo serves one passenger per bus: once a journey has completed, the next booking is met by a
     // fresh simulated bus, so the place the previous passenger used is free again.
     if (channel === 'booking' && this.journey.completed) this.cabin = structuredClone(fixture.vehicle_context.cabin);
-    this.applyJourney(advance(this.journey, channel, normalized[KEYS[channel]], this.result?.plan_status, { eventId, now: this.now() }));
+    let next = advance(this.journey, channel, normalized[KEYS[channel]], this.result?.plan_status, { eventId, now: this.now() });
+    // A live camera runs before any booking: the passenger may already be standing in the region, so its enter
+    // was ignored. A booking takes over that visit from the camera's latest report, if it is a recent heartbeat.
+    const seen = this.channels.perception;
+    if (channel === 'booking' && next.stage === 'BOOKED' && seen?.payload.zone?.triggered === true && this.now() - seen.receivedAt <= PRESENCE_MS) {
+      next = advance(next, 'perception', seen.payload, null, { now: this.now() });
+    }
+    this.applyJourney(next);
     let changed = channel === 'booking' || before !== this.decisionKey();
     if (channel === 'booking') this.localNext = normalized.request.active !== true || normalized.request.intent !== 'BOARDING';
     if (changed && channel === 'perception') {

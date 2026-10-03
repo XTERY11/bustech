@@ -1,3 +1,5 @@
+import io
+import json
 import unittest
 from copy import deepcopy
 from urllib import error
@@ -117,6 +119,49 @@ class DeliveryTest(unittest.TestCase):
         self.assertFalse(self.queue.deliver_once())
         self.assertEqual(self.queue.diagnostics()['signal_error'], {'event_id': 'exit-1', 'error': 'HTTPError', 'status': 401})
         self.assertEqual(self.queue.close(), 1)
+
+    def reject(self, status, code):
+        def post(path, envelope):
+            self.client.sent.append((path, deepcopy(envelope)))
+            raise error.HTTPError('http://hub', status, 'Bad Request', {}, io.BytesIO(json.dumps({'error': code}).encode()))
+        return post
+
+    def test_a_permanent_rejection_is_dropped_logged_and_does_not_block_later_signals(self):
+        dropped = []
+        self.queue = OrderedSignalQueue(self.client, on_drop=dropped.append)
+        self.enqueue('enter', 'enter-1', 1)
+        self.enqueue('exit', 'exit-1', 2)
+        self.enqueue('enter', 'enter-2', 3, 'visit-2')
+        accept, self.client.post = self.client.post, self.reject(400, 'INVALID_SIGNAL')
+        self.assertFalse(self.queue.deliver_once())  # enter-1 refused for good: dropped, exit-1 is next
+        self.assertEqual(dropped, [{'event_id': 'enter-1', 'error': 'HTTPError', 'status': 400, 'code': 'INVALID_SIGNAL',
+                                    'dropped': True, 'reason': 'enter', 'visit_id': 'visit-1'}])
+        diagnostics = self.queue.diagnostics()
+        self.assertEqual((diagnostics['pending_signals'], diagnostics['dropped_signals']), (2, 1))
+        self.assertEqual(diagnostics['signal_error']['code'], 'INVALID_SIGNAL')
+        self.client.post = accept
+        self.assertTrue(self.queue.deliver_once())
+        self.assertEqual(self.client.sent[-1][1]['event_id'], 'exit-1')
+        self.assertIsNone(self.queue.diagnostics()['signal_error'])
+        self.assertEqual(self.queue.diagnostics()['dropped_signals'], 1)
+
+    def test_each_4xx_code_drops_but_auth_rate_limit_and_server_errors_are_retried(self):
+        for status, code, dropped in [(400, 'INVALID_OBSERVED_AT', True), (400, 'OUT_OF_ORDER_SIGNAL', True), (409, 'EVENT_ID_CONFLICT', True),
+                                      (413, 'PAYLOAD_TOO_LARGE', True), (401, 'BRIDGE_TOKEN_REQUIRED', False), (403, 'ORIGIN_NOT_ALLOWED', False),
+                                      (429, 'TOO_MANY', False), (500, 'X', False), (503, 'X', False)]:
+            with self.subTest(status=status, code=code):
+                queue = OrderedSignalQueue(self.client)
+                self.client.post = self.reject(status, code)
+                queue.enqueue('perception', perception('exit'), event_id='exit-1')
+                self.assertFalse(queue.deliver_once())
+                self.assertEqual(queue.diagnostics()['pending_signals'], 0 if dropped else 1)
+                self.assertEqual(queue.diagnostics()['signal_error']['code'], code)
+                self.assertEqual(queue.diagnostics()['signal_error'].get('dropped', False), dropped)
+        self.client.post = MemoryClient.post.__get__(self.client)
+        self.client.failures = 1  # hub not running: connection refused stays pending
+        self.enqueue('exit', 'exit-2', 3)
+        self.assertFalse(self.queue.deliver_once())
+        self.assertEqual(self.queue.diagnostics()['pending_signals'], 1)
 
     def test_success_diagnostics_use_the_same_visit_and_clear_prior_error(self):
         self.enqueue('exit', 'exit-1', 1)

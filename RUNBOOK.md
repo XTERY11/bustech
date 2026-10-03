@@ -67,7 +67,7 @@ BRIDGE_WINDOW=1 BRIDGE_RECORD=1 bash start_demo.sh "http://172.20.10.4:4747/vide
 
 | 步骤 | 现场的人做什么 | 等多久 |
 |---|---|---|
-| 1 | 带辅具的人站在区域**外面**。操作员在 App 上选类别并提交预约（没有 App 时用下面的命令） | 等 dashboard 出现推理结果，约 1–2 秒 |
+| 1 | 带辅具的人站在区域**外面**。操作员在 App 上选类别并提交预约（没有 App 时用下面的命令）。人已经在区域里时再预约也可以，预约一到就直接进入步骤 2 | 等 dashboard 出现推理结果，约 1–2 秒 |
 | 2 | 带着辅具走进区域，站住 | 约 0.5 秒后画面变红，出现 `TRIGGER` |
 | 3 | **在区域里等公交进站、开门、放好坡道** | **约 10 秒**，等孪生显示 "Ready to board" |
 | 4 | 朝车的方向（默认往画面深处）走出区域 | 走出后约 2 秒，画面恢复绿色 |
@@ -123,6 +123,22 @@ curl -X POST http://127.0.0.1:8787/api/booking -H 'Content-Type: application/jso
 
 ---
 
+### 现场要避免的四件事
+
+- 走出区域后的 10 秒内不要再走回区域。
+- 有人在区域里时不要停止或重启检测桥，否则离站信号丢失，旅程会停在"到站"。
+- 同一个中枢只接一个检测桥：接真实摄像头前先停掉回放。
+- 中枢重启后，预约要重新发。
+
+接摄像头前可以先跑一遍不需要摄像头的握手自检（13 种情况，约 3 分钟，需要另开一个空闲端口的中枢，不要对着正在演示的中枢跑）：
+
+```bash
+cd dashboard && BRIDGE_PORT=8887 node backend/server.mjs          # 终端一
+cd vision && .venv/bin/python rehearse_live.py --bridge-url http://127.0.0.1:8887   # 终端二
+```
+
+---
+
 ## 5. 出问题时先看哪里
 
 | 现象 | 先检查 |
@@ -132,4 +148,5 @@ curl -X POST http://127.0.0.1:8787/api/booking -H 'Content-Type: application/jso
 | 变红了但旅程停在 "Booked" | 类别与预约不一致；预约已过期；没有预约 |
 | 走出区域后不进入上车阶段 | 区域里还有别人；离开方向不是朝车一侧；停留不到 2 秒；进站还不满 10 秒（等一下） |
 | dashboard 显示 key 未配置 | `read -s` 和启动命令不在同一个终端窗口 |
+| 触发了但中枢完全没反应 | `curl http://127.0.0.1:8790/health`：`pending_signals` 和 `dropped_signals` 应为 0，`signal_error` 应为 null。检测桥和中枢不在同一台电脑时看 `hub_clock_offset_s`，检测桥的时钟比中枢快 5 秒以上，信号会被全部丢弃 |
 | 想复查刚才发生了什么 | `vision/trigger_snapshots/` 里每次触发、类别变化、离开都有截图和 `events.jsonl`；`curl http://127.0.0.1:8787/api/state` 看 `journey` |

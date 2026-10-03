@@ -75,13 +75,15 @@ python monitor_zone.py --source demos/clips/wheelchair_test.mp4 --roi monitor_ex
 
 以上描述的是 `monitor_zone.py`。正式联调用 `yolo_bridge.py`：它保留现有区域进入 / 心跳 / 离开含义，并在每次区域激活时生成 `zone.visit_id`（12 位 UUID）。本次 `enter`、`present`、`exit` 使用同一访问编号；它只是区域访问标识，不是乘客身份。预约类别、置信度阈值和方案就绪的核对由中枢完成，视觉端不读取预约或车辆授权。
 
-HTTP 信号通过进程内的有序队列在后台发送，断网或中枢出错时保留原 `event_id`、`observed_at` 和请求体重试；旧事件确认成功后才发下一个。连续尚未发送的同次 `present` 可合并，`enter` / `exit` 和已经尝试过的事件不可替换。`/health` 的 `pending_signals`、`last_signal`、`signal_error` 可检查投递状态；错误诊断不包含 token。停止进程会报告未送达的事件数，但队列不跨进程保存。
+HTTP 信号通过进程内的有序队列在后台发送，断网或中枢出错时保留原 `event_id`、`observed_at` 和请求体重试；旧事件确认成功后才发下一个。连续尚未发送的同次 `present` 可合并，`enter` / `exit` 和已经尝试过的事件不可替换。被中枢永久拒绝的信封（HTTP 4xx，如 `INVALID_OBSERVED_AT` 时钟超前 5 秒以上、`INVALID_SIGNAL`、`OUT_OF_ORDER_SIGNAL`、`EVENT_ID_CONFLICT`）原样重试也不会成功，会被丢弃并记入日志（`SIGNAL_DROPPED`），不再阻塞后面的信号；401/403（token）、429、5xx 和连不上中枢仍按原样重试。`/health` 的 `pending_signals`、`last_signal`、`signal_error`（带中枢错误码 `code`，被丢弃时 `dropped: true`）、`dropped_signals`、`hub_clock_offset_s`（中枢时钟减本机时钟，启动时测一次；本机超前 2 秒以上会警告）可检查投递状态；错误诊断不包含 token。停止进程会报告未送达的事件数，但队列不跨进程保存。
+
+真实摄像头联调前先跑 `rehearse_live.py --bridge-url http://127.0.0.1:<空闲中枢端口>`：不需要摄像头和 YOLO，按真实检测桥的方式（enter、每 2 秒 present、离开 2 秒后 exit）对中枢依次演练预约前已在区域、路人、侧面离开、停留太短、检测桥重启、时钟偏差等 13 个场景，逐条输出 PASS/FAIL，约 3 分钟。`--realtime` 播放录像时按墙上时钟取帧（处理快时等待、慢时丢帧），和摄像头一样。
 
 `exit` 另带 `zone.left`（区域里出现过的类别）、`zone.dwell_seconds` 和 `zone.boarding`：`boarding_intent()` 跟踪触发的辅具（看不到辅具时跟最近的人），朝 `--board-direction`（默认 ROI 文件的 `board_direction`，否则 `up`）离开为 `true`，停留短于 `--min-dwell` 秒或从别的方向离开为 `false`，无法判断时省略该字段（中枢按上车处理）。进入 / 离开按时间去抖（`--enter-seconds` / `--exit-seconds`）。
 
 `--capture DIR` 保存 `annotated.mp4` 和 `signals.jsonl`（每条信号的完整 payload，含 `visit_id`、`boarding`，以及在视频中的秒数）；`replay_bridge.py --capture DIR` 无需摄像头和 YOLO 按原时间重放，端点与真实检测桥相同（`--after-booking` 等到中枢有预约再播）。重放同样走有序队列，每一遍都用新的 `event_id` 和新的 `visit_id`（每个录制的访问编号映射为一个新的 12 位编号；旧录制没有编号时按 enter..exit 生成），否则 `--loop` 的第二遍会被中枢当作重复或过期。`demos/captures/venue` 是现场录像 72–182 秒的重放素材。
 
-仅验证逻辑、不启动摄像头或模型：`python -m unittest test_aid_verifier test_monitor_zone test_signal_delivery test_bridge_signals -v`（45 项）。
+仅验证逻辑、不启动摄像头或模型：`python -m unittest test_aid_verifier test_monitor_zone test_signal_delivery test_bridge_signals -v`（49 项）。
 
 ## 演示与数据处理
 
