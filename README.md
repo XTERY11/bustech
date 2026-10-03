@@ -2,7 +2,7 @@
 
 > Start here: [HANDOFF.md](HANDOFF.md) explains what works today, how to run it, and the two open modules. Interfaces are in [PROMPT.md](PROMPT.md).
 
-Three prototypes wired into one open-loop demonstration:
+The native passenger app and three companion modules are wired into one open-loop demonstration:
 
 ```
                       ┌─────────────── vision/ (Python, port 8790) ───────────────┐
@@ -27,6 +27,7 @@ Open loop: the twin only *displays* the validated plan. Vehicle conditions stay 
 
 | Folder | What | Entry points |
 |---|---|---|
+| `app/` | Native BusPulse SG iOS app (SwiftUI) | Open `app/BusPulse SG.xcodeproj`; see [app setup](app/README.md) and [App–CV–Dashboard contract](app/docs/app-cv-dashboard-interface.md) |
 | `vision/` | YOLO runtime (Bustech-runtime package) + **new** `yolo_bridge.py`, `start_bridge.sh`, `ride_signal_client.py` | `bash setup_unix.sh` once · `bash start_bridge.sh [source]` |
 | `dashboard/` | AccessRide dashboard + signal hub + DeepSeek planner | `npm ci` once · `node scripts/dev-integrated.mjs` |
 | `twin/` | Bus digital twin (React Three Fiber) + **new** embed mode | `bash sync_to_dashboard.sh` after any twin change |
