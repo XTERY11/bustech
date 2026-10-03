@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
   const page = await browser.newPage({ viewport: { width: 1536, height: 1080 } });
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   try {
-    await page.goto('http://127.0.0.1:3000', { waitUntil: 'domcontentloaded' });
+    await page.goto(process.env.DASHBOARD_URL || 'http://127.0.0.1:3000', { waitUntil: 'domcontentloaded' });
     await page.getByText('Signal server connected', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Show controls & details', exact: true }).click();
     const workflows = [];
@@ -21,6 +21,8 @@ const assert = require('node:assert/strict');
       const result = JSON.parse(await page.locator('dialog .jsonCode').innerText());
       assert.equal(result.meta.validation_passed, true);
       assert.equal(result.passenger_communication.language, 'en-SG');
+      assert.ok(result.boarding_target, 'READY scenarios must include a validated boarding target');
+      assert.ok(result.action_plan.some(a => a.action === 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE'));
       assert.doesNotMatch(JSON.stringify(result), /\p{Script=Han}/u, 'All generated output should be in English');
       if (scenario === 'Wheelchair') assert.ok(result.action_plan.some(a => a.action === 'DEPLOY_AUTOMATIC_SHORT_RAMP'));
       else assert.ok(!result.action_plan.some(a => a.action === 'DEPLOY_AUTOMATIC_SHORT_RAMP'));
@@ -28,6 +30,8 @@ const assert = require('node:assert/strict');
       workflows.push({ scenario, mode, meta: result.meta, actions: result.action_plan.map(a => a.action) });
       await page.getByRole('button', { name: 'Close dialog' }).click();
     }
+    await page.getByRole('button', { name: 'Preview passenger guidance and seating' }).click();
+    await page.getByText('Waiting for safety confirmation', { exact: true }).waitFor({ timeout: 12000 });
     await fs.mkdir('outputs', { recursive: true });
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: 'outputs/desktop.png', fullPage: true });

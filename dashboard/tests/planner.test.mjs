@@ -19,6 +19,13 @@ for (const c of cases) test(`scenario: ${c.name}`, async () => {
   const actions = result.action_plan.map(a => a.action);
   c.expected.includes.forEach(a => assert.ok(actions.includes(a), `Missing ${a}`));
   c.expected.excludes.forEach(a => assert.ok(!actions.includes(a), `Unsafe ${a}`));
+  if (result.plan_status === 'READY') {
+    assert.ok(result.boarding_target, 'READY demo should have a boarding target');
+    assert.ok(actions.includes('GUIDE_PASSENGER_TO_ASSIGNED_PLACE'));
+  } else {
+    assert.equal(result.boarding_target, null);
+    assert.ok(!actions.includes('GUIDE_PASSENGER_TO_ASSIGNED_PLACE'));
+  }
   assert.equal(result.meta.api_calls, 0);
 });
 
@@ -28,7 +35,7 @@ test('passenger audio uses the public demo route and natural boarding guidance',
   assert.equal(result.passenger_communication.channel, 'EXTERNAL_AUDIO');
   assert.equal(
     result.passenger_communication.audio_text,
-    'Route 400. Please keep clear of the entrance. Board only when the safety operator gives the signal.',
+    'Route 400. Please keep clear of the entrance. Board only when the safety operator gives the signal. Proceed to seat S03 when the safety operator invites you to board.',
   );
   assert.equal(result.passenger_communication.display_text, null);
 });
@@ -40,6 +47,71 @@ test('passenger route names replace underscores with spaces', async () => {
   const result = await plan(input, { mode: 'rules' });
   assert.match(result.passenger_communication.audio_text, /^Route BLUE LINE 2\./);
   assert.doesNotMatch(result.passenger_communication.audio_text, /_/);
+});
+
+test('trusted policy assigns an empty seat and injects the same target into guidance', async () => {
+  const input = structuredClone(cases.find(c => c.name === 'crutch').input);
+  const result = await plan(input, { mode: 'rules' });
+  assert.deepEqual(result.boarding_target, { type: 'SEAT', id: 'S03' });
+  const guideIndex = result.action_plan.findIndex(a => a.action === 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE');
+  const seatedIndex = result.action_plan.findIndex(a => a.action === 'WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION');
+  assert.ok(guideIndex >= 0 && guideIndex < seatedIndex);
+  assert.deepEqual(result.action_plan[guideIndex].parameters, { target_type: 'SEAT', target_id: 'S03' });
+  assert.match(result.passenger_communication.display_text, /seat S03/);
+
+  input.vehicle_context.cabin.occupied_seat_ids.push('S03');
+  assert.equal(revalidateForSimulation(result, input).valid, false);
+  const next = await plan(input, { mode: 'rules' });
+  assert.deepEqual(next.boarding_target, { type: 'SEAT', id: 'S02' });
+  assert.ok(!input.vehicle_context.cabin.occupied_seat_ids.includes(next.boarding_target.id));
+});
+
+test('wheelchair uses the bay; known full cabin or occupied bay requires confirmation', async () => {
+  const wheelchair = base();
+  const ready = await plan(wheelchair, { mode: 'rules' });
+  assert.deepEqual(ready.boarding_target, { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' });
+  assert.deepEqual(
+    ready.action_plan.find(a => a.action === 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE').parameters,
+    { target_type: 'WHEELCHAIR_BAY', target_id: 'WHEELCHAIR_BAY' },
+  );
+
+  wheelchair.vehicle_context.cabin.wheelchair_bay_occupied = true;
+  const blockedBay = await plan(wheelchair, { mode: 'rules' });
+  assert.equal(blockedBay.plan_status, 'NEEDS_CONFIRMATION');
+  assert.equal(blockedBay.boarding_target, null);
+  assert.ok(blockedBay.safety_flags.includes('NO_ACCESSIBLE_PLACE_AVAILABLE'));
+
+  wheelchair.vehicle_context.cabin.wheelchair_bay_occupied = false;
+  wheelchair.vehicle_context.cabin.occupied_seat_ids.push('F01');
+  const foldableSeatInUse = await plan(wheelchair, { mode: 'rules' });
+  assert.equal(foldableSeatInUse.plan_status, 'NEEDS_CONFIRMATION');
+  assert.equal(foldableSeatInUse.boarding_target, null);
+
+  const walking = structuredClone(cases.find(c => c.name === 'crutch').input);
+  walking.vehicle_context.cabin.occupied_seat_ids = Array.from({ length: 16 }, (_, i) => `S${String(i + 1).padStart(2, '0')}`);
+  const full = await plan(walking, { mode: 'rules' });
+  assert.equal(full.plan_status, 'NEEDS_CONFIRMATION');
+  assert.equal(full.boarding_target, null);
+  assert.ok(full.safety_flags.includes('NO_ACCESSIBLE_PLACE_AVAILABLE'));
+});
+
+test('missing cabin remains backward compatible without inventing a destination', async () => {
+  const input = base();
+  delete input.vehicle_context.cabin;
+  const result = await plan(input, { mode: 'rules' });
+  assert.equal(result.plan_status, 'READY');
+  assert.equal(result.boarding_target, null);
+  assert.ok(!result.action_plan.some(a => a.action === 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE'));
+});
+
+test('model target is compared by type and id, independent of JSON property order', async () => {
+  const input = structuredClone(cases.find(c => c.name === 'crutch').input);
+  const value = proposal(input);
+  value.boarding_target = { id: value.boarding_target.id, type: value.boarding_target.type };
+  const result = await plan(input, { client: { async complete() { return mock(value); } } });
+  assert.equal(result.meta.source, 'llm');
+  assert.equal(result.meta.validation_passed, true);
+  assert.deepEqual(result.boarding_target, { id: 'S03', type: 'SEAT' });
 });
 
 test('every automatic-ramp interlock fails closed individually', async () => {
@@ -76,6 +148,9 @@ test('wrong types / negative ages / invalid confidence never reach API', async (
     x => { x.perception.yolo_detections[0].confidence = 2; },
     x => { x.request.active = 1; },
     x => { x.request_id = 'injected\ntext'; },
+    x => { x.vehicle_context.cabin.occupied_seat_ids.push('S99'); },
+    x => { x.vehicle_context.cabin.occupied_seat_ids.push('S01'); },
+    x => { x.vehicle_context.cabin.wheelchair_bay_occupied = 'false'; },
   ];
   for (const mutate of mutations) {
     const input = base(); mutate(input);
@@ -121,6 +196,8 @@ test('injected, incomplete, wrong-status, reordered or foreign-id actions are re
     p => { p.request_id = 'other-request'; },
     p => p.actions.push(p.actions[0]),
     p => { p.actuator_voltage = 240; },
+    p => { delete p.boarding_target; },
+    p => { p.boarding_target = { type: 'SEAT', id: 'S02' }; },
   ]) {
     const input = base(), bad = proposal(input); mutate(bad);
     const result = await plan(input, { client: { async complete() { return mock(bad); } } });
@@ -185,6 +262,7 @@ test('fresh-state revalidation rejects new obstruction, changed geometry and wro
     x => { x.perception.geometry.measured_gap_cm = 9; },
     x => { x.request_id = 'another-request'; },
     x => { x.vehicle_context.observation_age_ms = 1501; },
+    x => { x.vehicle_context.cabin.wheelchair_bay_occupied = true; },
   ]) {
     const changed = base(); mutate(changed);
     assert.equal(revalidateForSimulation(result, changed).valid, false);

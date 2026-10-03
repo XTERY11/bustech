@@ -70,7 +70,7 @@ For crutches, use `CRUTCH` without `WHEELCHAIR_RAMP`. Vision and hearing support
 
 ## Simulated scene and snapshots
 
-The server retains the latest booking and detections. It supplies a stopped vehicle, open door, stowed ramp, clear entrance, simulated approval and sample ramp geometry. Route and stop follow the booking. Context includes `presentation_mode: WEB_DEMO`; results report `vehicle_context_source: SIMULATED_SCENARIO`. These are presentation settings, not sensor readings.
+The server retains the latest booking and detections. It supplies a stopped vehicle, open door, stowed ramp, clear entrance, simulated approval, sample ramp geometry and a simulated cabin-occupancy snapshot. The trusted policy assigns an unoccupied seat or wheelchair bay in `boarding_target`; the model may explain but cannot change that target. Route and stop follow the booking. Context includes `presentation_mode: WEB_DEMO`; results report `vehicle_context_source: SIMULATED_SCENARIO`. These are presentation settings, not sensor readings.
 
 Inputs are presentation snapshots. Reception metadata retains their timestamps; the last result stays visible after sending stops. A decision-changing input triggers a new run. Updates arriving close together are combined for about 250 ms. A superseded model response cannot overwrite the newer state.
 

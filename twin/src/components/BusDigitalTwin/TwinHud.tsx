@@ -1,7 +1,70 @@
-import { memo } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import type { VehicleState } from '../../types/vehicle';
 import type { Presentation } from '../../state/presentation';
 import { IconAccessible, IconSpeaker } from './icons';
+
+function AutoScrollMessage({ text }: { text: string }) {
+  const viewport = useRef<HTMLSpanElement>(null);
+  const manual = useRef(false);
+  const [overflowing, setOverflowing] = useState(false);
+
+  useEffect(() => {
+    const node = viewport.current;
+    if (!node) return;
+    node.scrollLeft = 0;
+    manual.current = false;
+    const measure = () => setOverflowing(node.scrollWidth > node.clientWidth + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [text]);
+
+  useEffect(() => {
+    const node = viewport.current;
+    if (!node || !overflowing || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+    let frame = 0;
+    let direction = 1;
+    let last = performance.now();
+    let holdUntil = last + 1400;
+    const tick = (now: number) => {
+      const elapsed = Math.min(64, now - last);
+      last = now;
+      const maximum = Math.max(0, node.scrollWidth - node.clientWidth);
+      if (!manual.current && maximum > 1 && now >= holdUntil) {
+        node.scrollLeft += direction * elapsed * 0.022;
+        if (node.scrollLeft >= maximum - 0.5) {
+          node.scrollLeft = maximum;
+          direction = -1;
+          holdUntil = now + 1600;
+        } else if (node.scrollLeft <= 0.5 && direction < 0) {
+          node.scrollLeft = 0;
+          direction = 1;
+          holdUntil = now + 1400;
+        }
+      }
+      frame = window.requestAnimationFrame(tick);
+    };
+    frame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frame);
+  }, [overflowing, text]);
+
+  const stopAutoScroll = () => { manual.current = true; };
+
+  return <span
+    ref={viewport}
+    className={`m twin-message-scroll ${overflowing ? 'isOverflowing' : ''}`}
+    tabIndex={overflowing ? 0 : undefined}
+    aria-label="Scrollable external display message"
+    title={overflowing ? 'Scroll to read the full message' : undefined}
+    onPointerEnter={stopAutoScroll}
+    onPointerDown={stopAutoScroll}
+    onWheel={stopAutoScroll}
+    onTouchStart={stopAutoScroll}
+    onFocus={stopAutoScroll}
+  >{text}</span>;
+}
 
 /**
  * Restrained DOM overlay inside the viewer:
@@ -13,6 +76,10 @@ export const TwinHud = memo(function TwinHud({ state, presentation }: { state: V
   const ann = state.announcement;
   const info = state.passengerInfo;
   const showDisplay = !!info?.title || !!info?.message;
+  const liveText = [...new Set([
+    showDisplay ? info?.message?.trim() : undefined,
+    ann?.active ? ann.text?.trim() : undefined,
+  ].filter((value): value is string => !!value))].join(' ');
 
   const chip = (label: string, value: string, live: boolean) => (
     <span className={`twin-chip ${live ? 'live' : ''}`}>
@@ -39,17 +106,17 @@ export const TwinHud = memo(function TwinHud({ state, presentation }: { state: V
         </ol>
       </div>
 
-      <div className={`twin-bar twin-bar--display ${showDisplay ? 'show' : ''}`} aria-live="polite">
+      <div className={`twin-bar twin-bar--display ${showDisplay ? 'show' : ''}`} aria-hidden={!showDisplay}>
         <span className="twin-bar-icon">
           <IconAccessible size={16} />
         </span>
         <span className="twin-bar-text">
           <span className="t">External display{info?.title ? ` · ${info.title}` : ''}</span>
-          <span className="m">{info?.message}</span>
+          <AutoScrollMessage text={info?.message ?? ''} />
         </span>
       </div>
 
-      <div className={`twin-bar twin-bar--announcement ${ann?.active ? 'show' : ''}`} aria-live="polite">
+      <div className={`twin-bar twin-bar--announcement ${ann?.active ? 'show' : ''}`} aria-hidden={!ann?.active}>
         <span className="twin-bar-icon speaking"><IconSpeaker size={16} /></span>
         <span className="twin-bar-text">
           <span className="t">Announcement</span>
@@ -61,6 +128,7 @@ export const TwinHud = memo(function TwinHud({ state, presentation }: { state: V
           </span>
         )}
       </div>
+      <span className="twin-sr-status" role="status" aria-live="polite" aria-atomic="true">{liveText}</span>
     </>
   );
 });

@@ -77,7 +77,7 @@ Model classes map as `wheelchair_with`/`wheelchair_without → WHEELCHAIR`, `can
 
 **Booking** (phone App → `POST /api/booking`): unchanged, see `dashboard/docs/COMMUNICATION.md`.
 
-**Twin** (dashboard → iframe): `{type:'twin:hello'}` handshake → `{type:'twin:ready'}`; then `{type:'twin:telemetry', frame}` where `frame` is the twin's `TelemetryMessage` (`door`, `ramp`, `kneeling`, `boardingStatus`, `announcement`, `passengerInfo`). The action→frame timeline lives in `dashboard/app/lib/twinScenario.ts`.
+**Twin** (dashboard → iframe): `{type:'twin:hello'}` handshake → `{type:'twin:ready'}`; then `{type:'twin:telemetry', frame}` where `frame` is the twin's `TelemetryMessage` (`door`, `ramp`, `kneeling`, `boardingStatus`, `announcement`, `passengerInfo`, `seatOccupancy`, `passengerJourney`). The action→frame timeline lives in `dashboard/app/lib/twinScenario.ts`.
 
 | Hub action | Twin |
 |---|---|
@@ -86,6 +86,8 @@ Model classes map as `wheelchair_with`/`wheelchair_without → WHEELCHAIR`, `can
 | `KEEP_RAMPS_STOWED` | ramp stays `retracted` |
 | `ACTIVATE_EXTERNAL_SPEAKER` / `CONFIRM_ROUTE_IDENTITY` | `announcement` = audio text |
 | `SHOW_EXTERNAL_DISPLAY` / `EXTEND_DWELL_TIME` | `passengerInfo` = display text / "+60 s dwell time" |
+| `GUIDE_PASSENGER_TO_ASSIGNED_PLACE` | highlight the validated empty seat/bay and animate the passenger through the cabin |
+| `WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION` | show the passenger at the assigned place; keep the boarding state open pending operator confirmation |
 | CANNOT_EXECUTE / `ABORT_*` | reset + "assistance paused" announcement |
 
 ## LAN demo (phone + separate vision PC)
@@ -95,7 +97,8 @@ Model classes map as `wheelchair_with`/`wheelchair_without → WHEELCHAIR`, `can
 ## Tests
 
 ```bash
-cd dashboard && npm test                       # 47 policy / communication / journey checks
+cd dashboard && npm test                       # policy / communication / seat-allocation / journey checks
+cd twin && npm test && npm run typecheck       # cabin and passenger-journey checks
 cd vision && .venv/bin/python -m unittest test_aid_verifier test_monitor_zone
 cd vision && .venv/bin/python yolo_bridge.py --source demos/clips/wheelchair_2.mp4 --roi monitor_example_roi.json --no-window --max-frames 120 --no-signal
 ```

@@ -36,6 +36,8 @@ test('journey: a walking passenger is given a priority seat; needs without a vis
   let j = advance(advance({ stage: 'IDLE' }, 'booking', booking('VISUAL_ASSISTANCE'), undefined), 'perception', enter('CANE'), 'READY');
   j = advance(j, 'perception', exit('CANE'), 'READY');
   assert.equal(j.seat, 'S02');
+  const planned = advance(advance(advance({ stage: 'IDLE' }, 'booking', booking('CANE'), undefined), 'perception', enter('CANE'), 'READY'), 'perception', exit('CANE'), 'READY', { type: 'SEAT', id: 'S03' });
+  assert.equal(planned.seat, 'S03', 'the seat the planner assigned wins');
   assert.equal(matches('HEARING_ASSISTANCE', ['STROLLER']), true);
   assert.equal(matches('WHEELCHAIR', ['STROLLER']), false);
 });

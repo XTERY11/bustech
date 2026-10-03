@@ -42,7 +42,7 @@
 | ① 乘客选择类别 | App → `POST /api/booking` | `accessibility_need`：`WHEELCHAIR` / `STROLLER` / `CANE` …，以及需要的协助 | 阶段进入 `BOOKED`；**大模型推理一次**（没有 key 时用固定规则），方案此时定好 | 思考过程、动作计划；孪生"已收到请求" | 第一轮指引：请前往站台上车点（`journey.guidance`） | 接口已通；App 未接入，用 curl 代替 |
 | ② 触发信号一：进入站台 | 视觉 → `POST /api/perception` | `zone.event = "enter"`，`zone.triggered = true`，区域内辅具的类别 | 阶段进入 `AT_STOP`；核对类别是否与预约一致，一致则按规则核对后执行（**不再调用大模型**） | 一致：孪生下蹲、开门、伸坡道；不一致：车继续等待；实时画面标出触发 | 第二轮指引：已识别你到站 / 请上车 | 已通 |
 | 占用期间 | 视觉 → 同上 | 每 2 秒一次 `zone.event = "present"` | 只刷新时间，不改变阶段 | — | — | 已通 |
-| ③ 触发信号二：离开站台 | 视觉 → 同上 | `zone.event = "exit"`，`zone.triggered = false`，`zone.left` 为刚才在区域里的类别 | 方案为 READY 且类别一致：阶段进入 `ON_BOARD`，分配座位（轮椅 → 轮椅位，其他 → 优先座），预约用完；`ON_BOARD` 保持到下一次预约 | 上车动画（剖面视角、座位高亮、收坡道、关门）；思考面板保留预约时的推理 | 第三轮指引：座位编号 + 上车动画 | 中枢和 dashboard 已通；App 未接入 |
+| ③ 触发信号二：离开站台 | 视觉 → 同上 | `zone.event = "exit"`，`zone.triggered = false`，`zone.left` 为刚才在区域里的类别 | 方案为 READY 且类别一致：阶段进入 `ON_BOARD`，座位用规划器按车厢空位分配的 `boarding_target`（轮椅 → 轮椅位，其他 → 空座，如 `S03`），预约用完；`ON_BOARD` 保持到下一次预约 | 按类别的车内引导动画：乘客（轮椅 / 手杖 / 婴儿车等）沿高亮路线走到分配的位置，停在等待安全员确认；思考面板保留预约时的推理 | 第三轮指引：座位编号 + 上车动画 | 中枢和 dashboard 已通；App 未接入 |
 | 取消 | App → `POST /api/booking` | `active: false` | 阶段回到 `IDLE` | 孪生待命 | 提示先预约 | 已通 |
 
 阶段只在中枢里推进，App 和 dashboard 都不需要自己判断流程：读到 `journey.stage` 切换画面，显示（或朗读）`journey.guidance`，座位在 `journey.seat`。
@@ -231,7 +231,6 @@ cd twin && npm ci && npm test
 
 - 乘客旅程在首屏只是通道状态条里的一格，四个阶段的进度不够醒目。
 - 思考面板的逐词显示会被视觉心跳（每 2 秒一次）重新触发，乘客在站台时常常只显示开头一两个词。
-- 轮椅位在孪生里只有文字提示，没有占用的模型（需要孪生配合）。
 - 车内座位指引只显示在孪生下方的"车外显示屏"里，没有单独的位置。
 
 **验收**（负责人可补充）：

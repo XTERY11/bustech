@@ -180,7 +180,7 @@ export default function Dashboard() {
         return;
       }
       try {
-        const next = offlinePlan(context);
+        const next = offlinePlan({ ...context, request_id: `demo-${crypto.randomUUID()}` });
         setResult(next);
         setSummary({ request_id: next.request_id, decision_summary: next.decision_summary });
       } catch {
@@ -391,7 +391,7 @@ export default function Dashboard() {
 
         <aside className="panel outputPanel">
           <div className="panelHeader"><div><p className="sectionKicker">Full output</p><h2>Validated action plan</h2></div><span className={`planStatus planStatus--${result?.plan_status.toLowerCase() ?? 'waiting'}`}>{result?.plan_status ?? 'WAITING'}</span></div>
-          <div className="simulationPreview"><div><small>Ramp simulation</small><strong>{rampPreview}</strong></div><div><small>Boarding time</small><strong>{actions.includes('EXTEND_DWELL_TIME') ? '+60 seconds' : 'Awaiting plan'}</strong></div><p>Web simulation · {inputSource === 'external' ? 'Latest external snapshot' : 'Demo preset'}</p></div>
+          <div className="simulationPreview"><div><small>Ramp simulation</small><strong>{rampPreview}</strong></div><div><small>Assigned place</small><strong>{result?.boarding_target?.type === 'SEAT' ? result.boarding_target.id : result?.boarding_target?.type === 'WHEELCHAIR_BAY' ? 'Wheelchair bay' : 'Awaiting plan'}</strong></div><p>{actions.includes('EXTEND_DWELL_TIME') ? '+60 seconds boarding time' : 'Standard boarding time'} · Web simulation · {inputSource === 'external' ? 'Latest external snapshot' : 'Demo preset'}</p></div>
           <div className="outputBlock actionOutput"><div className="outputBlockHead"><h3>All actions</h3><span>Simulated only</span></div>{result ? <ol className="actionList">{result.action_plan.map(action => <li className={`actionItem actionItem--${action.action.includes('OPERATOR') ? 'operator' : 'ready'}`} key={action.step}><span className="actionIndex">{String(action.step).padStart(2, '0')}</span><div><strong className="actionTitle">{ACTION_LABELS[action.action] ?? action.action}</strong><div className="actionName"><code>{action.action}</code></div>{Object.keys(action.parameters).length > 0 && <p className="actionParameters">{JSON.stringify(action.parameters)}</p>}</div></li>)}</ol> : <div className="emptyOutput"><span>→</span><p>Validated actions will appear after a run.</p></div>}</div>
           <div className="outputActions"><button className="secondaryButton" disabled={!result} onClick={() => setModal('json')}>View full JSON</button><span>Display only · no vehicle commands</span></div>
         </aside>

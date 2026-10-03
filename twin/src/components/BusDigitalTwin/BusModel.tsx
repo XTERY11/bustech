@@ -1,4 +1,5 @@
 import type { SeatOccupancy } from '../../data/cabinLayout';
+import type { PassengerJourney } from '../../types/vehicle';
 import { Interior } from './parts/Interior';
 import { memo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
@@ -15,6 +16,7 @@ import { FrontDoor } from './Door';
 import { RampAssembly } from './Ramp';
 import { DestinationDisplay } from './DestinationDisplay';
 import { AnnouncementIndicator, VehicleCallouts } from './VehicleCallouts';
+import { PassengerJourneyActor } from '../Passengers/PassengerJourney';
 
 /**
  * Scene graph of the vehicle:
@@ -38,6 +40,7 @@ import { AnnouncementIndicator, VehicleCallouts } from './VehicleCallouts';
 interface Props {
   cutaway: boolean;
   occupancy?: SeatOccupancy;
+  passengerJourney?: PassengerJourney | null;
   selectedSeatId?: string;
   destination?: string;
   announcementActive: boolean;
@@ -45,7 +48,7 @@ interface Props {
   destinationCallout: Callout | null;
 }
 
-export const BusModel = memo(function BusModel({ destination, announcementActive, primaryCallout, destinationCallout, cutaway, occupancy, selectedSeatId }: Props) {
+export const BusModel = memo(function BusModel({ destination, announcementActive, primaryCallout, destinationCallout, cutaway, occupancy, passengerJourney, selectedSeatId }: Props) {
   const ctx = useTwin();
   const sprung = useRef<THREE.Group>(null!);
 
@@ -63,6 +66,7 @@ export const BusModel = memo(function BusModel({ destination, announcementActive
         <Body cutaway={cutaway} />
         <group visible={!cutaway}><Windows /></group>
         <Interior destination={destination} occupancy={occupancy} cutaway={cutaway} selectedSeatId={selectedSeatId} />
+        <PassengerJourneyActor journey={passengerJourney} cutaway={cutaway} />
         <ExteriorLights cutaway={cutaway} />
         {!cutaway && <FrontDoor />}
         <RampAssembly />

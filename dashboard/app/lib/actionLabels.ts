@@ -15,6 +15,7 @@ export const ACTION_LABELS: Record<string, string> = {
   PLAY_ENTRANCE_AUDIO_BEACON: 'Play entrance audio beacon',
   SHOW_EXTERNAL_DISPLAY: 'Show boarding message',
   WAIT_FOR_BOARDING_CONFIRMATION: 'Wait for boarding confirmation',
+  GUIDE_PASSENGER_TO_ASSIGNED_PLACE: 'Guide passenger to assigned place',
   WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION: 'Wait for seating and securement',
 };
 
