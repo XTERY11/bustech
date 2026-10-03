@@ -16,6 +16,11 @@ test('journey: booked, at the stop, on board', () => {
   j = advance(j, 'perception', exit(), 'READY');
   assert.deepEqual([j.stage, j.seat], ['ON_BOARD', 'WHEELCHAIR_BAY']);
   assert.match(guidance(j, { request: booking() }, null).display_text, /wheelchair space/);
+  // The journey is finished: somebody else at the stop does not interrupt it; a new booking starts the next one.
+  j = advance(advance(j, 'perception', enter('CANE'), 'READY'), 'perception', exit('CANE'), 'READY');
+  assert.deepEqual([j.stage, j.seat, j.need], ['ON_BOARD', 'WHEELCHAIR_BAY', null]);
+  j = advance(j, 'booking', booking('CANE'), 'READY');
+  assert.deepEqual([j.stage, j.seat, j.need], ['BOOKED', null, 'CANE']);
 });
 
 test('journey: leaving without a READY plan or with the wrong aid is not boarding', () => {

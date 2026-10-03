@@ -82,8 +82,8 @@ export function actionsToScenario(result: Result | null, context: Context, runni
 }
 
 /** The plan is ready but the passenger has not reached the stop: the bus prepares and waits. */
-export function waitingScenario(guidance?: string): ScenarioStep[] {
-  return [{ at: 0, label: 'Waiting for the passenger at the stop', frame: { ...IDLE_FRAME, boardingStatus: 'request_received', passengerInfo: { title: 'Booking received', message: guidance ?? 'Assistance is prepared. Waiting for the passenger at the stop.' } } }];
+export function waitingScenario(guidance?: string, title = 'Booking received'): ScenarioStep[] {
+  return [{ at: 0, label: 'Waiting for the passenger at the stop', frame: { ...IDLE_FRAME, boardingStatus: 'request_received', passengerInfo: { title, message: guidance ?? 'Assistance is prepared. Waiting for the passenger at the stop.' } } }];
 }
 
 /**

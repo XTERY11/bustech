@@ -37,7 +37,8 @@ export function TwinPanel({ result, context, running, journey = null, basePath =
   });
   // The hub's journey decides which half of the story the twin shows (see backend/journey.mjs):
   // BOOKED: the plan exists but the passenger is not at the stop, so the bus waits;
-  // AT_STOP: the camera has matched the passenger, so the plan is carried out;
+  // AT_STOP: the camera has matched the passenger, so the plan is carried out; somebody who does not
+  // match the booking is only told to wait, and the bus keeps waiting too;
   // ON_BOARD: they left the stop after READY, so the boarding half plays from the READY pose.
   const stage = journey?.stage ?? null;
   const boarded = stage === 'ON_BOARD';
@@ -45,6 +46,7 @@ export function TwinPanel({ result, context, running, journey = null, basePath =
   const steps = useMemo(() => {
     if (boarded) return boardingScenario(result, journey?.labels ?? [], journey?.seat ?? null, journey?.guidance.display_text);
     if (stage === 'BOOKED' && result?.plan_status === 'READY' && !running) return waitingScenario(journey?.guidance.display_text);
+    if (stage === 'AT_STOP' && !journey?.matched) return waitingScenario(journey?.guidance.display_text, journey?.guidance.title);
     return actionsToScenario(result, context, running);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the keys capture every input that changes the timeline
   }, [key, journeyKey]);
