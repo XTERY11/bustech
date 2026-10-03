@@ -60,9 +60,29 @@ def fresh_visits(signals, new_id=lambda: uuid.uuid4().hex[:12]):
     return out
 
 
+# Which recorded aid shows a booked need. Needs without a visible aid are played with the cane clip.
+NEED_CLIP = {'WHEELCHAIR': 'wheelchair', 'STROLLER': 'stroller', 'CANE': 'cane', 'CRUTCH': 'cane', 'WALKER': 'cane', 'VISUAL_ASSISTANCE': 'cane'}
+
+
+def load_clips(folder):
+    """{name: (video path, signals)} for one capture folder or a folder of capture folders."""
+    folders = [folder] if (folder / 'annotated.mp4').is_file() else sorted(d for d in folder.iterdir() if (d / 'annotated.mp4').is_file())
+    if not folders:
+        raise FileNotFoundError(f'No annotated.mp4 in {folder}')
+    return {d.name: (d / 'annotated.mp4', [json.loads(line) for line in (d / 'signals.jsonl').read_text(encoding='utf-8').splitlines() if line.strip()])
+            for d in folders}
+
+
+def clip_for(need, clips):
+    name = NEED_CLIP.get(need)
+    return name if name in clips else ('wheelchair' if 'wheelchair' in clips else next(iter(clips)))
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('--capture', type=Path, required=True, help='Folder with annotated.mp4 and signals.jsonl')
+    p.add_argument('--capture', type=Path, required=True,
+                   help='Folder with annotated.mp4 and signals.jsonl, or a folder of such folders named after the aid '
+                        '(wheelchair/, stroller/, cane/): with --after-booking the one matching the booked need is played')
     p.add_argument('--loop', action='store_true', help='Start again when the video ends')
     p.add_argument('--after-booking', action='store_true',
                    help='Hold the first frame until the hub has a booking (journey stage BOOKED), then play; with --loop, wait again after every pass')
@@ -74,10 +94,8 @@ def main():
     p.add_argument('--no-signal', action='store_true', help='Stream only, do not post to the hub')
     p.add_argument('--jpeg-quality', type=int, default=80)
     args = p.parse_args()
-    video = args.capture / 'annotated.mp4'
-    signals = [json.loads(line) for line in (args.capture / 'signals.jsonl').read_text(encoding='utf-8').splitlines() if line.strip()]
-    if not video.is_file():
-        raise FileNotFoundError(f'No annotated.mp4 in {args.capture}')
+    clips = load_clips(args.capture)
+    video, signals = clips[next(iter(clips))]
 
     shared = SharedFrame()
     info = {'source': f'replay:{args.capture.name}', 'device': 'replay', 'roi': 'recorded',
@@ -88,7 +106,7 @@ def main():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     if delivery:
         delivery.start()
-    print(f'Replaying {video} with {len(signals)} signals', flush=True)
+    print(f'Replaying {args.capture}: {", ".join(clips)}', flush=True)
     print(f'Preview: http://127.0.0.1:{args.mjpeg_port}/stream.mjpg  Health: http://127.0.0.1:{args.mjpeg_port}/health', flush=True)
 
     def send(signal):
@@ -103,13 +121,16 @@ def main():
         shared.status.update({'triggered': payload['zone']['triggered'], 'held': payload['yolo_detections']})
 
     def booked():
+        """The booked need once the hub has a booking, else None."""
         try:
             with request.urlopen(request.Request(f"{args.bridge_url.rstrip('/')}/api/state", headers=headers), timeout=2) as reply:
-                return (json.load(reply).get('journey') or {}).get('stage') == 'BOOKED'
+                journey = json.load(reply).get('journey') or {}
+                return (journey.get('need') or 'UNKNOWN') if journey.get('stage') == 'BOOKED' else None
         except (OSError, ValueError):
-            return False
+            return None
 
     headers = {'Authorization': f'Bearer {args.bridge_token}'} if args.bridge_token else {}
+    still = b''  # what the stream shows while waiting: the last frame of the pass before, else the first frame
     try:
         while True:
             cap = cv2.VideoCapture(str(video))
@@ -120,14 +141,22 @@ def main():
             if args.after_booking:
                 ok, frame = cap.read()
                 cap.set(cv2.CAP_PROP_POS_FRAMES, first)
-                still = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, args.jpeg_quality])[1].tobytes() if ok else b''
+                if not still and ok:
+                    still = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, args.jpeg_quality])[1].tobytes()
                 print('Waiting for a booking (journey stage BOOKED) ...', flush=True)
                 shared.fps = 2
-                while not booked():
+                need = None
+                while not need:
                     if still:  # keep sending the frame: a browser only draws an MJPEG part once the next one arrives
                         shared.set(still, {'frames': first})
                     time.sleep(0.5)
-                print('Booking seen, playing.', flush=True)
+                    need = booked()
+                name = clip_for(need, clips)
+                if clips[name][0] != video:
+                    cap.release(); video, signals = clips[name]
+                    cap = cv2.VideoCapture(str(video)); fps = cap.get(cv2.CAP_PROP_FPS) or 15
+                    first = round(args.start * fps); cap.set(cv2.CAP_PROP_POS_FRAMES, first)
+                print(f'Booking seen ({need}), playing {name}.', flush=True)
             start, frame_index = time.monotonic(), first
             upcoming = fresh_visits([signal for signal in signals if signal['t'] >= first / fps])
             while True:
@@ -139,7 +168,8 @@ def main():
                     send(upcoming.pop(0))
                 ok_jpeg, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, args.jpeg_quality])
                 if ok_jpeg:
-                    shared.set(buf.tobytes(), {'frames': frame_index})
+                    still = buf.tobytes()
+                    shared.set(still, {'frames': frame_index})
                 shared.fps = fps
                 frame_index += 1
                 time.sleep(max(0.0, start + (frame_index - first) / fps - time.monotonic()))

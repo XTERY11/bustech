@@ -79,7 +79,7 @@ HTTP 信号通过进程内的有序队列在后台发送，断网或中枢出错
 
 `exit` 另带 `zone.left`（区域里出现过的类别）、`zone.dwell_seconds` 和 `zone.boarding`：`boarding_intent()` 跟踪触发的辅具（看不到辅具时跟最近的人），朝 `--board-direction`（默认 ROI 文件的 `board_direction`，否则 `up`）离开为 `true`，停留短于 `--min-dwell` 秒或从别的方向离开为 `false`，无法判断时省略该字段（中枢按上车处理）。进入 / 离开按时间去抖（`--enter-seconds` / `--exit-seconds`）。
 
-`--capture DIR` 保存 `annotated.mp4` 和 `signals.jsonl`（每条信号的完整 payload，含 `visit_id`、`boarding`，以及在视频中的秒数）；`replay_bridge.py --capture DIR` 无需摄像头和 YOLO 按原时间重放，端点与真实检测桥相同（`--after-booking` 等到中枢有预约再播）。重放同样走有序队列，每一遍都用新的 `event_id` 和新的 `visit_id`（每个录制的访问编号映射为一个新的 12 位编号；旧录制没有编号时按 enter..exit 生成），否则 `--loop` 的第二遍会被中枢当作重复或过期。`demos/captures/venue_live_172729` 是现场录像 72–182 秒的重放素材。
+`--capture DIR` 保存 `annotated.mp4` 和 `signals.jsonl`（每条信号的完整 payload，含 `visit_id`、`boarding`，以及在视频中的秒数）；`replay_bridge.py --capture DIR` 无需摄像头和 YOLO 按原时间重放，端点与真实检测桥相同（`--after-booking` 等到中枢有预约再播）。重放同样走有序队列，每一遍都用新的 `event_id` 和新的 `visit_id`（每个录制的访问编号映射为一个新的 12 位编号；旧录制没有编号时按 enter..exit 生成），否则 `--loop` 的第二遍会被中枢当作重复或过期。`demos/captures/venue` 是现场录像 72–182 秒的重放素材。
 
 仅验证逻辑、不启动摄像头或模型：`python -m unittest test_aid_verifier test_monitor_zone test_signal_delivery test_bridge_signals -v`（45 项）。
 

@@ -8,7 +8,7 @@
 #   APP_ORIGINS=http://192.168.1.20:5173 LAN=1 bash start_demo.sh 0  # allow an external App origin
 #   BRIDGE_WINDOW=1 bash start_demo.sh 0   # also show the annotated camera view in a local window (Q stops the bridge)
 #   BRIDGE_RECORD=1 bash start_demo.sh 0   # also save the raw camera frames to vision/recordings/ for replay
-#   bash start_demo.sh demos/captures/venue_live_172729   # replay a recorded session (no camera, no YOLO);
+#   bash start_demo.sh demos/captures/venue   # replay a recorded session (no camera, no YOLO);
 #                                      # each pass starts once a booking arrives (AFTER_BOOKING=0: at once)
 #
 # Ports: dashboard 3000 · signal hub 8787 · camera MJPEG/health 8790. Ctrl+C stops everything.
@@ -61,7 +61,7 @@ if ! kill -0 "${PIDS[0]}" 2>/dev/null; then
   wait "${PIDS[0]}" || exit $?
   exit 1
 fi
-if [ -f "$SRC/signals.jsonl" ]; then
+if [ -f "$SRC/signals.jsonl" ] || ls "$SRC"/*/signals.jsonl >/dev/null 2>&1; then
   # A capture folder (yolo_bridge.py --capture): replay its video and signals instead of running YOLO.
   # The replay waits for a booking before each pass; AFTER_BOOKING=0 plays it straight away.
   CAPTURE="$(cd "$SRC" && pwd)"

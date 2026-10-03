@@ -422,7 +422,10 @@ def main():
             entered = active and not was_active
             before = sorted(d['label'] for d in held)
             if inside_detections:
-                held = inside_detections
+                # One steady report per visit: an aid half hidden behind its user is detected with a lower
+                # score, so each label keeps the best confidence seen since this visit started.
+                best = {d['label']: d['confidence'] for d in held} if active else {}
+                held = [{**d, 'confidence': max(d['confidence'], best.get(d['label'], 0))} for d in inside_detections]
             if entered:
                 trail, entered_at = [], now
             if active or was_active:  # follow the aid that triggered, also after it has left the region

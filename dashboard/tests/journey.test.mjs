@@ -182,11 +182,12 @@ test('same-ID retries are idempotent; a new booking ID deliberately starts a fre
   assert.equal(h.calls(), 2); assert.equal(h.hub.snapshot().journey.journey_id, 'new-b');
 });
 
-test('a new booking cannot reserve the already consumed wheelchair bay', async t => {
+test('after a completed journey the next booking is met by a fresh simulated bus with the bay free again', async t => {
   const h = harness(t); h.send('booking', booking()); await h.hub.run();
   h.send('perception', enter()); h.add(ARRIVAL_MS); h.send('perception', exit());
+  assert.equal(h.hub.cabin.wheelchair_bay_occupied, true);
   h.send('booking', booking()); await h.hub.run();
-  assert.equal(h.hub.result.plan_status, 'NEEDS_CONFIRMATION'); assert.equal(h.hub.snapshot().navigation, null);
+  assert.equal(h.hub.result.plan_status, 'READY'); assert.equal(h.hub.result.boarding_target.id, 'WHEELCHAIR_BAY');
 });
 
 test('CV-only confirmation and cancellation never spend an additional model call', async t => {

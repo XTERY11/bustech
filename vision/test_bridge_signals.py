@@ -76,5 +76,14 @@ class ReplayVisitTest(unittest.TestCase):
         self.assertEqual(visits, ['new000000001', 'new000000001', 'new000000002', 'new000000002', 'new000000002', 'new000000003'])
 
 
+class ClipChoiceTest(unittest.TestCase):
+    def test_clip_follows_the_booked_need(self):
+        from replay_bridge import clip_for
+        clips = {'cane': 1, 'stroller': 2, 'wheelchair': 3}
+        self.assertEqual([clip_for(n, clips) for n in ('WHEELCHAIR', 'STROLLER', 'CANE', 'VISUAL_ASSISTANCE', 'HEARING_ASSISTANCE')],
+                         ['wheelchair', 'stroller', 'cane', 'cane', 'wheelchair'])
+        self.assertEqual(clip_for('STROLLER', {'venue_live': 1}), 'venue_live')
+
+
 if __name__ == '__main__':
     unittest.main()

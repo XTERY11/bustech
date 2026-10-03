@@ -9,6 +9,35 @@
 
 ---
 
+## 0. v0.4 / v0.5 补充
+
+### v0.5 车内导航补充
+
+手机 App 在独立项目内，本仓库只下发导航数据。LLM 在生成已校验动作和座位目标的同一次响应中生成 `navigation_steps` 英文指引，不另外发起一次推理。服务端先按模拟车厢布局计算从单入口内侧、面朝车内开始的路线；模型不得更换目标、左右转顺序或距离。距离是模型几何的近似水平米数，不是真实定位测量。
+
+`Result.cabin_navigation` 新增为 `null` 或 `{layout_id,origin:{type:'ENTRANCE',id:'SINGLE_ENTRANCE',facing:'INTO_BUS'},target,steps,mode:'map_based',simulated:true,requires_operator:true}`。每个 step 为 `{step:number,maneuver:'START'|'STRAIGHT'|'TURN_LEFT'|'TURN_RIGHT'|'ARRIVE',distance_m:number|null,text:string}`；非直行步骤的距离为 null。方向相对于乘客当前面向，不是地图北向；首步明确入口和朝向，末步要求安全员确认，不声明已固定或可发车。
+
+上车阶段的 `Snapshot.navigation.steps` 携带这份路线，`instruction` 为步骤文字；`cabin_route` 携带原始车内导航对象，供 App 提前获知路径。预约/等候阶段的 steps 为空，不提示乘客提前往车内走。仍通过既有 `navigation` SSE 和 `/api/state` 下发。没有乘客实时坐标或逐步完成回执，因此不声称实时转弯纠偏，也不按播放时间自动确认真实乘客已走到某一步。
+
+### v0.4 联调补充（保留；车内导航以 v0.5 为准，旧客户端可忽略新增字段）
+
+- 手机导航：`Snapshot.navigation` 为 `null` 或 `{id, revision, phase, destination, instruction, simulated:true, animation}`。`phase` 为 `TO_STOP / WAIT_AT_STOP / BOARD_BUS / TO_SEAT / TO_WHEELCHAIR_BAY`，`destination` 为 `{type:'BUS_STOP'|'SEAT'|'WHEELCHAIR_BAY',id}`；只提供已知站点 ID 和文字指引，不伪造 GPS 路线。LLM 生成并通过校验后立即推送，不必等下一条 CV 心跳。SSE 新增 `navigation`，data 为 `{navigation,snapshot}`；`result` 的 data 新增 `snapshot`。旧客户端可继续读 `snapshot` 或轮询 `/api/state`。取消/过期时导航为 null。
+- 手机端为独立项目，本仓库不实现手机 UI。中枢只按 HTTP/SSE 契约下发 navigation、journey.guidance 和 animation 时钟，手机端自行呈现；dashboard 同步展示这份数据。
+
+- 保留 `/api/booking`、`/api/perception`、`/api/state`、`/api/events` 和原输入信封。CV 的 `enter/present/exit` 仍是观察事实；`exit` 只表示已经离开 ROI，不表示已坐好或已固定轮椅。暂不新增“即将离开”事件。
+- 每条新预约的 `event_id` 成为中枢生成的 `journey.journey_id`，重试不得生成新 ID。中枢向 planner 注入只读 `booking_event_id`，App 无需增加请求字段。
+- 模拟 `vehicle_context.cabin` 可包含 `{layout_id:'byd-b70a02-photo-v1', occupied_seat_ids:string[], wheelchair_bay_occupied:boolean}`。座位由可信策略根据空位及预约 ID 稳定分配；轮椅只分配轮椅区，普通乘客请求坡道不改变其座位类别。
+- Result 新增 `boarding_target: null | {type:'SEAT',id:'S01'…'S16'} | {type:'WHEELCHAIR_BAY',id:'WHEELCHAIR_BAY'}`。新增动作 `GUIDE_PASSENGER_TO_ASSIGNED_PLACE`，其服务端参数为 `{target_type,target_id}`，位于等待上车与等待就座确认之间。LLM 必须原样返回策略指定的目标。
+- `journey` 保留 `stage/need/labels/matched/seat/guidance`，新增 `journey_id/revision/completed/pending_exit/boarding_target` 及 `animation`。`animation` 为 `null` 或 `{id,phase:'arrival'|'boarding',aid,started_at,duration_ms,target}`；时间为中枢 epoch ms。App 与 dashboard 使用同一份指引、目标和动画描述，心跳不重播动画。
+- CV 进入握手要求 `target_match_confirmed=true`、置信度 ≥0.75、类别符合当前有效预约。信号 1启动模拟公交进站（4200 ms）与车辆准备，总时长10000 ms；不匹配时车保持不动。信号 2必须是明确 `exit` 且 `left` 匹配此次到站类别；规划或准备尚未完成时保留待处理退出。
+- 中枢每次旅程转换、规划完成和预约取消/过期均广播完整 `snapshot`。首次预约可调用 LLM，CV 心跳及两次触发不重复调用 LLM；必要的安全复验只使用规则。
+- `ON_BOARD` 是开环上车展示：保持已分配位置，当前预约不再被后续 CV 输入复用。占用只更新模拟客舱；不能据动画完成宣称真实坐好、轮椅固定完成或允许发车。
+- Twin 新增可选 `arrival:{id:string,progress:number}|null` 及 `passengerJourney:{journeyId,aid,stage,destination,progress}|null` 帧字段。旧帧可省略；null 清除，进度范围0–1。车辆进站和乘客运动都是展示动画。
+
+
+---
+
+
 ## 1. 系统是什么、现在已经有什么
 
 一个开环演示：乘客带轮椅 / 婴儿车 / 手杖到站 → 系统识别并结合 App 预约 → 大模型（或离线规则）给出决策摘要和动作计划 → 评委在 dashboard 上看到输入信号、思考过程、输出动作，以及公交数字孪生的响应（下蹲、开门、伸出坡道）。车辆状态全程是模拟的，不控制任何真实车辆。
@@ -281,7 +310,7 @@ A 和 B 只通过第 2 节的 HTTP 接口与 C 通信，D 只通过 2.8 的消�
 - **为什么不直接用 `best.pt`**：它的四个类别标注的都是“人 + 辅具”整体，训练集只有一个房间、少数几个人、没有“只有人”的画面，换场地后会把普通行人高置信度地判成婴儿车或轮椅，对没见过的衣着会漏检，轮椅和婴儿车也会混。所以权重没有改，但它在 `yolo_bridge.py` 里只是投票者。实际逻辑见 `aid_verifier.py` 和 2.3 节。确认模型有两个：仓库自带小号（`yolov8s-world-aids.pt`）；超大号效果好得多但约 140 MB 不能入库，需要每台机器本地生成一次：`cd vision && .venv/bin/python aid_verifier.py x`（会下载约 480 MB），生成后自动启用。默认还接受被人握着的雨伞、长杆作为手杖替代物（`--strict-verify` 关闭）；椅子、手推车不再作为轮椅或婴儿车的替代物。`--no-verify` 可退回 `best.pt` 原始输出以对比。注意 `monitor_zone.py` 没有这些逻辑，演示和联调请用 `yolo_bridge.py`。
 - **看效果用哪个窗口**：`monitor_zone.py` 只用来画区域，它保存后显示的是没有上述逻辑的原始检测，画完按 `Q` 退出（DroidCam 同时只允许一个连接）。看真实效果用 `BRIDGE_WINDOW=1 bash start_demo.sh "<地址>"` 弹出的检测桥窗口，或 dashboard 左上角。
 - **触发记录与回放**：`start_demo.sh` 启动的检测桥会在每次触发、类别变化、解除时把带标注的画面存到 `vision/trigger_snapshots/`（不入库），同目录 `events.jsonl` 记录事件。`record_clip.py` 可以把摄像头原始画面录成 MP4；之后用 `yolo_bridge.py --source <录像> --realtime --no-window --no-signal --snapshots <目录>` 回放，改完逻辑先对着录像验证，不必让人重走一遍。
-- **同接口的模拟视觉（给其他模块联调用）**：`yolo_bridge.py --capture <目录>` 在真实运行时额外保存 `annotated.mp4`（带框的画面）和 `signals.jsonl`（每条发给中枢的信号及其在视频中的秒数）；`replay_bridge.py --capture <目录>` 不需要摄像头、torch 和权重，按原来的时间重放画面和信号，端口与接口（2.3、2.7）和检测桥完全相同。`bash start_demo.sh demos/captures/venue_live_172729` 直接用仓库自带的现场采集启动，每遍在收到预约后开始播放。改了 2.3 的信号格式，要重新做一次采集。
+- **同接口的模拟视觉（给其他模块联调用）**：`yolo_bridge.py --capture <目录>` 在真实运行时额外保存 `annotated.mp4`（带框的画面）和 `signals.jsonl`（每条发给中枢的信号及其在视频中的秒数）；`replay_bridge.py --capture <目录>` 不需要摄像头、torch 和权重，按原来的时间重放画面和信号，端口与接口（2.3、2.7）和检测桥完全相同。`bash start_demo.sh demos/captures/venue` 直接用仓库自带的现场采集启动，每遍在收到预约后开始播放。改了 2.3 的信号格式，要重新做一次采集。
 - **联调**：去掉 `--no-signal`，中枢收到后 `curl http://127.0.0.1:8787/api/state` 的 `context.perception.yolo_detections` 应有对应标签。
 - **待办**：二次确认目前只在仓库自带的五段视频上验证过（真辅具全部确认，旁观者零误确认），手机实拍下的效果待测，尤其是手杖和婴儿车；效果不够时的后备方案是加入“只有人”的负样本重训。真实摄像头 / RTSP 实测；现场光照和角度下的置信度（需 ≥ 0.75 才生效）；进出区域的抖动（`--enter-frames` / `--exit-frames`）；Apple Silicon 上 `--device mps` 与 `cpu` 的帧率对比。
 - **验收**：`.venv/bin/python -m unittest test_monitor_zone test_aid_verifier` 11 项通过；`curl :8790/health` 返回 `ok:true` 且 `fps > 0`；实物进入区域后 dashboard 出现 `NEEDS_CONFIRMATION`，离开后检测清空。
