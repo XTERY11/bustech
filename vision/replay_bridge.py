@@ -130,6 +130,7 @@ def main():
             return None
 
     headers = {'Authorization': f'Bearer {args.bridge_token}'} if args.bridge_token else {}
+    shown = 0  # frames served since start; never goes back, or the dashboard takes it for a bridge restart and reconnects
     still = b''  # what the stream shows while waiting: the last frame of the pass before, else the first frame
     try:
         while True:
@@ -148,7 +149,7 @@ def main():
                 need = None
                 while not need:
                     if still:  # keep sending the frame: a browser only draws an MJPEG part once the next one arrives
-                        shared.set(still, {'frames': first})
+                        shown += 1; shared.set(still, {'frames': shown})
                     time.sleep(0.5)
                     need = booked()
                 name = clip_for(need, clips)
@@ -169,7 +170,7 @@ def main():
                 ok_jpeg, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, args.jpeg_quality])
                 if ok_jpeg:
                     still = buf.tobytes()
-                    shared.set(still, {'frames': frame_index})
+                    shown += 1; shared.set(still, {'frames': shown})
                 shared.fps = fps
                 frame_index += 1
                 time.sleep(max(0.0, start + (frame_index - first) / fps - time.monotonic()))
