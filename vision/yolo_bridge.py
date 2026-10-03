@@ -198,13 +198,14 @@ DIRECTIONS = {'up': (0.0, -1.0), 'down': (0.0, 1.0), 'left': (-1.0, 0.0), 'right
 
 
 def boarding_intent(trail, points, direction, dwell, min_dwell=2.0, recent=1.5, margin=0.02, push=0.03):
-    """Did the passenger leave the stop region towards the bus, or just pass by / walk off?
+    """Did the passenger leave the stop region to board, or just pass by / walk back?
 
     trail: (seconds, x, y) of the passenger's anchor (the aid, or the person once the aid is lost) while
     the region was occupied, normalised to the frame. points: the region polygon, normalised.
-    direction: where the bus is from the region ('up' = deeper into the picture). People at a stop hardly
-    ever walk back, so only clear evidence says "not boarding": a stay shorter than `min_dwell` (passing
-    by), or being last seen outside the region on another side, or moving away from the bus. Returns
+    direction: where the bus is from the region ('up' = deeper into the picture). People who have waited
+    at a stop hardly ever walk back, so only clear evidence says "not boarding": a stay shorter than
+    `min_dwell` (passing by), or being last seen behind the region, on the side away from the bus
+    (walked back the way they came). Leaving ahead or to either side is boarding. Returns
     (True | False | None, reason); None (lost while still in the region, or never seen) counts as boarding.
     """
     if dwell < min_dwell:
@@ -213,7 +214,9 @@ def boarding_intent(trail, points, direction, dwell, min_dwell=2.0, recent=1.5, 
         return None, 'not_tracked'
     dx, dy = DIRECTIONS[direction]
     along = lambda x, y: x * dx + y * dy
-    far = max(along(x, y) for x, y in points)
+    far, near = max(along(x, y) for x, y in points), min(along(x, y) for x, y in points)
+    # "Behind the region" must stay reachable when the region touches the edge of the picture on that side.
+    behind = max(near - margin, min(along(x, y) for x, y in ((0, 0), (1, 1))) + margin / 2)
     last = trail[-1]
     window = [p for p in trail if p[0] >= last[0] - recent]
     moved = along(window[-1][1], window[-1][2]) - along(window[0][1], window[0][2])
@@ -221,10 +224,10 @@ def boarding_intent(trail, points, direction, dwell, min_dwell=2.0, recent=1.5, 
         return True, 'past_far_edge'
     if moved >= push:
         return True, 'moving_towards_bus'
+    if along(last[1], last[2]) <= behind:
+        return False, 'walked_back'
     inside = cv2.pointPolygonTest(np.asarray(points, np.float32), (float(last[1]), float(last[2])), True) >= -margin
-    if not inside or moved <= -push:
-        return False, 'left_another_way'
-    return None, 'lost_in_region'
+    return (None, 'lost_in_region') if inside else (True, 'left_sideways')
 
 
 def perception_payload(detections, reason, roi_id, visit_id, left=None, intent=None):

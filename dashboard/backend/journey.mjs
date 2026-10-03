@@ -17,9 +17,14 @@ export const matches = (need, labels) => Boolean(need) && labels.length > 0 &&
 export const aidForNeed = need => AIDS[need] ?? 'none';
 /** A booking with a visible aid whose aid is among the labels (needs without a visible aid match no label here). */
 export const visibleMatch = (need, labels) => Boolean(VISIBLE[need]) && labels.some(label => VISIBLE[need].includes(label));
-/** Labels that pass the hub's gate: a confirmed target, confidence >= 0.75, not NONE/UNKNOWN. */
+/**
+ * Labels the camera module has confirmed (target_match_confirmed). Whether something really is a cane or a
+ * wheelchair is decided once, by the camera module's own rules (held by a person, seen repeatedly); the hub
+ * only matches the label against the booking and does not re-threshold the confidence, which is a running
+ * score that starts low for an aid that has just come into view.
+ */
 export const confirmedLabels = payload => payload?.target_match_confirmed === true ? [...new Set((payload.yolo_detections ?? [])
-  .filter(d => d.confidence >= 0.75 && !['NONE', 'UNKNOWN'].includes(d.label)).map(d => d.label))].sort() : [];
+  .filter(d => !['NONE', 'UNKNOWN'].includes(d.label)).map(d => d.label))].sort() : [];
 /** When the arrival phase (10 s drive-in, or the short docked preparation) is over. */
 const arrivalEnd = animation => animation.started_at + (animation.duration_ms ?? ARRIVAL_MS);
 

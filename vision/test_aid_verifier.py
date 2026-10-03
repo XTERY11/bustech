@@ -109,21 +109,29 @@ class BoardingIntentTest(unittest.TestCase):
     def test_passing_through_is_not_boarding(self):
         self.assertEqual(self.intent([(0, 0.4, 0.9), (0.5, 0.7, 0.9)], dwell=0.6), (False, 'short_stay'))
 
-    def test_walking_off_sideways_or_towards_the_camera_is_not_boarding(self):
+    def test_leaving_sideways_is_boarding(self):
         sideways = [(t, 0.6, 0.92) for t in range(5)] + [(5.5, 0.85, 0.93), (6.0, 0.95, 0.93)]
-        self.assertEqual(self.intent(sideways), (False, 'left_another_way'))
-        towards_camera = [(t, 0.6, 0.90) for t in range(5)] + [(5.5, 0.6, 0.96), (6.0, 0.6, 0.99)]
-        self.assertEqual(self.intent(towards_camera), (False, 'left_another_way'))
+        self.assertEqual(self.intent(sideways), (True, 'left_sideways'))
+
+    def test_walking_back_the_way_they_came_is_not_boarding(self):
+        # the bus is deeper in the picture; the passenger leaves towards the camera, off the bottom of the frame
+        back = [(t, 0.6, 0.90) for t in range(5)] + [(5.5, 0.6, 0.96), (6.0, 0.6, 1.0)]
+        self.assertEqual(self.intent(back), (False, 'walked_back'))
+
+    def test_bus_on_the_camera_side(self):
+        from yolo_bridge import boarding_intent
+        region = [(0.77, 0.98), (0.38, 0.98), (0.41, 0.86), (0.75, 0.83)]
+        wait = [(t, 0.6, 0.93) for t in range(10)]
+        down = lambda trail: boarding_intent(wait + trail, region, 'down', 12)
+        self.assertEqual(down([(10.5, 0.8, 0.98), (11, 0.9, 1.0)]), (True, 'past_far_edge'))    # off the bottom
+        self.assertEqual(down([(10.5, 0.82, 0.92), (11, 0.88, 0.91)]), (True, 'left_sideways'))  # out to the right
+        self.assertEqual(down([(10.5, 0.5, 0.75), (11, 0.44, 0.68)]), (False, 'walked_back'))    # back into the room
 
     def test_aid_never_tracked_is_unknown(self):
         self.assertEqual(self.intent([]), (None, 'not_tracked'))
 
     def test_lost_while_still_in_the_region_counts_as_unknown(self):
         self.assertEqual(self.intent([(t, 0.6, 0.92) for t in range(6)]), (None, 'lost_in_region'))
-
-    def test_moving_away_from_the_bus_is_not_boarding(self):
-        trail = [(t, 0.6, 0.88) for t in range(5)] + [(5.5, 0.6, 0.92), (6.0, 0.6, 0.96)]
-        self.assertEqual(self.intent(trail), (False, 'left_another_way'))
 
 
 class InRegionTest(unittest.TestCase):

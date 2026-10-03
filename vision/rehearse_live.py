@@ -300,7 +300,7 @@ class Rehearsal:
         self.camera.leave()
 
     def walked_off_sideways(self):
-        """Waited, then left another way (boarding false): wait again; comes back and boards."""
+        """Waited, then walked back the way they came (boarding false): wait again; comes back and boards."""
         self.book('STROLLER'); self.ready()
         self.camera.enter('STROLLER'); self.at_stop(); time.sleep(3)
         self.camera.leave(boarding=False)
@@ -329,14 +329,14 @@ class Rehearsal:
         self.boarded(timeout=3, seat_type='SEAT')
 
     def low_confidence(self):
-        """The aid is first seen below the hub's 0.75 gate; a better view later in the same visit matches."""
+        """An aid that has just come into view has a low running score; the camera module confirmed it, so the
+        hub matches it at once and the score going up or down during the visit changes nothing."""
         self.book('WHEELCHAIR'); self.ready()
-        self.camera.enter('WHEELCHAIR', confidence=0.6); self.at_stop(matched=False)
-        self.expect('phone says "confirming", not "does not match"', lambda r, s: 'confirming' in s['journey']['guidance']['display_text'])
+        self.camera.enter('WHEELCHAIR', confidence=0.3); self.at_stop(matched=True)
         self.camera.see('WHEELCHAIR', confidence=0.83)
-        self.at_stop(matched=True, timeout=HEARTBEAT + 1.5)
-        self.camera.see('WHEELCHAIR', confidence=0.5)  # half hidden again: the visit keeps its best score
-        time.sleep(2.5); self.camera.leave()
+        self.camera.see('WHEELCHAIR', confidence=0.5)
+        self.hold('still matched', lambda r, _: r['stage'] == 'AT_STOP' and r['matched'], 1.5)
+        time.sleep(1.0); self.camera.leave()
         self.boarded(seat_type='WHEELCHAIR_BAY')
 
     def bridge_restart_mid_visit(self):

@@ -96,8 +96,11 @@ export function buildPolicy(context) {
   const need = appFresh ? r.accessibility_need : 'UNKNOWN';
   const perceptionFresh = fresh(p.observation_age_ms, THRESHOLDS.perception_age_ms);
   const aids = (p.yolo_detections ?? []).filter(d => ['WHEELCHAIR', 'CRUTCH', 'CANE', 'WALKER', 'STROLLER'].includes(d.label));
-  const confidentAids = perceptionFresh ? aids.filter(d => number(d.confidence) && d.confidence >= THRESHOLDS.yolo_confidence) : [];
-  const usableAids = p.target_match_confirmed === true ? confidentAids : [];
+  // A target the camera module confirmed is taken as it is; the confidence threshold only judges raw,
+  // unconfirmed detections (see confirmedLabels in journey.mjs).
+  const confirmed = p.target_match_confirmed === true;
+  const confidentAids = perceptionFresh ? aids.filter(d => number(d.confidence) && (confirmed || d.confidence >= THRESHOLDS.yolo_confidence)) : [];
+  const usableAids = confirmed ? confidentAids : [];
   if (aids.length && !perceptionFresh) flags.push('STALE_PERCEPTION');
   if (confidentAids.length && p.target_match_confirmed !== true) flags.push('YOLO_TARGET_UNMATCHED');
   if (aids.length && !confidentAids.length && perceptionFresh) flags.push('LOW_CONFIDENCE_YOLO');

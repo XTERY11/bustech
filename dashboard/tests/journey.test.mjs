@@ -41,9 +41,9 @@ test('wrong category, low confidence, unconfirmed signal, wrong visit/ROI and no
   const b = advance({ stage: 'IDLE' }, 'booking', booking(), null, { eventId: 'b' });
   const wrong = advance(b, 'perception', enter('STROLLER'));
   assert.equal(wrong.matched, false); assert.equal(reconcile(wrong, ready).animation, null);
-  for (const bad of [{ ...enter(), target_match_confirmed: false }, { ...enter(), yolo_detections: [{ label: 'WHEELCHAIR', confidence: 0.1 }] }]) {
-    assert.equal(advance(b, 'perception', bad).matched, false);
-  }
+  assert.equal(advance(b, 'perception', { ...enter(), target_match_confirmed: false }).matched, false);
+  // The camera module confirms the aid; the hub does not re-threshold its running confidence score.
+  assert.equal(advance(b, 'perception', { ...enter(), yolo_detections: [{ label: 'WHEELCHAIR', confidence: 0.3 }] }).matched, true);
   const j = advance(b, 'perception', enter());
   assert.equal(advance(j, 'perception', exit('WHEELCHAIR', 'other')), j);
   assert.equal(advance(j, 'perception', { ...exit(), zone: { ...exit().zone, roi_id: 'other' } }), j);
@@ -176,12 +176,14 @@ test('early CV enter+exit do not cancel or replace the initial in-flight LLM req
   assert.ok(h.hub.cabin.occupied_seat_ids.includes(h.hub.snapshot().journey.seat));
 });
 
-test('confidence drop holds the bus; recovery uses a new animation ID for independent App deduplication', async t => {
+test('a confirmed aid keeps the arrival running whatever its confidence; an unconfirmed report holds the bus', async t => {
   const h = harness(t); h.send('booking', booking()); await h.hub.run(); h.send('perception', enter());
   const first = h.hub.snapshot().journey.animation.id;
   h.send('perception', { ...enter(), yolo_detections: [{ label: 'WHEELCHAIR', confidence: 0.5 }], zone: { ...enter().zone, event: 'present' } });
+  assert.equal(h.hub.snapshot().journey.animation.id, first, 'a low running score is not the hub\'s business');
+  h.send('perception', { ...enter(), target_match_confirmed: false, zone: { ...enter().zone, event: 'present' } });
   assert.equal(h.hub.snapshot().journey.animation, null);
-  assert.match(h.hub.snapshot().journey.guidance.display_text, /confirming your assistance/, 'below the gate is not a mismatch');
+  assert.match(h.hub.snapshot().journey.guidance.display_text, /confirming your assistance/, 'not confirmed is not a mismatch');
   h.send('perception', { ...enter(), zone: { ...enter().zone, event: 'present' } });
   assert.notEqual(h.hub.snapshot().journey.animation.id, first);
   assert.equal(h.calls(), 1);

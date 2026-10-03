@@ -192,3 +192,15 @@ With exactly one booking in the list, everything behaves as before the list. Tha
 **Arrival of a later passenger of the same bus.** After a bus has boarded somebody, it stays at the stop. The next passenger of that bus (an overlapping booking) gets `journey.animation = {phase:'arrival', duration_ms: DOCKED_ARRIVAL_MS (3000), docked:true, …}` instead of the 10 s drive-in: guidance "Preparing to board", then "Ready to board" and `BOARD_BUS` after 3 s. A held exit boards when those 3 s are over. The first passenger of every bus keeps `duration_ms: ARRIVAL_MS` (10000), with no `docked` field. The twin (`twinScenario.ts`) treats an arrival with `duration_ms ≤ 5000` as docked: no drive-in, door and ramp first. Its "Ready" step waits for the ramp (4.1 s with a ramp), so with a ramp the twin is ready about 1 s after the phone.
 
 **Limits.** The camera reports one region. The next passenger should step into it only after the previous one has left it. If both stand in it together, the visit keeps both aids and the region only reports an exit when both have gone.
+
+## Who confirms an aid (2026-10-03)
+
+Whether a detection really is a cane, wheelchair or stroller is decided once, by the camera bridge: it sends
+an aid with `target_match_confirmed: true` only after its own rules hold (held or occupied by a person, seen
+repeatedly). The hub matches the label of a confirmed target against the booking and does not apply the 0.75
+confidence threshold to it; `confidence` of a confirmed target is informational (a running score that starts
+low for an aid that has just come into view). The threshold still judges unconfirmed detections
+(`target_match_confirmed` false or absent), which never start the arrival.
+
+On exit, `zone.boarding` is false only for a stay under 2 s or when the passenger walked back, away from the
+bus side (`why: walked_back` in the bridge log); leaving ahead or sideways is boarding.
