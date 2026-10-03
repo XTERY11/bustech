@@ -171,8 +171,10 @@ journey: {
 |---|---|---|---|---|
 | `IDLE` | 没有有效预约 | — | 待命 | 提示先预约 |
 | `BOOKED` | App 发来预约（`POST /api/booking`） | **在这里推理一次**，方案此时就定好 | 显示“已收到请求”，车不动、不放坡道 | 已收到预约，请前往站台上车点 |
-| `AT_STOP` | 摄像头看到带辅具的人进入站台区域（`zone.triggered`） | 不再调用；本地规则核对方案是否仍成立，成立就立即执行 | `matched` 且 `READY`：下蹲、开门、按方案伸坡道 | `READY` 时为上车指引；类别不一致或无预约时请等待安全员 |
+| `AT_STOP` | 摄像头看到带辅具的人进入站台区域（`zone.triggered`） | 不再调用；本地规则核对方案是否仍成立，成立就立即执行 | `matched` 且 `READY`：下蹲、开门、按方案伸坡道；不一致：车继续等待，不开门 | `READY` 时为上车指引；类别不一致或无预约时请等待安全员 |
 | `ON_BOARD` | `READY` 且 `matched` 的乘客离开站台区域（`zone.event = exit`） | — | 上车 → 剖面视角显示座位或轮椅位 → 收坡道 → 关门 → 完成 | 车内指引：轮椅位，或分配的优先座 |
+
+- 上车后这次预约即用完：`need` 变为 `null`，`ON_BOARD` 一直保持到下一次预约，期间其他人进出站台不会打断它。
 
 - 没有可见辅具的需求（如听障）无法由摄像头确认类别，站台上出现任何辅具都算一致；这类乘客目前没有“到站”的视觉信号，是已知缺口。
 - 到站前方案已经是 `READY`，这表示“方案已备好”，是否执行由 `stage` 决定。
@@ -258,6 +260,7 @@ A 和 B 只通过第 2 节的 HTTP 接口与 C 通信，D 只通过 2.8 的消�
 - **为什么不直接用 `best.pt`**：它的四个类别标注的都是“人 + 辅具”整体，训练集只有一个房间、少数几个人、没有“只有人”的画面，换场地后会把普通行人高置信度地判成婴儿车或轮椅，对没见过的衣着会漏检，轮椅和婴儿车也会混。所以权重没有改，但它在 `yolo_bridge.py` 里只是投票者。实际逻辑见 `aid_verifier.py` 和 2.3 节。确认模型有两个：仓库自带小号（`yolov8s-world-aids.pt`）；超大号效果好得多但约 140 MB 不能入库，需要每台机器本地生成一次：`cd vision && .venv/bin/python aid_verifier.py x`（会下载约 480 MB），生成后自动启用。默认还接受被人握着的雨伞、长杆作为手杖替代物（`--strict-verify` 关闭）；椅子、手推车不再作为轮椅或婴儿车的替代物。`--no-verify` 可退回 `best.pt` 原始输出以对比。注意 `monitor_zone.py` 没有这些逻辑，演示和联调请用 `yolo_bridge.py`。
 - **看效果用哪个窗口**：`monitor_zone.py` 只用来画区域，它保存后显示的是没有上述逻辑的原始检测，画完按 `Q` 退出（DroidCam 同时只允许一个连接）。看真实效果用 `BRIDGE_WINDOW=1 bash start_demo.sh "<地址>"` 弹出的检测桥窗口，或 dashboard 左上角。
 - **触发记录与回放**：`start_demo.sh` 启动的检测桥会在每次触发、类别变化、解除时把带标注的画面存到 `vision/trigger_snapshots/`（不入库），同目录 `events.jsonl` 记录事件。`record_clip.py` 可以把摄像头原始画面录成 MP4；之后用 `yolo_bridge.py --source <录像> --realtime --no-window --no-signal --snapshots <目录>` 回放，改完逻辑先对着录像验证，不必让人重走一遍。
+- **同接口的模拟视觉（给其他模块联调用）**：`yolo_bridge.py --capture <目录>` 在真实运行时额外保存 `annotated.mp4`（带框的画面）和 `signals.jsonl`（每条发给中枢的信号及其在视频中的秒数）；`replay_bridge.py --capture <目录>` 不需要摄像头、torch 和权重，按原来的时间重放画面和信号，端口与接口（2.3、2.7）和检测桥完全相同。`bash start_demo.sh demos/captures/venue_live_172729` 直接用仓库自带的现场采集启动，每遍在收到预约后开始播放。改了 2.3 的信号格式，要重新做一次采集。
 - **联调**：去掉 `--no-signal`，中枢收到后 `curl http://127.0.0.1:8787/api/state` 的 `context.perception.yolo_detections` 应有对应标签。
 - **待办**：二次确认目前只在仓库自带的五段视频上验证过（真辅具全部确认，旁观者零误确认），手机实拍下的效果待测，尤其是手杖和婴儿车；效果不够时的后备方案是加入“只有人”的负样本重训。真实摄像头 / RTSP 实测；现场光照和角度下的置信度（需 ≥ 0.75 才生效）；进出区域的抖动（`--enter-frames` / `--exit-frames`）；Apple Silicon 上 `--device mps` 与 `cpu` 的帧率对比。
 - **验收**：`.venv/bin/python -m unittest test_monitor_zone test_aid_verifier` 11 项通过；`curl :8790/health` 返回 `ok:true` 且 `fps > 0`；实物进入区域后 dashboard 出现 `NEEDS_CONFIRMATION`，离开后检测清空。
