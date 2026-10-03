@@ -10,6 +10,11 @@ dashboard, the App and the hub cannot tell it from the live bridge.
 
 Only OpenCV and NumPy are needed (no torch, no weights), which makes it the CV module for
 anybody working on the App or the dashboard.
+
+Every pass posts with fresh event ids and maps each recorded zone.visit_id to a fresh one (a
+capture made before visit ids existed gets one per enter..exit), so the hub treats a looped pass
+as new visits instead of duplicates. Posts go through the same ordered background queue as the
+live bridge (retry unchanged, never drop enter/exit), so /health reports the same delivery fields.
 """
 from __future__ import annotations
 
@@ -18,6 +23,8 @@ import json
 import os
 import threading
 import time
+import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -25,8 +32,32 @@ from urllib import request
 
 import cv2
 
-from ride_signal_client import RideSignalClient
+from ride_signal_client import OrderedSignalQueue, RideSignalClient
 from yolo_bridge import SharedFrame, make_handler
+
+
+def fresh_visits(signals, new_id=lambda: uuid.uuid4().hex[:12]):
+    """Copy of one pass of signals in which every recorded zone.visit_id is replaced by a new 12-char id
+    (the same new id for all signals of that visit). Signals without a visit_id (older captures) get one
+    per enter..exit run. Recorded signals are not changed."""
+    mapping, current, out = {}, None, []
+    for signal in signals:
+        signal = deepcopy(signal)
+        zone = signal.get('payload', {}).get('zone')
+        if isinstance(zone, dict):
+            recorded = zone.get('visit_id')
+            if recorded:
+                if recorded not in mapping:
+                    mapping[recorded] = new_id()
+                zone['visit_id'] = mapping[recorded]
+            else:
+                if zone.get('event') == 'enter' or current is None:
+                    current = new_id()
+                zone['visit_id'] = current
+                if zone.get('event') == 'exit':
+                    current = None
+        out.append(signal)
+    return out
 
 
 def main():
@@ -51,24 +82,25 @@ def main():
     shared = SharedFrame()
     info = {'source': f'replay:{args.capture.name}', 'device': 'replay', 'roi': 'recorded',
             'bridge_url': None if args.no_signal else args.bridge_url}
-    server = ThreadingHTTPServer((args.mjpeg_host, args.mjpeg_port), make_handler(shared, info))
-    threading.Thread(target=server.serve_forever, daemon=True).start()
     client = None if args.no_signal else RideSignalClient(args.bridge_url, args.bridge_token)
+    delivery = OrderedSignalQueue(client) if client else None
+    server = ThreadingHTTPServer((args.mjpeg_host, args.mjpeg_port), make_handler(shared, info, delivery))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    if delivery:
+        delivery.start()
     print(f'Replaying {video} with {len(signals)} signals', flush=True)
     print(f'Preview: http://127.0.0.1:{args.mjpeg_port}/stream.mjpg  Health: http://127.0.0.1:{args.mjpeg_port}/health', flush=True)
 
     def send(signal):
         payload = signal['payload']
         line = {'event': 'SIGNAL', 'second': signal['t'], 'reason': payload['zone'].get('event'),
+                'visit_id': payload['zone'].get('visit_id'),
                 'labels': [d['label'] for d in payload['yolo_detections']] or payload['zone'].get('left', [])}
-        if client is not None:
-            try:
-                client.signal(signal['channel'], payload, observed_at=datetime.now(timezone.utc).isoformat())
-            except Exception as failure:  # keep streaming even if the hub is down
-                line = {**line, 'event': 'SIGNAL_FAILED', 'error': str(failure)[:200]}
+        if delivery is not None:  # fresh event_id and observed_at; the queue retries it unchanged
+            envelope = delivery.enqueue(signal['channel'], payload, observed_at=datetime.now(timezone.utc).isoformat())
+            line = {**line, 'event': 'SIGNAL_QUEUED', 'event_id': envelope['event_id']}
         print(json.dumps(line), flush=True)
-        shared.status.update({'triggered': payload['zone']['triggered'], 'held': payload['yolo_detections'],
-                              'last_signal': {'at': time.time(), 'reason': line['reason'], 'labels': line['labels']}})
+        shared.status.update({'triggered': payload['zone']['triggered'], 'held': payload['yolo_detections']})
 
     def booked():
         try:
@@ -97,7 +129,7 @@ def main():
                     time.sleep(0.5)
                 print('Booking seen, playing.', flush=True)
             start, frame_index = time.monotonic(), first
-            upcoming = [signal for signal in signals if signal['t'] >= first / fps]
+            upcoming = fresh_visits([signal for signal in signals if signal['t'] >= first / fps])
             while True:
                 ok, frame = cap.read()
                 if not ok:
@@ -118,6 +150,13 @@ def main():
                 print('Replay finished.', flush=True)
                 break
     finally:
+        if delivery:  # let the last exit reach the hub; the queue is not persisted
+            deadline = time.monotonic() + 3
+            while delivery.diagnostics()['pending_signals'] and time.monotonic() < deadline:
+                time.sleep(0.05)
+            unsent = delivery.close()
+            if unsent:
+                print(json.dumps({'event': 'SIGNALS_PENDING_ON_STOP', 'pending_signals': unsent}), flush=True)
         server.shutdown()
 
 

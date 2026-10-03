@@ -6,7 +6,9 @@ adds two outputs that monitor_zone.py does not have:
 
   1. POST /api/perception to the signal hub, only when the region trigger changes
      (enter -> detections inside the region; exit -> empty list) plus a slow
-     heartbeat while the region stays occupied.
+     heartbeat while the region stays occupied. All three carry zone.visit_id (one per
+     activation); exit adds zone.boarding / zone.dwell_seconds. Posts go through an ordered
+     background queue (ride_signal_client.OrderedSignalQueue) that retries without blocking.
   2. An HTTP server with /stream.mjpg (annotated frames) and /health, so the
      dashboard can show the live camera view.
 
@@ -20,6 +22,7 @@ import json
 import os
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -29,7 +32,7 @@ import numpy as np
 
 from aid_verifier import WEIGHTS as VERIFY_WEIGHTS, AidVerifier, Scene, iou
 from monitor_zone import anchor_point, load_roi
-from ride_signal_client import RideSignalClient
+from ride_signal_client import OrderedSignalQueue, RideSignalClient
 
 ROOT = Path(__file__).resolve().parent
 # Model class name -> hub label (backend/planner/contracts.mjs perception enum).
@@ -49,7 +52,9 @@ class SharedFrame:
         self.jpeg = b''
         self.stamp = 0.0
         self.fps = 0.0
-        self.status = {'triggered': False, 'inside': 0, 'detections': [], 'frames': 0, 'last_signal': None}
+        # last_signal = the newest signal the hub acknowledged (see OrderedSignalQueue.diagnostics)
+        self.status = {'triggered': False, 'inside': 0, 'detections': [], 'frames': 0, 'last_signal': None,
+                       'pending_signals': 0, 'signal_error': None}
 
     def set(self, jpeg, status):
         with self.lock:
@@ -62,7 +67,7 @@ class SharedFrame:
             return self.jpeg, self.stamp, dict(self.status)
 
 
-def make_handler(shared, info):
+def make_handler(shared, info, delivery=None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):  # keep the console for trigger events only
             pass
@@ -76,7 +81,8 @@ def make_handler(shared, info):
                 _, stamp, status = shared.get()
                 body = json.dumps({'ok': True, 'source': info['source'], 'device': info['device'], 'roi': info['roi'],
                                    'fps': round(shared.fps, 1), 'frame_age_ms': round((time.monotonic() - stamp) * 1000) if stamp else None,
-                                   'bridge_url': info['bridge_url'], **status}).encode()
+                                   'bridge_url': info['bridge_url'], **status,
+                                   **(delivery.diagnostics() if delivery else {})}).encode()
                 self.send_response(200); self._cors(); self.send_header('Content-Type', 'application/json')
                 self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body); return
             if self.path.startswith('/snapshot.jpg'):
@@ -219,6 +225,25 @@ def boarding_intent(trail, points, direction, dwell, min_dwell=2.0, recent=1.5, 
     return None, 'lost_in_region'
 
 
+def perception_payload(detections, reason, roi_id, visit_id, left=None, intent=None):
+    """Body of one POST /api/perception (the envelope is added by ride_signal_client.py).
+
+    target_match_confirmed: a verified aid is standing in the drawn boarding region. The hub ignores
+    camera detections without it; it still never authorises a ramp without a booking.
+    zone.event: 'enter', 'present' (heartbeat, from reason 'heartbeat') or 'exit'. zone.visit_id binds
+    the enter / present / exit of one activation of the region (not a passenger identity; booking and
+    plan checks belong to the hub). On exit, zone.left names what was there and, from `intent`,
+    zone.boarding (omitted when unknown) and zone.dwell_seconds say whether they left towards the bus.
+    """
+    zone = {'triggered': bool(detections), 'roi_id': roi_id, 'visit_id': visit_id,
+            'event': {'heartbeat': 'present'}.get(reason, reason)}
+    if left:
+        zone['left'] = left
+    if intent:  # on exit: {'boarding': bool | None, 'dwell_seconds': float}
+        zone.update({k: v for k, v in intent.items() if v is not None})
+    return {'yolo_detections': detections[:20], 'target_match_confirmed': bool(detections), 'zone': zone}
+
+
 def open_capture(source):
     cap = cv2.VideoCapture(source, cv2.CAP_DSHOW) if isinstance(source, int) and os.name == 'nt' else cv2.VideoCapture(source)
     if not cap.isOpened() and isinstance(source, int) and os.name == 'nt':
@@ -265,14 +290,16 @@ def main():
     persons, aids, held = [], [], []
 
     shared = SharedFrame()
+    client = None if args.no_signal else RideSignalClient(args.bridge_url, args.bridge_token)
+    delivery = OrderedSignalQueue(client) if client else None  # ordered background delivery with retry
     info = {'source': str(args.source), 'device': device, 'roi': str(args.roi), 'bridge_url': None if args.no_signal else args.bridge_url}
-    server = ThreadingHTTPServer((args.mjpeg_host, args.mjpeg_port), make_handler(shared, info))
+    server = ThreadingHTTPServer((args.mjpeg_host, args.mjpeg_port), make_handler(shared, info, delivery))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print(f'Device: {device}; classes: {names}; anchor: {args.anchor}; device check: {"on" if verifier else "off"}', flush=True)
     print(f'Preview: http://127.0.0.1:{args.mjpeg_port}/stream.mjpg  Health: http://127.0.0.1:{args.mjpeg_port}/health', flush=True)
 
-    client = None if args.no_signal else RideSignalClient(args.bridge_url, args.bridge_token)
     roi_id = args.roi.stem
+    visit_id = None           # one id per region activation, shared by its enter / present / exit
     active = False            # region occupied (the trigger)
     since = last_seen = None  # when the current aid entered / when somebody was last in the region
     trail, entered_at = [], None  # where the aid went while the region was occupied (for boarding_intent)
@@ -299,30 +326,20 @@ def main():
             log.write(json.dumps(event) + '\n'); log.flush()
 
     def post(detections, reason, left=None, intent=None):
-        # Same envelope as integrations/ride_signal_client.py; zone is informational for the dashboard.
-        # target_match_confirmed: a verified aid is standing in the drawn boarding region. The hub ignores
-        # camera detections without it; it still never authorises a ramp without a booking.
-        # zone.event tells the dashboard what happened at the stop: 'enter', 'present' (heartbeat) or
-        # 'exit'. On exit, zone.left names what was there, so the twin can show that passenger boarding.
-        zone = {'triggered': bool(detections), 'roi_id': roi_id, 'event': {'heartbeat': 'present'}.get(reason, reason)}
-        if left:
-            zone['left'] = left
-        if intent:  # on exit: {'boarding': bool | None, 'dwell_seconds': float}
-            zone.update({k: v for k, v in intent.items() if v is not None})
-        payload = {'yolo_detections': detections[:20], 'target_match_confirmed': bool(detections), 'zone': zone}
+        payload = perception_payload(detections, reason, roi_id, visit_id, left, intent)
         if signals:  # replay_bridge.py posts the same payload at the same point of annotated.mp4
             signals.write(json.dumps({'t': round(captured_frames / capture_fps, 2), 'channel': 'perception', 'payload': payload}) + '\n')
             signals.flush()
-        if client is None:
+        if delivery is None:
             return
-        try:
-            client.signal('perception', payload, observed_at=datetime.now(timezone.utc).isoformat())
-            shared.status['last_signal'] = {'at': time.time(), 'reason': reason, 'labels': [d['label'] for d in detections]}
-            record({'event': 'SIGNAL', 'reason': reason, 'detections': detections})
-        except Exception as failure:  # keep streaming even if the hub is down
-            record({'event': 'SIGNAL_FAILED', 'reason': reason, 'error': str(failure)[:200]})
+        # Queued, never blocking inference: a failed post is retried unchanged (same event_id, observed_at and
+        # body) before anything newer; only adjacent unsent heartbeats of the same visit are coalesced.
+        envelope = delivery.enqueue('perception', payload, observed_at=datetime.now(timezone.utc).isoformat())
+        record({'event': 'SIGNAL_QUEUED', 'event_id': envelope['event_id'], 'reason': reason, 'visit_id': visit_id, 'detections': detections})
 
     cap = open_capture(source)
+    if delivery:
+        delivery.start()
     if not is_file:
         cap = LatestFrame(cap)
     fps_src = cap.get(cv2.CAP_PROP_FPS)
@@ -347,7 +364,7 @@ def main():
                     if signals:  # the capture covers one pass of the recording
                         signals.close(); captured.release(); signals = captured = None
                         print(f'Capture saved: {args.capture}', flush=True)
-                    cap.release(); cap = open_capture(source); scene.reset(); active, since, last_seen, position = False, None, None, 0; continue
+                    cap.release(); cap = open_capture(source); scene.reset(); active, since, last_seen, position = False, None, None, 0; held, visit_id = [], None; continue
                 if is_file:
                     print('Video finished.', flush=True); break
                 raise RuntimeError('Camera/stream stopped delivering frames.')
@@ -425,16 +442,17 @@ def main():
             if active and not entered and sorted(d['label'] for d in held) != before:
                 record({'event': 'LABEL', 'frame': processed, 'labels': sorted(d['label'] for d in held), 'was': before})
             if entered:
-                record({'event': 'TRIGGER', 'frame': processed, 'targets_in_region': len(held), 'labels': sorted(d['label'] for d in held)})
+                visit_id = uuid.uuid4().hex[:12]
+                record({'event': 'TRIGGER', 'frame': processed, 'visit_id': visit_id, 'targets_in_region': len(held), 'labels': sorted(d['label'] for d in held)})
                 post(held, 'enter'); last_heartbeat = time.monotonic()
             elif active and time.monotonic() - last_heartbeat >= args.heartbeat:
                 post(held, 'heartbeat'); last_heartbeat = time.monotonic()
             elif was_active and not active:  # exit transition: did they leave towards the bus?
                 dwell = (last_seen or now) - (entered_at if entered_at is not None else now)
                 boarding, why = boarding_intent(trail, points, args.board_direction, dwell, args.min_dwell)
-                record({'event': 'CLEAR', 'frame': processed, 'boarding': boarding, 'why': why, 'dwell_seconds': round(dwell, 1),
+                record({'event': 'CLEAR', 'frame': processed, 'visit_id': visit_id, 'boarding': boarding, 'why': why, 'dwell_seconds': round(dwell, 1),
                         'last_seen_at': [round(v, 2) for v in trail[-1][1:]] if trail else None})
-                post([], 'exit', sorted({d['label'] for d in held}), {'boarding': boarding, 'dwell_seconds': round(dwell, 1)}); held = []
+                post([], 'exit', sorted({d['label'] for d in held}), {'boarding': boarding, 'dwell_seconds': round(dwell, 1)}); held, visit_id = [], None
             # overlay: region, state bar
             contour = np.round(np.asarray(points) * [width - 1, height - 1]).astype(np.int32)
             color = (0, 0, 255) if active else (60, 210, 60)
@@ -457,7 +475,8 @@ def main():
             while ok_jpeg and pending:
                 (args.snapshots / pending.pop()).write_bytes(buf.tobytes())
             if ok_jpeg:
-                shared.set(buf.tobytes(), {'triggered': active, 'inside': len(inside_detections), 'held': held if active else [], 'detections': all_detections[:20], 'persons': len(persons), 'frames': processed})
+                shared.set(buf.tobytes(), {'triggered': active, 'inside': len(inside_detections), 'held': held if active else [], 'detections': all_detections[:20], 'persons': len(persons), 'frames': processed,
+                                          **(delivery.diagnostics() if delivery else {})})
             fps_count += 1
             if time.monotonic() - tick_fps >= 1:
                 shared.fps = fps_count / (time.monotonic() - tick_fps); tick_fps = time.monotonic(); fps_count = 0
@@ -473,6 +492,13 @@ def main():
             elif is_file:  # pace file playback at the source frame rate
                 time.sleep(max(0.0, 1 / fps_src - (time.monotonic() - tick)))
     finally:
+        if delivery:  # give a just-queued exit a moment to reach the hub; the queue is not persisted
+            deadline = time.monotonic() + 3
+            while delivery.diagnostics()['pending_signals'] and time.monotonic() < deadline:
+                time.sleep(0.05)
+            unsent = delivery.close()
+            if unsent:
+                record({'event': 'SIGNALS_PENDING_ON_STOP', 'pending_signals': unsent})
         cap.release(); server.shutdown()
         if writer is not None:
             writer.release()
