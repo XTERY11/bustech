@@ -71,6 +71,14 @@ python monitor_zone.py --source demos/clips/wheelchair_test.mp4 --roi monitor_ex
 
 默认不录像。`--output output.avi` 可保存 MJPG 无音频录像；固定 FPS 编码，推理跟不上源帧率时不能作为严格实时录制。摄像头/流读失败会停止并报错，不自动重连。网络源缓存可能导致延迟。本版没有专门的最新帧采集线程、跨帧目标跟踪或去重。
 
+### 与 dashboard 联调的检测桥
+
+以上描述的是 `monitor_zone.py`。正式联调用 `yolo_bridge.py`：它保留现有区域进入 / 心跳 / 离开含义，并在每次区域激活时生成 `zone.visit_id`（12 位 UUID）。本次 `enter`、`present`、`exit` 使用同一访问编号；它只是区域访问标识，不是乘客身份。预约类别、置信度阈值和方案就绪的核对由中枢完成，视觉端不读取预约或车辆授权。
+
+HTTP 信号通过进程内的有序队列在后台发送，断网或中枢出错时保留原 `event_id`、`observed_at` 和请求体重试；旧事件确认成功后才发下一个。连续尚未发送的同次 `present` 可合并，`enter` / `exit` 和已经尝试过的事件不可替换。`/health` 的 `pending_signals`、`last_signal`、`signal_error` 可检查投递状态；错误诊断不包含 token。停止进程会报告未送达的事件数，但队列不跨进程保存。
+
+仅验证逻辑、不启动摄像头或模型：`python -m unittest test_aid_verifier test_monitor_zone test_signal_delivery -v`（31 项）。
+
 ## 演示与数据处理
 
 - `demos/index.html`：双击打开即可播放五段 MP4（各 10 秒 / 300 帧 / 30 FPS，无音频）。

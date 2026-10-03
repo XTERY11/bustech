@@ -7,6 +7,7 @@ import type {
   PassengerJourney,
   PassengerJourneyStage,
   RampState,
+  VehicleArrival,
   VehicleStatePatch,
 } from '../types/vehicle';
 import type { VehicleStore } from '../state/vehicleState';
@@ -33,6 +34,7 @@ export interface TelemetryMessage {
   passengerInfo?: { title?: string; message?: string } | null;
   seatOccupancy?: unknown;
   passengerJourney?: unknown;
+  arrival?: unknown;
   [extra: string]: unknown;
 }
 
@@ -50,9 +52,19 @@ const RAMP_ALIASES: Record<string, RampState> = {
 };
 const BOARDING: BoardingStatus[] = ['idle', 'request_received', 'preparing', 'ready', 'boarding', 'complete'];
 const PASSENGER_AIDS = new Set<PassengerAid>(['wheelchair', 'cane', 'crutch', 'walker', 'stroller', 'visual', 'hearing', 'none']);
-const PASSENGER_STAGES = new Set<PassengerJourneyStage>(['hidden', 'boarding', 'navigating', 'seated', 'secured']);
+const PASSENGER_STAGES = new Set<PassengerJourneyStage>(['hidden', 'waiting', 'boarding', 'navigating', 'seated', 'secured']);
 const FIXED_SEATS = new Set(SEATS.filter((seat) => seat.kind !== 'foldable').map((seat) => seat.id));
 const JOURNEY_ID = /^[A-Za-z0-9_.:-]{1,200}$/;
+
+/** Invalid arrival frames leave the preceding pose intact. */
+export function normalizeArrival(value: unknown): VehicleArrival | null | undefined {
+  if (value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.id !== 'string' || !JOURNEY_ID.test(raw.id)) return undefined;
+  if (typeof raw.progress !== 'number' || !Number.isFinite(raw.progress) || raw.progress < 0 || raw.progress > 1) return undefined;
+  return { id: raw.id, progress: raw.progress };
+}
 
 /** Validate the optional wire-level passenger state without inventing defaults. */
 export function normalizePassengerJourney(value: unknown): PassengerJourney | null | undefined {
@@ -105,6 +117,10 @@ export function normalizeTelemetry(msg: TelemetryMessage): VehicleStatePatch {
   if ('passengerJourney' in msg) {
     const journey = normalizePassengerJourney(msg.passengerJourney);
     if (journey !== undefined) patch.passengerJourney = journey;
+  }
+  if ('arrival' in msg) {
+    const arrival = normalizeArrival(msg.arrival);
+    if (arrival !== undefined) patch.arrival = arrival;
   }
   return patch;
 }

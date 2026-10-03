@@ -6,6 +6,7 @@ dist/
 __pycache__/
 *.pyc
 .env
+*.tsbuildinfo
 _to_delete/
 vision/monitor_roi.json
 vision/*.jsonl

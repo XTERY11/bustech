@@ -22,8 +22,11 @@ const port = Number(process.env.BRIDGE_PORT || 8787);
 const dashboardPort = Number(process.env.DASHBOARD_PORT || 3000);
 const bridge = createBridge();
 bridge.listen(port, host, () => console.log(`Signal bridge: http://${host}:${port}`));
-const web = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'dev', '--hostname', host, '--port', String(dashboardPort)], { cwd: process.cwd(), stdio: ['ignore', 'inherit', 'inherit'], env: process.env });
-const stop = () => { web.kill(); bridge.closeAllConnections(); bridge.close(); };
+// The API key stays in the hub process, never in the browser development process.
+const webEnvironment = { ...process.env }; delete webEnvironment.DEEPSEEK_API_KEY;
+const webArgs = ['node_modules/next/dist/bin/next', 'dev', ...(process.env.NEXT_DEV_BUNDLER === 'webpack' ? ['--webpack'] : []), '--hostname', process.env.DASHBOARD_HOST || host, '--port', String(dashboardPort)];
+const web = process.argv.includes('--bridge-only') ? null : spawn(process.execPath, webArgs, { cwd: process.cwd(), stdio: ['ignore', 'inherit', 'inherit'], env: webEnvironment });
+const stop = () => { web?.kill(); bridge.closeAllConnections(); bridge.close(); };
 process.on('SIGINT', stop); process.on('SIGTERM', stop);
-web.on('exit', code => { bridge.closeAllConnections(); bridge.close(); process.exitCode = code || 0; });
+web?.on('exit', code => { bridge.closeAllConnections(); bridge.close(); process.exitCode = code || 0; });
 bridge.on('error', () => { console.error(`Signal bridge could not start. Check port ${port}.`); stop(); process.exitCode = 1; });

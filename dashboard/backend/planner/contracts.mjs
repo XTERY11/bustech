@@ -27,11 +27,21 @@ const boardingTarget = {
   },
   required: ['type', 'id'], additionalProperties: false,
 };
+const navigationSteps = {
+  type: ['array', 'null'], minItems: 2, maxItems: 16,
+  items: obj({
+    step: { type: 'integer', minimum: 1, maximum: 16 },
+    maneuver: { type: 'string', enum: ['START', 'STRAIGHT', 'TURN_LEFT', 'TURN_RIGHT', 'ARRIVE'] },
+    distance_m: num(20),
+    text: text(200),
+  }, ['step', 'maneuver', 'distance_m', 'text'], false),
+};
 export const INPUT_SCHEMA = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   title: 'AccessRide v2 input (missing safety values fail closed)',
   ...obj({
     request_id: id,
+    booking_event_id: id,
     presentation_mode: en(['WEB_DEMO']),
     request: obj({
       active: bool, observation_age_ms: age,
@@ -49,12 +59,9 @@ export const INPUT_SCHEMA = {
       }, ['label', 'confidence']) },
       // Optional region-trigger metadata from the camera bridge (vision/yolo_bridge.py); informational only.
       // event: what happened at the stop region (heartbeats are 'present'); left: aid labels that were
-      // there when it emptied. On exit, boarding is the bridge's estimate of intent: the passenger waited at
-      // least a couple of seconds and left towards the bus (false: a short stay, or walked off another way);
-      // dwell_seconds is how long the region was occupied. Exit is an observation only, never proof of boarding.
-      zone: obj({ triggered: bool, roi_id: text(80), event: en(['enter', 'present', 'exit']),
-        left: { type: 'array', maxItems: 8, items: en(['WHEELCHAIR', 'CRUTCH', 'CANE', 'WALKER', 'STROLLER']) },
-        boarding: bool, dwell_seconds: num(86400) }),
+      // there when it emptied. The dashboard uses an exit after a READY plan as "passenger has boarded".
+      zone: obj({ triggered: bool, roi_id: text(80), visit_id: id, event: en(['enter', 'present', 'exit']),
+        left: { type: 'array', maxItems: 8, items: en(['WHEELCHAIR', 'CRUTCH', 'CANE', 'WALKER', 'STROLLER']) } }),
       geometry: obj({
         geometry_valid: bool, confidence: num(1), measured_gap_cm: num(1000), measured_slope_deg: num(90),
       }),
@@ -90,5 +97,6 @@ export const MODEL_OUTPUT_SCHEMA = {
     plan_status: en(['READY', 'NEEDS_CONFIRMATION', 'CANNOT_EXECUTE']),
     actions: { type: 'array', minItems: 1, maxItems: ACTIONS.length, uniqueItems: true, items: { type: 'string', enum: ACTIONS } },
     boarding_target: boardingTarget,
-  }, ['request_id', 'plan_status', 'decision_summary', 'actions', 'boarding_target'], false),
+    navigation_steps: navigationSteps,
+  }, ['request_id', 'plan_status', 'decision_summary', 'actions', 'boarding_target', 'navigation_steps'], false),
 };

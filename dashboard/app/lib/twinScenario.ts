@@ -1,14 +1,9 @@
-import type { BoardingTarget, Context, Result } from '../live-types';
+import type { BoardingTarget, Context, Journey, Result } from '../live-types';
 
-/**
- * Hub result -> bus digital-twin timeline (open loop).
- *
- * The planner's validated actions are mapped to a short, timed sequence of
- * telemetry frames for the embedded twin (bus-digital-twin, `index.html?embed=1`).
- * Frames use the twin's TelemetryMessage wire format and go through its
- * normalizeTelemetry(); nothing here feeds back into vehicle_context.
- * Timings follow the twin's own mechanical constants (door 1.2 s, ramp 2.0 s).
- */
+/** Presentation frames only: no animation feeds back into vehicle safety state. */
+type Aid = 'wheelchair' | 'cane' | 'crutch' | 'walker' | 'stroller' | 'visual' | 'hearing' | 'none';
+type PassengerStage = 'hidden' | 'waiting' | 'boarding' | 'navigating' | 'seated' | 'secured';
+type PassengerFrame = { journeyId: string; aid: Aid; stage: PassengerStage; destination: BoardingTarget; progress?: number };
 export type TwinFrame = {
   door?: 'closed' | 'opening' | 'open' | 'closing';
   ramp?: 'retracted' | 'extending' | 'extended' | 'retracting';
@@ -18,60 +13,67 @@ export type TwinFrame = {
   announcement?: { active: boolean; text: string };
   passengerInfo?: { title?: string; message?: string } | null;
   seatOccupancy?: Record<string, boolean>;
-  passengerJourney?: {
-    journeyId: string;
-    aid: 'wheelchair' | 'cane' | 'crutch' | 'walker' | 'stroller' | 'visual' | 'hearing' | 'none';
-    stage: 'hidden' | 'boarding' | 'navigating' | 'seated' | 'secured';
-    destination: BoardingTarget;
-    progress?: number;
-  } | null;
+  passengerJourney?: PassengerFrame | null;
+  arrival?: { id: string; progress: number } | null;
 };
-/** `camera` asks the twin to change its view when the step starts. */
 export type ScenarioStep = { at: number; label: string; action?: string; frame: TwinFrame; camera?: 'overview' | 'entrance' | 'ramp' | 'cutaway' | 'interior' };
-
+export const DOCK_MS = 4200, ARRIVAL_MS = 10000, BOARDING_MS = 16000;
 const DOOR_MS = 1200, RAMP_MS = 2000, KNEEL_MS = 1600;
-export const IDLE_FRAME: TwinFrame = { door: 'closed', ramp: 'retracted', kneeling: false, boardingStatus: 'idle', announcement: { active: false, text: '' }, passengerInfo: null, passengerJourney: null };
-
+export const IDLE_FRAME: TwinFrame = { door: 'closed', ramp: 'retracted', kneeling: false, boardingStatus: 'idle', announcement: { active: false, text: '' }, passengerInfo: null, passengerJourney: null, arrival: null };
 const SEAT_IDS = [...Array.from({ length: 16 }, (_, index) => `S${String(index + 1).padStart(2, '0')}`), 'F01'];
+const has = (actions: string[], ...names: string[]) => names.some(n => actions.includes(n));
+const aidFor = (value?: string | null): Aid => ({
+  WHEELCHAIR: 'wheelchair', CANE: 'cane', CRUTCH: 'crutch', WALKER: 'walker', STROLLER: 'stroller',
+  VISUAL_ASSISTANCE: 'visual', HEARING_ASSISTANCE: 'hearing',
+} as Record<string, Aid>)[value ?? ''] ?? (['wheelchair', 'cane', 'crutch', 'walker', 'stroller', 'visual', 'hearing'].includes(value ?? '') ? value as Aid : 'none');
 
-/** Convert the planner's compact cabin snapshot into the twin's full occupancy patch. */
-export function cabinSeatOccupancy(context: Context): Record<string, boolean> | undefined {
+/** Reconstruct the trusted cabin baseline; the arriving passenger is added only after reaching it. */
+export function cabinSeatOccupancy(context: Context, target?: BoardingTarget | null): Record<string, boolean> | undefined {
   const occupied = context.vehicle_context?.cabin?.occupied_seat_ids;
   if (!occupied) return undefined;
-  const occupiedSet = new Set<string>(occupied);
+  const occupiedSet = new Set(occupied);
+  if (target?.type === 'SEAT') occupiedSet.delete(target.id);
   return Object.fromEntries(SEAT_IDS.map(id => [id, occupiedSet.has(id)]));
 }
 
-const has = (actions: string[], ...names: string[]) => names.some(n => actions.includes(n));
+function waitingPassenger(result: Result | null, context: Context, journey?: Journey | null): PassengerFrame | null {
+  const need = journey?.need ?? (context.request?.active === true ? context.request.accessibility_need : undefined);
+  const detected = context.perception?.yolo_detections?.filter(item => (item.confidence ?? 0) >= 0.75 && aidFor(item.label) !== 'none')
+    .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))[0];
+  const aid = aidFor(need) === 'none' ? aidFor(detected?.label) : aidFor(need);
+  if (aid === 'none') return null;
+  // A placeholder destination only positions the waiting actor; it never authorises boarding.
+  const destination = journey?.boarding_target ?? result?.boarding_target ??
+    (aid === 'wheelchair' ? { type: 'WHEELCHAIR_BAY' as const, id: 'WHEELCHAIR_BAY' } : { type: 'SEAT' as const, id: 'S03' });
+  return { journeyId: journey?.journey_id ?? result?.request_id ?? 'waiting', aid, stage: 'waiting', destination, progress: 0 };
+}
 
-/** Build the timeline for the current hub state. `running` = a plan is being generated. */
-export function actionsToScenario(result: Result | null, context: Context, running: boolean): ScenarioStep[] {
-  const steps: ScenarioStep[] = [];
-  const route = context.request?.route_id ?? context.vehicle_context?.route_id;
-  if (!result) {
-    return running ? [{ at: 0, label: 'Request received', frame: { ...IDLE_FRAME, boardingStatus: 'request_received' } }] : [];
-  }
-  const actions = result.action_plan.map(a => a.action);
+export function waitingScenario(guidance?: string, passenger: PassengerFrame | null = null, occupancy?: Record<string, boolean>): ScenarioStep[] {
+  return [{ at: 0, label: 'Waiting at the stop', camera: 'overview', frame: { ...IDLE_FRAME,
+    boardingStatus: 'request_received', passengerJourney: passenger, ...(occupancy ? { seatOccupancy: occupancy } : {}),
+    passengerInfo: { title: 'Passenger guidance', message: guidance ?? 'Please wait for the safety operator.' } } }];
+}
+
+/** READY is a prepared plan; the live journey gate decides when this timeline may begin. */
+export function actionsToScenario(result: Result | null, context: Context, running: boolean, journey?: Journey | null): ScenarioStep[] {
+  const passenger = waitingPassenger(result, context, journey);
+  const occupancy = cabinSeatOccupancy(context, journey?.boarding_target ?? result?.boarding_target);
+  if (!result || result.plan_status !== 'READY') return waitingScenario(
+    result?.passenger_communication.display_text ?? (running ? 'Preparing your assistance plan. Please wait.' : undefined), passenger, occupancy);
+  const actions = result.action_plan.map(item => item.action);
+  if (has(actions, 'ABORT_ASSISTANCE_SEQUENCE')) return waitingScenario('Assistance is paused. Please wait for the safety operator.', passenger, occupancy);
   const action = (...names: string[]) => names.find(name => actions.includes(name));
-  const audio = result.passenger_communication.audio_text, display = result.passenger_communication.display_text;
-  const message = audio ?? display ?? 'Please wait for the safety operator.';
-
-  if (result.plan_status === 'CANNOT_EXECUTE' || has(actions, 'ABORT_ASSISTANCE_SEQUENCE')) {
-    return [{ at: 0, label: 'Assistance paused', action: action('ABORT_ASSISTANCE_SEQUENCE'), frame: { ...IDLE_FRAME, announcement: { active: true, text: 'Boarding assistance is paused. Please wait for the safety operator.' } } }];
-  }
-  if (result.plan_status !== 'READY') {
-    const hold = action('HOLD_AT_STOP');
-    const requestOperator = action('REQUEST_ONBOARD_SAFETY_OPERATOR');
-    const frame = { ...IDLE_FRAME, boardingStatus: 'request_received' as const, announcement: { active: true, text: message } };
-    return [
-      { at: 0, label: 'Safety hold active', action: hold, frame },
-      ...(requestOperator ? [{ at: 900, label: 'Requesting safety operator', action: requestOperator, frame }] : []),
-    ];
-  }
-
-  let t = 0;
-  const prepareAction = action('HOLD_AT_STOP', 'CHECK_SINGLE_ENTRANCE_CLEARANCE', 'KEEP_SINGLE_ENTRANCE_CLEAR', 'PREPARE_WHEELCHAIR_AREA');
-  steps.push({ at: t, label: 'Preparing', action: prepareAction, frame: { ...IDLE_FRAME, boardingStatus: 'preparing' } });
+  const arrivalId = journey?.animation?.id ?? `${result.request_id}:arrival`;
+  const initial: TwinFrame = { ...IDLE_FRAME, ...(occupancy ? { seatOccupancy: occupancy } : {}),
+    passengerJourney: passenger, arrival: { id: arrivalId, progress: 0 }, boardingStatus: 'request_received',
+    passengerInfo: { title: 'Bus arriving', message: 'Your arrival has been recognised. Please stay behind the marked boarding line.' } };
+  const steps: ScenarioStep[] = [
+    { at: 0, label: 'Bus arriving', camera: 'overview', frame: initial },
+    { at: 50, label: 'Bus approaching the stop', frame: { arrival: { id: arrivalId, progress: 1 } } },
+    { at: DOCK_MS, label: 'Preparing entrance', action: action('HOLD_AT_STOP', 'CHECK_SINGLE_ENTRANCE_CLEARANCE', 'KEEP_SINGLE_ENTRANCE_CLEAR', 'PREPARE_WHEELCHAIR_AREA'),
+      frame: { boardingStatus: 'preparing', passengerInfo: { title: 'Preparing to board', message: 'The bus is stopping and preparing the entrance. Please wait for the operator.' } } },
+  ];
+  let t = DOCK_MS;
   const deployRamp = has(actions, 'DEPLOY_AUTOMATIC_SHORT_RAMP');
   const openDoor = has(actions, 'OPEN_SINGLE_ENTRANCE') || context.vehicle_context?.single_entrance_state === 'OPEN' || deployRamp;
   const rampAction = action('DEPLOY_AUTOMATIC_SHORT_RAMP');
@@ -82,94 +84,131 @@ export function actionsToScenario(result: Result | null, context: Context, runni
     t += DOOR_MS; steps.push({ at: t, label: 'Door open', action: doorAction, frame: { door: 'open' } });
   }
   if (deployRamp) {
-    t = Math.max(t, 300 + KNEEL_MS); t += 200;
+    t = Math.max(t, DOCK_MS + 300 + KNEEL_MS) + 200;
     steps.push({ at: t, label: 'Ramp extending', action: rampAction, frame: { ramp: 'extending' } });
     t += RAMP_MS; steps.push({ at: t, label: 'Ramp extended', action: rampAction, frame: { ramp: 'extended' } });
   } else if (has(actions, 'KEEP_RAMPS_STOWED')) {
-    steps.push({ at: t, label: 'Ramp kept stowed', action: action('KEEP_RAMPS_STOWED'), frame: { ramp: 'retracted' } });
+    steps.push({ at: t, label: 'Ramp kept stowed', action: 'KEEP_RAMPS_STOWED', frame: { ramp: 'retracted' } });
   }
-  t += 300;
-  const ready: TwinFrame = { boardingStatus: 'ready' };
+  const audio = result.passenger_communication.audio_text, display = result.passenger_communication.display_text;
+  const ready: TwinFrame = { boardingStatus: 'ready', passengerInfo: { title: 'Ready to board', message: display ?? audio ?? 'Please board when the safety operator signals.' } };
   if (has(actions, 'ACTIVATE_EXTERNAL_SPEAKER', 'CONFIRM_ROUTE_IDENTITY', 'PLAY_ENTRANCE_AUDIO_BEACON') && audio) ready.announcement = { active: true, text: audio };
-  if (has(actions, 'SHOW_EXTERNAL_DISPLAY') && display) ready.passengerInfo = { title: route ? `Route ${route}` : 'Boarding', message: display };
-  else if (has(actions, 'EXTEND_DWELL_TIME')) ready.passengerInfo = { title: 'Extended boarding time', message: '+60 s dwell time · Board when the operator signals' };
-  const readyAction = action('ACTIVATE_EXTERNAL_SPEAKER', 'CONFIRM_ROUTE_IDENTITY', 'PLAY_ENTRANCE_AUDIO_BEACON', 'SHOW_EXTERNAL_DISPLAY', 'WAIT_FOR_BOARDING_CONFIRMATION', 'EXTEND_DWELL_TIME');
-  steps.push({ at: t, label: 'Ready to board', action: readyAction, frame: ready });
+  steps.push({ at: ARRIVAL_MS, label: 'Ready to board', action: action('SHOW_EXTERNAL_DISPLAY', 'WAIT_FOR_BOARDING_CONFIRMATION', 'EXTEND_DWELL_TIME'), frame: ready });
   return steps;
 }
 
-/** The plan is ready but the passenger has not reached the stop: the bus prepares and waits. */
-export function waitingScenario(guidance?: string, title = 'Booking received'): ScenarioStep[] {
-  return [{ at: 0, label: 'Waiting for the passenger at the stop', frame: { ...IDLE_FRAME, boardingStatus: 'request_received', passengerInfo: { title, message: guidance ?? 'Assistance is prepared. Waiting for the passenger at the stop.' } } }];
-}
-
-/**
- * Explicit presentation preview for the second half of the story. It continues
- * from the READY pose, guides the passenger to the trusted boarding target and
- * stops at the operator-confirmation boundary. `left` can describe the aid that
- * was observed, but leaving the camera region is never treated as proof of boarding.
- */
-export function boardingScenario(result: Result | null, left: string[], fallbackAid?: string, playbackNonce = 0): ScenarioStep[] {
-  const actions = result?.action_plan.map(a => a.action) ?? [];
+/** An open-loop path preview ends at operator confirmation with the entrance held open. */
+export function boardingScenario(result: Result | null, context: Context, journey?: Journey | null): ScenarioStep[] {
+  const target = journey?.animation?.target ?? journey?.boarding_target ?? result?.boarding_target;
+  if (!result || result.plan_status !== 'READY' || !target) return waitingScenario('No validated place has been assigned. Please wait for the safety operator.');
+  const aid = aidFor(journey?.animation?.aid ?? journey?.need ?? context.request?.accessibility_need);
+  const journeyId = journey?.animation?.id ?? `${result.request_id}:boarding`;
+  const passenger = (stage: PassengerStage, progress: number): PassengerFrame => ({ journeyId, aid, stage, destination: target, progress });
+  const actions = result.action_plan.map(item => item.action);
   const ramp = has(actions, 'DEPLOY_AUTOMATIC_SHORT_RAMP');
-  const observedAid = left.find(label => ['WHEELCHAIR', 'CANE', 'CRUTCH', 'WALKER', 'STROLLER'].includes(label));
-  const sourceAid = observedAid ?? fallbackAid ?? 'NONE';
-  const aid = ({
-    WHEELCHAIR: 'wheelchair', CANE: 'cane', CRUTCH: 'crutch', WALKER: 'walker', STROLLER: 'stroller',
-    VISUAL_ASSISTANCE: 'visual', HEARING_ASSISTANCE: 'hearing',
-  } as const)[sourceAid as 'WHEELCHAIR' | 'CANE' | 'CRUTCH' | 'WALKER' | 'STROLLER' | 'VISUAL_ASSISTANCE' | 'HEARING_ASSISTANCE'] ?? 'none';
-  const who = aid === 'wheelchair' ? 'Wheelchair user'
-    : aid === 'stroller' ? 'Passenger with stroller'
-      : aid === 'cane' ? 'Passenger with cane'
-        : aid === 'crutch' ? 'Passenger with crutches'
-          : aid === 'walker' ? 'Passenger with walker'
-            : aid === 'visual' ? 'Passenger using vision support'
-              : aid === 'hearing' ? 'Passenger using hearing support' : 'Passenger';
-  const target = result?.boarding_target ?? null;
-  if (!result || !target) {
-    return [{
-      at: 0,
-      label: 'Awaiting assigned place',
-      camera: 'entrance',
-      frame: {
-        boardingStatus: 'request_received',
-        passengerInfo: { title: 'Operator assistance', message: 'No validated empty place has been assigned.' },
-        passengerJourney: null,
-      },
-    }];
-  }
-  const targetLabel = target.type === 'SEAT' ? `seat ${target.id}` : 'the wheelchair bay';
-  const journeyId = `${result.request_id}:${target.type}:${target.id}:${playbackNonce}`;
-  const journey = (stage: 'boarding' | 'navigating' | 'seated' | 'secured', progress: number) => ({
-    journeyId, aid, stage, destination: target, progress,
-  });
-  // Deliberately paced for a live presentation: each target gives the actor
-  // enough time to traverse the corresponding path segment before the next
-  // camera change. Wheelchair movement is slightly slower than walking.
-  const wheelchair = aid === 'wheelchair';
-  const enteringMs = wheelchair ? 3800 : 3200;
-  const guidingMs = wheelchair ? 3600 : 3000;
-  const approachingMs = wheelchair ? 3200 : 2700;
-  const confirmationHoldMs = 2200;
-  const steps: ScenarioStep[] = [];
-  let t = 0;
-  steps.push({ at: t, label: 'Passenger entering', action: 'WAIT_FOR_BOARDING_CONFIRMATION', camera: ramp ? 'ramp' : 'entrance', frame: { boardingStatus: 'boarding', announcement: { active: false, text: '' }, passengerInfo: { title: 'Boarding', message: `${who} entering · assigned to ${targetLabel}` }, passengerJourney: journey('boarding', 0.36) } });
-  t += enteringMs;
-  steps.push({ at: t, label: `Guiding to ${targetLabel}`, action: 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE', camera: 'cutaway', frame: { passengerInfo: { title: 'Interior guidance', message: `Follow the highlighted route to ${targetLabel}` }, passengerJourney: journey('navigating', 0.70) } });
-  t += guidingMs;
-  // Reach progress 1 while still navigating; the later seated frame can then
-  // hand off to the static occupant without a visible teleport.
-  steps.push({ at: t, label: `Approaching ${targetLabel}`, action: 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE', camera: 'interior', frame: { passengerJourney: journey('navigating', 1) } });
-  t += approachingMs;
-  const finalStage = 'seated';
-  steps.push({ at: t, label: target.type === 'SEAT' ? `Preview: passenger reached ${target.id}` : 'Preview: wheelchair reached bay', action: 'WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION', camera: 'cutaway', frame: { ...(target.type === 'SEAT' ? { seatOccupancy: { [target.id]: true } } : {}), passengerJourney: journey(finalStage, 1), passengerInfo: { title: 'Awaiting operator confirmation', message: target.type === 'SEAT' ? `${who} is shown seated in ${target.id}` : 'Wheelchair is positioned in the bay; securement is not yet confirmed' } } });
-  t += confirmationHoldMs;
-  steps.push({ at: t, label: 'Waiting for safety confirmation', action: 'WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION', frame: { boardingStatus: 'boarding', passengerJourney: journey(finalStage, 1), passengerInfo: { title: 'Safety hold', message: 'Door and ramp remain in their validated boarding state until the operator confirms.' } } });
-  return steps;
+  const occupancy = cabinSeatOccupancy(context, target);
+  const place = target.type === 'SEAT' ? `seat ${target.id}` : 'the wheelchair space';
+  return [
+    { at: 0, label: 'Passenger entering', action: 'WAIT_FOR_BOARDING_CONFIRMATION', camera: ramp ? 'ramp' : 'entrance',
+      frame: { ...IDLE_FRAME, door: 'open', ramp: ramp ? 'extended' : 'retracted', kneeling: ramp,
+        boardingStatus: 'boarding', ...(occupancy ? { seatOccupancy: occupancy } : {}), passengerJourney: passenger('boarding', 0),
+        passengerInfo: { title: 'Boarding guidance', message: `Follow the highlighted path to ${place}. The entrance is held open.` } } },
+    { at: 50, label: 'Passenger boarding', action: 'WAIT_FOR_BOARDING_CONFIRMATION', frame: { passengerJourney: passenger('boarding', 0.36) } },
+    { at: 4500, label: `Guiding to ${place}`, action: 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE', camera: 'cutaway',
+      frame: { passengerJourney: passenger('navigating', 0.70), passengerInfo: { title: 'Interior guidance', message: `Follow the highlighted path to ${place}.` } } },
+    { at: 8500, label: `Approaching ${place}`, action: 'GUIDE_PASSENGER_TO_ASSIGNED_PLACE', camera: 'interior',
+      frame: { passengerJourney: passenger('navigating', 1) } },
+    { at: 12000, label: target.type === 'SEAT' ? `Passenger reached ${target.id}` : 'Wheelchair reached the bay', camera: 'cutaway',
+      action: 'WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION', frame: { passengerJourney: passenger('seated', 1),
+        ...(target.type === 'SEAT' ? { seatOccupancy: { [target.id]: true } } : {}),
+        passengerInfo: { title: 'Awaiting operator confirmation', message: target.type === 'SEAT'
+          ? `The passenger is shown seated in ${target.id}. Please wait for the operator's confirmation.`
+          : 'The wheelchair is shown in the bay. The operator must confirm positioning and securement.' } } },
+    { at: BOARDING_MS, label: 'Waiting for operator confirmation', action: 'WAIT_FOR_SEATED_AND_BELTED_CONFIRMATION',
+      frame: { boardingStatus: 'boarding', passengerInfo: { title: 'Operator confirmation required',
+        message: 'The door and ramp remain in the boarding position until the operator confirms.' } } },
+  ];
 }
 
-/** Play a timeline: `send` receives each frame at its time. Returns a cancel function. */
-export function playScenario(steps: ScenarioStep[], send: (frame: TwinFrame, step: ScenarioStep) => void) {
-  const timers = steps.map(step => window.setTimeout(() => send(step.frame, step), step.at));
+/** One shared gate for live signals; presets can play the complete prepared-plan preview. */
+export function buildScenario(result: Result | null, context: Context, running: boolean, journey: Journey | null): ScenarioStep[] {
+  if (journey) {
+    const active = context.request?.active === true && context.request?.intent === 'BOARDING';
+    if (!active || journey.stage === 'IDLE') return [{ at: 0, label: 'Idle', camera: 'overview',
+      frame: { ...IDLE_FRAME, passengerJourney: waitingPassenger(null, context, journey),
+        ...(cabinSeatOccupancy(context) ? { seatOccupancy: cabinSeatOccupancy(context) } : {}) } }];
+    if (!running && result?.plan_status === 'READY' && journey.matched) {
+      if (journey.stage === 'ON_BOARD' && journey.animation?.phase === 'boarding') return boardingScenario(result, context, journey);
+      if (journey.stage === 'AT_STOP' && journey.animation?.phase === 'arrival') return actionsToScenario(result, context, false, journey);
+    }
+    return waitingScenario(journey.guidance.display_text, waitingPassenger(result, context, journey), cabinSeatOccupancy(context));
+  }
+  const arrival = actionsToScenario(result, context, running);
+  if (running || result?.plan_status !== 'READY' || !result.boarding_target) return arrival;
+  return [...arrival, ...boardingScenario(result, context).map(step => ({ ...step, at: step.at + ARRIVAL_MS }))];
+}
+
+function mergeFrame(previous: TwinFrame, frame: TwinFrame): TwinFrame {
+  return { ...previous, ...frame, ...(frame.seatOccupancy ? { seatOccupancy: { ...previous.seatOccupancy, ...frame.seatOccupancy } } : {}) };
+}
+
+/** Restore the pose at a server time, then continue toward its current animation targets. */
+export function frameAtElapsed(steps: ScenarioStep[], elapsedMs: number) {
+  const passed = steps.filter(step => step.at <= elapsedMs);
+  if (!passed.length) return null;
+  let frame: TwinFrame = {}, passengerProgress = 0, arrivalProgress = 1, previousAt = 0;
+  let passengerId: string | undefined, arrivalId: string | undefined;
+  const move = (to: number) => {
+    const seconds = Math.max(0, to - previousAt) / 1000;
+    const passenger = frame.passengerJourney;
+    if (passenger) {
+      const target = passenger.progress ?? 0;
+      passengerProgress += Math.sign(target - passengerProgress) * Math.min(Math.abs(target - passengerProgress), seconds * (passenger.aid === 'wheelchair' ? 0.1 : 0.12));
+    }
+    if (frame.arrival) {
+      const target = frame.arrival.progress;
+      arrivalProgress += Math.sign(target - arrivalProgress) * Math.min(Math.abs(target - arrivalProgress), seconds / 4.2);
+    }
+    previousAt = to;
+  };
+  for (const step of passed) {
+    move(step.at);
+    frame = mergeFrame(frame, step.frame);
+    if (step.frame.passengerJourney === null) { passengerId = undefined; passengerProgress = 0; }
+    else if (step.frame.passengerJourney && passengerId !== step.frame.passengerJourney.journeyId) {
+      passengerId = step.frame.passengerJourney.journeyId;
+      passengerProgress = step.frame.passengerJourney.stage === 'boarding' ? 0 : step.frame.passengerJourney.progress ?? 0;
+    }
+    if (step.frame.arrival === null) { arrivalId = undefined; arrivalProgress = 1; }
+    else if (step.frame.arrival && arrivalId !== step.frame.arrival.id) {
+      arrivalId = step.frame.arrival.id; arrivalProgress = step.frame.arrival.progress;
+    }
+  }
+  move(elapsedMs);
+  const targets: TwinFrame = {};
+  if (frame.arrival && arrivalProgress !== frame.arrival.progress) targets.arrival = { ...frame.arrival };
+  if (frame.passengerJourney && Math.abs(passengerProgress - (frame.passengerJourney.progress ?? 0)) > 0.000001) targets.passengerJourney = { ...frame.passengerJourney };
+  const restored: TwinFrame = { ...frame,
+    ...(frame.arrival ? { arrival: { ...frame.arrival, progress: arrivalProgress } } : {}),
+    ...(frame.passengerJourney ? { passengerJourney: { ...frame.passengerJourney, progress: passengerProgress,
+      stage: frame.passengerJourney.stage === 'boarding' && elapsedMs > 0 ? 'navigating' : frame.passengerJourney.stage } } : {}) };
+  const active = passed[passed.length - 1];
+  const camera = [...passed].reverse().find(step => step.camera)?.camera;
+  return { frame: restored, targets, step: camera ? { ...active, camera } : active };
+}
+
+/** Reconnect uses server elapsed time; Replay explicitly passes zero and only affects this viewer. */
+export function playScenario(steps: ScenarioStep[], send: (frame: TwinFrame, step: ScenarioStep) => void, elapsedMs = 0) {
+  const elapsed = Math.max(0, elapsedMs), restored = elapsed > 0 ? frameAtElapsed(steps, elapsed) : null;
+  const future = steps.filter(step => !restored || step.at > elapsed);
+  const timers: number[] = [];
+  if (restored) {
+    send(restored.frame, restored.step);
+    if (Object.keys(restored.targets).length) {
+      const recoveryDelay = Math.min(50, future.length ? Math.max(1, (future[0].at - elapsed) / 2) : 50);
+      timers.push(window.setTimeout(() => send(restored.targets, restored.step), recoveryDelay));
+    }
+  }
+  for (const step of future) timers.push(window.setTimeout(() => send(step.frame, step), Math.max(0, step.at - elapsed)));
   return () => timers.forEach(id => window.clearTimeout(id));
 }

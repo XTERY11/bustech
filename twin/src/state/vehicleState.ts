@@ -37,6 +37,7 @@ export function applyPatch(state: VehicleState, patch: VehicleStatePatch): Vehic
       ? { ...patch.passengerJourney, destination: { ...patch.passengerJourney.destination } }
       : null;
   }
+  if ('arrival' in patch) next.arrival = patch.arrival ? { ...patch.arrival } : null;
   return next;
 }
 

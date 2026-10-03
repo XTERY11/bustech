@@ -162,7 +162,12 @@ export const PassengerJourneyActor = memo(function PassengerJourneyActor({ journ
   const path = useMemo(() => journey ? buildPassengerPath(journey.destination) : null, [journey?.journeyId, journey?.destination.type, journey?.destination.id]);
 
   useEffect(() => {
-    if (!journey) return;
+    if (!journey) {
+      previousJourney.current = undefined;
+      progress.current = 0;
+      invalidate();
+      return;
+    }
     if (previousJourney.current !== journey.journeyId) {
       previousJourney.current = journey.journeyId;
       // A new preview always begins outside the bus instead of jumping to the

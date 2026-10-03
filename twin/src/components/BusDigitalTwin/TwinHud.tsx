@@ -11,9 +11,9 @@ function AutoScrollMessage({ text }: { text: string }) {
   useEffect(() => {
     const node = viewport.current;
     if (!node) return;
-    node.scrollLeft = 0;
+    node.scrollTop = 0;
     manual.current = false;
-    const measure = () => setOverflowing(node.scrollWidth > node.clientWidth + 1);
+    const measure = () => setOverflowing(node.scrollHeight > node.clientHeight + 1);
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(node);
@@ -31,15 +31,15 @@ function AutoScrollMessage({ text }: { text: string }) {
     const tick = (now: number) => {
       const elapsed = Math.min(64, now - last);
       last = now;
-      const maximum = Math.max(0, node.scrollWidth - node.clientWidth);
+      const maximum = Math.max(0, node.scrollHeight - node.clientHeight);
       if (!manual.current && maximum > 1 && now >= holdUntil) {
-        node.scrollLeft += direction * elapsed * 0.022;
-        if (node.scrollLeft >= maximum - 0.5) {
-          node.scrollLeft = maximum;
+        node.scrollTop += direction * elapsed * 0.022;
+        if (node.scrollTop >= maximum - 0.5) {
+          node.scrollTop = maximum;
           direction = -1;
           holdUntil = now + 1600;
-        } else if (node.scrollLeft <= 0.5 && direction < 0) {
-          node.scrollLeft = 0;
+        } else if (node.scrollTop <= 0.5 && direction < 0) {
+          node.scrollTop = 0;
           direction = 1;
           holdUntil = now + 1400;
         }

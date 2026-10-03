@@ -86,7 +86,7 @@ export function derivePresentation(s: VehicleState): Presentation {
         };
         break;
       case 'ready':
-        callout = { key: 'ready', anchor: 'ramp', icon: 'accessible', title: 'Ready to board', subtitle: 'Ramp deployed · please proceed', tone: 'ready' };
+        callout = { key: 'ready', anchor: 'ramp', icon: 'accessible', title: 'Ready to board', subtitle: 'Entrance prepared · await operator signal', tone: 'ready' };
         highlights.ramp = 'ready';
         break;
       case 'boarding':

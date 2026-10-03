@@ -38,7 +38,7 @@ export type PassengerAid =
   | 'hearing'
   | 'none';
 
-export type PassengerJourneyStage = 'hidden' | 'boarding' | 'navigating' | 'seated' | 'secured';
+export type PassengerJourneyStage = 'hidden' | 'waiting' | 'boarding' | 'navigating' | 'seated' | 'secured';
 
 type SeatNumber = '01' | '02' | '03' | '04' | '05' | '06' | '07' | '08' | '09' | '10' | '11' | '12' | '13' | '14' | '15' | '16';
 export type FixedSeatId = `S${SeatNumber}`;
@@ -60,6 +60,12 @@ export interface PassengerJourney {
   progress?: number;
 }
 
+/** Presentation-only arrival from the approach road to the marked stop. */
+export interface VehicleArrival {
+  id: string;
+  progress: number;
+}
+
 export interface VehicleState {
   vehicleId?: string;
   /** Epoch ms of the last update applied (telemetry or local). */
@@ -76,6 +82,8 @@ export interface VehicleState {
   seatOccupancy?: SeatOccupancy;
   /** Optional presentation-only passenger route. Old telemetry may omit it. */
   passengerJourney?: PassengerJourney | null;
+  /** Omitting this preserves the last arrival; null restores the parked pose. */
+  arrival?: VehicleArrival | null;
 }
 
 /** A partial update, as produced by commands or telemetry messages. */
@@ -92,6 +100,7 @@ export const DEFAULT_VEHICLE_STATE: VehicleState = {
   passengerInfo: undefined,
   seatOccupancy: createSeatOccupancy(),
   passengerJourney: null,
+  arrival: null,
 };
 
 /** Continuous animation parameters, all normalised 0 → 1. */

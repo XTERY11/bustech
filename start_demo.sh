@@ -5,6 +5,7 @@
 #   bash start_demo.sh 0               # same, but the bridge reads camera 0 (draw monitor_roi.json first, see README)
 #   DEEPSEEK_API_KEY=sk-... bash start_demo.sh 0
 #   LAN=1 bash start_demo.sh 0         # bind to 0.0.0.0 with a generated BRIDGE_TOKEN for phones / other PCs
+#   APP_ORIGINS=http://192.168.1.20:5173 LAN=1 bash start_demo.sh 0  # allow an external App origin
 #   BRIDGE_WINDOW=1 bash start_demo.sh 0   # also show the annotated camera view in a local window (Q stops the bridge)
 #   BRIDGE_RECORD=1 bash start_demo.sh 0   # also save the raw camera frames to vision/recordings/ for replay
 #   bash start_demo.sh demos/captures/venue_live_172729   # replay a recorded session (no camera, no YOLO);
@@ -28,11 +29,15 @@ if [ "${LAN:-0}" = "1" ]; then
   IP="$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')"
   export BRIDGE_HOST=0.0.0.0
   export BRIDGE_TOKEN="${BRIDGE_TOKEN:-$(python3 -c 'import secrets;print(secrets.token_hex(16))')}"
-  export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-http://${IP}:${DASHBOARD_PORT},http://127.0.0.1:${DASHBOARD_PORT},http://localhost:${DASHBOARD_PORT}}"
+  DEFAULT_ORIGINS="http://${IP}:${DASHBOARD_PORT},http://127.0.0.1:${DASHBOARD_PORT},http://localhost:${DASHBOARD_PORT}"
+  [ -z "${APP_ORIGINS:-}" ] || DEFAULT_ORIGINS="${DEFAULT_ORIGINS},${APP_ORIGINS}"
+  export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-${DEFAULT_ORIGINS}}"
   echo "LAN mode: dashboard http://${IP}:${DASHBOARD_PORT}  hub http://${IP}:${BRIDGE_PORT}  camera http://${IP}:${VISION_PORT}"
   echo "Access token (App / dashboard Connection settings): ${BRIDGE_TOKEN}"
 else
-  export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-http://127.0.0.1:${DASHBOARD_PORT},http://localhost:${DASHBOARD_PORT}}"
+  DEFAULT_ORIGINS="http://127.0.0.1:${DASHBOARD_PORT},http://localhost:${DASHBOARD_PORT}"
+  [ -z "${APP_ORIGINS:-}" ] || DEFAULT_ORIGINS="${DEFAULT_ORIGINS},${APP_ORIGINS}"
+  export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-${DEFAULT_ORIGINS}}"
   echo "Dashboard http://127.0.0.1:${DASHBOARD_PORT}  hub http://127.0.0.1:${BRIDGE_PORT}  camera http://127.0.0.1:${VISION_PORT}"
 fi
 

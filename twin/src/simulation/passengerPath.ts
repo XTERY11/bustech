@@ -110,7 +110,8 @@ export function samplePassengerPath(path: readonly Point3[], rawProgress: number
 export function journeyStageTarget(stage: PassengerJourneyStage): number {
   switch (stage) {
     case 'hidden': return 0;
-    case 'boarding': return 0.48;
+    case 'waiting': return 0;
+    case 'boarding': return 0.36;
     case 'navigating': return 0.94;
     case 'seated':
     case 'secured': return 1;

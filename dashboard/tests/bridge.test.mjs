@@ -26,7 +26,8 @@ test('signals fuse, deduplicate and do not replan for heartbeat/confidence jitte
   await hub.run(); assert.equal(calls, 1);
   assert.throws(() => hub.receive('perception', envelope('yolo-2', {}, now)), /EVENT_ID_CONFLICT/);
   assert.throws(() => hub.receive('perception', envelope('old', p, now - 1)), /OUT_OF_ORDER/);
-  now += 600000; await hub.run(); assert.equal(calls, 1); assert.equal(hub.result.plan_status, 'READY');
+  now += 600000; hub.tick(); await hub.run(); assert.equal(calls, 1); assert.equal(hub.result, null);
+  assert.equal(hub.snapshot().journey.reason, 'expired');
 });
 
 test('new emergency supersedes an in-flight model result', async t => {

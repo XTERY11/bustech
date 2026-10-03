@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SEATS, createSeatOccupancy, getCabinSnapshot } from '../src/data/cabinLayout';
 import { createVehicleStore } from '../src/state/vehicleState';
-import { connectTelemetry, normalizePassengerJourney, normalizeTelemetry } from '../src/adapters/telemetryAdapter';
+import { connectTelemetry, normalizeArrival, normalizePassengerJourney, normalizeTelemetry } from '../src/adapters/telemetryAdapter';
 import { MockBusSimulator } from '../src/simulation/mockBus';
 import { buildPassengerPath, journeyStageTarget, samplePassengerPath } from '../src/simulation/passengerPath';
+import { advanceArrivalProgress, arrivalPosition, ARRIVAL_SECONDS, wheelRotationForTravel } from '../src/simulation/arrival';
+import { BUS } from '../src/components/BusDigitalTwin/dimensions';
 
 globalThis.window = globalThis as unknown as Window & typeof globalThis;
 
@@ -124,6 +126,74 @@ test('malformed passenger journeys are ignored instead of replacing valid state'
   for (const value of invalid) {
     assert.equal(normalizePassengerJourney(value), undefined);
     assert.equal('passengerJourney' in normalizeTelemetry({ passengerJourney: value }), false);
+  }
+});
+
+test('arrival telemetry accepts bounded progress, preserves old frames, and explicitly resets on null', () => {
+  const arrival = { id: 'arrival-1', progress: 0.6 };
+  assert.deepEqual(normalizeArrival(arrival), arrival);
+  assert.deepEqual(normalizeArrival({ id: 'a', progress: 0 }), { id: 'a', progress: 0 });
+  assert.deepEqual(normalizeArrival({ id: 'a', progress: 1 }), { id: 'a', progress: 1 });
+  const store = createVehicleStore();
+  store.setVehicleState(normalizeTelemetry({ arrival }));
+  arrival.progress = 0;
+  assert.equal(store.getState().arrival?.progress, 0.6, 'the store owns a copy');
+  store.setVehicleState(normalizeTelemetry({ door: 'open' }));
+  assert.equal(store.getState().arrival?.id, 'arrival-1');
+  for (const value of [undefined, {}, [], 'arriving', { id: '', progress: 0 }, { id: 'bad id', progress: 0 },
+    { id: 'a', progress: -0.01 }, { id: 'a', progress: 1.01 }, { id: 'a', progress: NaN }, { id: 'a', progress: Infinity }, { id: 'a', progress: '1' }]) {
+    assert.equal(normalizeArrival(value), undefined);
+    assert.equal('arrival' in normalizeTelemetry({ arrival: value }), false);
+  }
+  store.setVehicleState(normalizeTelemetry({ arrival: null }));
+  assert.equal(store.getState().arrival, null);
+});
+
+test('arrival drives toward the model front from the approach road to the stop without overshooting and can restart', () => {
+  assert.equal(arrivalPosition(0), 7);
+  assert.equal(arrivalPosition(1), 0);
+  assert.equal(arrivalPosition(-1), 7);
+  assert.equal(arrivalPosition(2), 0);
+  const forwardX = Math.sign(BUS.frontX - BUS.rearX);
+  assert.equal(forwardX, -1, 'the bus geometry defines its front along -X');
+  assert.ok((arrivalPosition(1) - arrivalPosition(0)) * forwardX > 0, 'arrival must move toward the bus front, not reverse');
+  let progress = 0, lastX = 7;
+  for (let frame = 0; frame < Math.round(ARRIVAL_SECONDS * 60); frame++) {
+    progress = advanceArrivalProgress(progress, 1, 1 / 60);
+    const x = arrivalPosition(progress);
+    assert.ok(x <= lastX && x >= 0);
+    lastX = x;
+  }
+  assert.ok(Math.abs(progress - 1) < 1e-9);
+  assert.equal(advanceArrivalProgress(1, 1, 1), 1);
+  assert.equal(advanceArrivalProgress(0, 1, -1), 0);
+  assert.ok(advanceArrivalProgress(1, 0, 0.1) < 1);
+});
+
+test('arrival wheels roll forward with signed X travel rather than spinning in reverse', () => {
+  const travel = arrivalPosition(1) - arrivalPosition(0);
+  const rotation = wheelRotationForTravel(travel, BUS.wheel.radius);
+  assert.ok(travel < 0);
+  assert.ok(rotation > 0, 'negative X travel needs positive rotation about the +Z axle');
+  assert.ok(Math.abs(travel + rotation * BUS.wheel.radius) < 1e-9, 'the tyre contact point must not slip');
+  assert.equal(wheelRotationForTravel(0, BUS.wheel.radius), 0);
+  assert.ok(wheelRotationForTravel(-travel, BUS.wheel.radius) < 0, 'resetting travel reverses the wheel sign consistently');
+});
+
+test('waiting passengers remain at the marked point; supported low-floor paths end at the assigned seat', () => {
+  assert.equal(journeyStageTarget('waiting'), 0);
+  const waiting = normalizePassengerJourney({ journeyId: 'waiting-1', aid: 'cane', stage: 'waiting', destination: { type: 'SEAT', id: 'S03' }, progress: 0 });
+  assert.equal(waiting?.stage, 'waiting');
+  for (const id of ['S03', 'S02', 'S09', 'S06', 'S05', 'S08'] as const) {
+    const seat = SEATS.find(candidate => candidate.id === id)!;
+    const path = buildPassengerPath({ type: 'SEAT', id });
+    assert.ok(path);
+    assert.ok(path.every(point => point.every(Number.isFinite)));
+    assert.equal(path[0][0], path[1][0]);
+    assert.ok(path[0][2] > 2.3);
+    assert.deepEqual(samplePassengerPath(path, 1).position, seat.position);
+    assert.equal(seat.zone, 'low-floor');
+    assert.ok(path.slice(2).every(point => point[1] === seat.position[1]));
   }
 });
 

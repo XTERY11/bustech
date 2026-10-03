@@ -20,7 +20,7 @@ export class DeepSeekClient {
         body: JSON.stringify({
           model: this.model, messages, stream: false, temperature: 0,
           thinking: { type: 'disabled' }, response_format: { type: 'json_object' },
-          max_tokens: phase === 'summary' ? 320 : 800,
+          max_tokens: phase === 'summary' ? 320 : 1400,
         }),
       });
     } catch (error) {
