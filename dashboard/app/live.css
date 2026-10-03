@@ -231,3 +231,14 @@ button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visi
 .waitingChip.isCurrent { border-color:#9fd3b5; background:#f3fbf6; box-shadow:0 0 0 3px #147d4f14; }
 @media(max-width:760px) { .waitingList { display:block; margin-left:18px; margin-right:18px; width:auto; }.waitingList .communicationTitle { min-height:38px; margin-bottom:8px; }.waitingChip { flex:1 1 140px; max-width:none; } }
 .passengerNavigation .journeyReset { flex:none; min-height:34px; padding:6px 14px; font-size:12px; }
+.journeyCountdown { flex:none; display:grid; grid-template-columns:auto; gap:4px; min-width:190px; padding:8px 14px; border-radius:14px; border:1px solid var(--line); background:#fff; }
+.journeyCountdownText { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+.journeyCountdownText small { font-size:11px; font-weight:750; letter-spacing:.02em; color:var(--muted); text-transform:uppercase; }
+.journeyCountdownText strong { font-size:30px; line-height:1; font-weight:850; font-variant-numeric:tabular-nums; color:var(--navy); }
+.journeyCountdownBar { display:block; height:6px; border-radius:999px; background:#e7ecef; overflow:hidden; }
+.journeyCountdownBar i { display:block; height:100%; background:var(--orange); transition:width .1s linear; }
+.journeyCountdown em { font-style:normal; font-size:11px; color:var(--muted); }
+.journeyCountdown.is-ready { border-color:var(--green); background:#effaf3; }
+.journeyCountdown.is-ready strong { color:var(--green); }
+.journeyCountdown.is-ready .journeyCountdownBar i, .journeyCountdown.is-boarding .journeyCountdownBar i { background:var(--green); }
+.journeyCountdown.is-left { border-color:var(--orange); background:#fff7ee; }

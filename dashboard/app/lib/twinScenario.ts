@@ -21,6 +21,8 @@ export const DOCK_MS = 4200, ARRIVAL_MS = 10000, BOARDING_MS = 16000, STROLLER_B
 /** A hub arrival this short means the bus is already at the stop (a later passenger of the same bus): no drive-in. */
 export const DOCKED_ARRIVAL_MAX_MS = 5000;
 const DOOR_MS = 1200, RAMP_MS = 2000, KNEEL_MS = 1600;
+/** Pause between the last entrance movement and "Ready to board" on a full arrival. */
+const ENTRANCE_SETTLE_MS = 400;
 export const IDLE_FRAME: TwinFrame = { door: 'closed', ramp: 'retracted', kneeling: false, boardingStatus: 'idle', announcement: { active: false, text: '' }, passengerInfo: null, passengerJourney: null, arrival: null };
 const SEAT_IDS = [...Array.from({ length: 16 }, (_, index) => `S${String(index + 1).padStart(2, '0')}`), 'F01'];
 const has = (actions: string[], ...names: string[]) => names.some(n => actions.includes(n));
@@ -120,17 +122,34 @@ export function actionsToScenario(result: Result | null, context: Context, runni
   let t = dockMs;
   const rampAction = action('DEPLOY_AUTOMATIC_SHORT_RAMP');
   const doorAction = action('OPEN_SINGLE_ENTRANCE') ?? rampAction;
-  if (deployRamp) { t += 300; steps.push({ at: t, label: 'Kneeling', action: rampAction, frame: { kneeling: true } }); }
-  if (openDoor && !docked) {
-    t += 300; steps.push({ at: t, label: 'Door opening', action: doorAction, frame: { door: 'opening' } });
-    t += DOOR_MS; steps.push({ at: t, label: 'Door open', action: doorAction, frame: { door: 'open' } });
-  }
-  if (deployRamp) {
-    t = Math.max(t, dockMs + 300 + KNEEL_MS) + 200;
-    steps.push({ at: t, label: 'Ramp extending', action: rampAction, frame: { ramp: 'extending' } });
-    t += RAMP_MS; steps.push({ at: t, label: 'Ramp extended', action: rampAction, frame: { ramp: 'extended' } });
-  } else if (has(actions, 'KEEP_RAMPS_STOWED')) {
-    steps.push({ at: t, label: 'Ramp kept stowed', action: 'KEEP_RAMPS_STOWED', frame: { ramp: 'retracted' } });
+  if (docked) {
+    if (deployRamp) {
+      t += 300; steps.push({ at: t, label: 'Kneeling', action: rampAction, frame: { kneeling: true } });
+      t = Math.max(t, dockMs + 300 + KNEEL_MS) + 200;
+      steps.push({ at: t, label: 'Ramp extending', action: rampAction, frame: { ramp: 'extending' } });
+      t += RAMP_MS; steps.push({ at: t, label: 'Ramp extended', action: rampAction, frame: { ramp: 'extended' } });
+    } else if (has(actions, 'KEEP_RAMPS_STOWED')) {
+      steps.push({ at: t, label: 'Ramp kept stowed', action: 'KEEP_RAMPS_STOWED', frame: { ramp: 'retracted' } });
+    }
+  } else {
+    // A full arrival fills the hub's 10 s: the entrance steps are scheduled backwards from "Ready to board",
+    // so the last movement (ramp out, or the door when no ramp is used) ends just as the wait is over.
+    const settled = ARRIVAL_MS - ENTRANCE_SETTLE_MS;
+    const rampOut = deployRamp ? settled - RAMP_MS : settled;
+    const doorOpening = (deployRamp ? rampOut - 300 : settled) - DOOR_MS;
+    if (deployRamp) steps.push({ at: Math.max(dockMs + 200, doorOpening - KNEEL_MS - 100), label: 'Kneeling', action: rampAction, frame: { kneeling: true } });
+    else steps.push({ at: Math.round((dockMs + doorOpening) / 2), label: 'Checking the entrance is clear', action: action('CHECK_SINGLE_ENTRANCE_CLEARANCE', 'KEEP_SINGLE_ENTRANCE_CLEAR'), frame: { boardingStatus: 'preparing' } });
+    if (openDoor) {
+      steps.push({ at: doorOpening, label: 'Door opening', action: doorAction, frame: { door: 'opening' } });
+      steps.push({ at: doorOpening + DOOR_MS, label: 'Door open', action: doorAction, frame: { door: 'open' } });
+    }
+    if (deployRamp) {
+      steps.push({ at: rampOut, label: 'Ramp extending', action: rampAction, frame: { ramp: 'extending' } });
+      steps.push({ at: settled, label: 'Ramp extended', action: rampAction, frame: { ramp: 'extended' } });
+    } else if (has(actions, 'KEEP_RAMPS_STOWED')) {
+      steps.push({ at: doorOpening + DOOR_MS, label: 'Ramp kept stowed', action: 'KEEP_RAMPS_STOWED', frame: { ramp: 'retracted' } });
+    }
+    t = settled;
   }
   const audio = result.passenger_communication.audio_text, display = result.passenger_communication.display_text;
   const ready: TwinFrame = { boardingStatus: 'ready', passengerInfo: { title: 'Ready to board', message: display ?? audio ?? 'Please board when the safety operator signals.' } };

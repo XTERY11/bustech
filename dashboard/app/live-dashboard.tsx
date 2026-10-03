@@ -5,6 +5,7 @@ import cases from '../backend/examples/demo_cases.json';
 import { ACTIONS } from '../backend/planner/contracts.mjs';
 import { TwinPanel } from './components/TwinPanel';
 import { VideoPanel } from './components/VideoPanel';
+import { JourneyCountdown } from './components/JourneyCountdown';
 import { WordReveal } from './components/WordReveal';
 import { ACTION_LABELS } from './lib/actionLabels';
 import { postSignal, snapshotFromEvent, watchEvents } from './live-client';
@@ -421,6 +422,7 @@ export default function Dashboard() {
       <ol className="journeyProgress" aria-label="Booking, arrival and boarding progress">{[
         ['BOOKED', 'Request received'], ['AT_STOP', 'At the stop'], ['ON_BOARD', 'On board'],
       ].map(([stage, label], index) => <li key={stage} className={['BOOKED', 'AT_STOP', 'ON_BOARD'].indexOf(journey.stage) >= index ? 'isReached' : ''} aria-current={journey.stage === stage ? 'step' : undefined}><span>{index + 1}</span>{label}</li>)}</ol>
+      <JourneyCountdown journey={journey} />
       {navigation && <strong className="navigationDestination">{navigation.destination.type === 'SEAT' ? `Seat ${navigation.destination.id}` : navigation.destination.type === 'WHEELCHAIR_BAY' ? 'Wheelchair bay' : `Stop ${navigation.destination.id.replaceAll('_', ' ')}`}</strong>}
       {connected && journey.journey_id && journey.stage !== 'IDLE' && <button className="secondaryButton journeyReset" disabled={resetting} onClick={() => void resetJourney()}
         aria-label={journey.stage === 'ON_BOARD' ? 'Reset: finish this journey and get the bus ready for the next passenger' : 'Reset: cancel this booking and clear the screen'}>
