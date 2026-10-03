@@ -16,8 +16,13 @@ if (process.argv.includes('--key-stdin')) {
   if (process.stdin.isTTY) process.stdin.setRawMode(false);
 }
 if (!process.env.DEEPSEEK_API_KEY) throw new Error('Set DEEPSEEK_API_KEY or use --key-stdin. This check never uses rules instead.');
+const categoryFlag = process.argv.indexOf('--categories');
+const categories = categoryFlag >= 0 ? (process.argv[categoryFlag + 1] ?? '').split(',') : ['WHEELCHAIR', 'CANE', 'STROLLER', 'VISUAL_ASSISTANCE'];
+if (!categories.length || categories.some(need => !['WHEELCHAIR', 'CANE', 'STROLLER', 'VISUAL_ASSISTANCE'].includes(need))) throw new Error('INVALID_CHECK_CATEGORY');
+const strollerNearbyFull = process.argv.includes('--stroller-nearby-full');
 let clock = Date.now();
 const hub = new SignalHub({ autoRun: false, now: () => clock });
+const initialCabin = structuredClone(hub.cabin);
 const token = randomUUID(), origin = 'http://localhost:3300';
 const server = createBridge({ hub, token, allowedOrigins: [origin] });
 server.listen(0, '127.0.0.1'); await once(server, 'listening');
@@ -53,8 +58,14 @@ const until = async predicate => {
 };
 try {
   assert.equal((await fetch(`${base}/api/state`)).status, 401);
-  const seats = [], report = [];
-  for (const need of ['WHEELCHAIR', 'CANE', 'STROLLER', 'VISUAL_ASSISTANCE']) {
+  const report = [];
+  for (const need of categories) {
+    // Each category is an independent simulated bus. A stroller and a wheelchair
+    // cannot consume the same bay in one journey sequence; unit tests cover that refusal.
+    hub.cabin = structuredClone(initialCabin);
+    if (need === 'STROLLER' && strollerNearbyFull) {
+      hub.cabin.occupied_seat_ids = [...new Set([...hub.cabin.occupied_seat_ids, 'S02', 'S03'])];
+    }
     clock = Math.max(clock + 1, Date.now());
     await send('booking', { active: true, intent: 'BOARDING', accessibility_need: need,
       route_id: 'DEMO_ROUTE', stop_id: 'DEMO_STOP', ramp_preference: need === 'WHEELCHAIR' ? 'REQUESTED' : 'UNSPECIFIED',
@@ -72,7 +83,14 @@ try {
     assert.ok(events.some(e => e.type === 'result' && e.data.snapshot?.navigation?.id === journeyId));
     const target = result.boarding_target;
     if (need === 'WHEELCHAIR') assert.deepEqual(target, { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' });
-    else { assert.equal(target.type, 'SEAT'); assert.ok(!seats.includes(target.id)); seats.push(target.id); }
+    else assert.equal(target.type, 'SEAT');
+    if (need === 'STROLLER') {
+      const preferred = ['S02', 'S03'].filter(id => !hub.cabin.occupied_seat_ids.includes(id));
+      const expectedSeats = preferred.length ? preferred : ['S05', 'S06'].filter(id => !hub.cabin.occupied_seat_ids.includes(id));
+      assert.ok(expectedSeats.includes(target.id), 'Stroller seating must prefer the nearest available tier');
+      assert.deepEqual(result.equipment_target, { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' });
+      assert.equal(result.cabin_navigation.steps.filter(step => step.maneuver === 'PARK_STROLLER').length, 1);
+    } else assert.equal(result.equipment_target, null);
     const visit = `visit-${randomUUID()}`, label = need === 'VISUAL_ASSISTANCE' ? 'CANE' : need;
     assert.ok(result.cabin_navigation?.steps?.length >= 4, 'LLM must provide structured interior directions');
     assert.ok(result.cabin_navigation.steps.some(step => step.maneuver === 'STRAIGHT' && step.distance_m > 0));
@@ -85,13 +103,14 @@ try {
     clock += ARRIVAL_MS; hub.tick(); snapshot = await state();
     assert.equal(snapshot.navigation.phase, need === 'WHEELCHAIR' ? 'TO_WHEELCHAIR_BAY' : 'TO_SEAT');
     assert.deepEqual(snapshot.navigation.destination, target); assert.equal(snapshot.journey.animation.phase, 'boarding');
+    assert.deepEqual(snapshot.navigation.equipment_target, result.equipment_target);
     assert.deepEqual(snapshot.navigation.steps, result.cabin_navigation.steps);
     assert.equal(snapshot.result.request_id, result.request_id, 'CV must not trigger another model call');
     await until(() => events.some(e => e.type === 'navigation' && e.data.navigation?.id === journeyId && e.data.navigation.destination.id === target.id));
-    report.push({ category: need, model: result.meta.model, target: target.id, navigation: snapshot.navigation.phase, steps: snapshot.navigation.steps,
+    report.push({ category: need, model: result.meta.model, target: target.id, equipment_target: result.equipment_target, navigation: snapshot.navigation.phase, steps: snapshot.navigation.steps,
       api_calls: result.meta.api_calls, total_tokens: result.meta.usage.total_tokens, latency_ms: result.meta.latency_ms });
   }
-  console.log(JSON.stringify({ ok: true, real_deepseek: true, cv_source: 'simulated HTTP events', authenticated_sse_navigation: true, results: report }, null, 2));
+  console.log(JSON.stringify({ ok: true, real_deepseek: true, cv_source: 'simulated HTTP events', cabin_reset_between_categories: true, stroller_nearby_full: strollerNearbyFull, authenticated_sse_navigation: true, results: report }, null, 2));
 } finally {
   abort.abort(); await streamTask; server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   delete process.env.DEEPSEEK_API_KEY;

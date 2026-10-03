@@ -5,21 +5,31 @@
 > **「我负责模块 X，请先读第 1–3 节了解全局和契约，再只按第 4 节里模块 X 的内容执行。」**
 > 第 2 节的接口契约是全队共同的上层接口，任何人不得单方面修改；要改先看第 5 节。
 
-状态：v0.4（2026-10-02）· 契约负责人：模块 C 负责人（集成负责人）
+状态：v0.6（2026-10-03）· 契约负责人：模块 C 负责人（集成负责人）
 
 ---
 
-## 0. v0.4 / v0.5 补充
+## 0. v0.4 / v0.5 / v0.6 补充
 
-### v0.5 车内导航补充
+本分支已同步 `main@353765a`。最新视觉 `zone.boarding/dwell_seconds`、手动 Preview、回放模式、iOS App 和 `RUNBOOK.md` 均保留。完成旅程后的下一预约对应新的模拟公交，重置车厢；尚未完成的当前公交仍保留占用。以下 v0.6 补充继续定义婴儿车分离和近座优先行为。
 
-手机 App 在独立项目内，本仓库只下发导航数据。LLM 在生成已校验动作和座位目标的同一次响应中生成 `navigation_steps` 英文指引，不另外发起一次推理。服务端先按模拟车厢布局计算从单入口内侧、面朝车内开始的路线；模型不得更换目标、左右转顺序或距离。距离是模型几何的近似水平米数，不是真实定位测量。
+### v0.6 婴儿车停车与附近就座补充
+
+`STROLLER` 的乘客和推车有两个不同目标：`Result.boarding_target` 仍为乘客的 `SEAT`，优先轮椅区附近的第一排 `S02/S03`；两座都满时依次选择下一层低地板靠过道空座 `S05/S06`、`S08/S09`，上一层无空座才进入下一层。新增可选 `Result.equipment_target` 为 `{type:'WHEELCHAIR_BAY',id:'WHEELCHAIR_BAY'}`，表示推车停车目标。轮椅区或折叠座 F01 已占用、六个支持座位都满时必须 `NEEDS_CONFIRMATION`；不使用靠窗穿座路线或后排台阶路线。`WHEELCHAIR` 保持人椅一体，`boarding_target` 为轮椅区，`equipment_target` 为 null。其他类别的 `equipment_target` 为 null。
+
+`cabin_navigation`、`journey`、`journey.animation` 和 `Snapshot.navigation` 同步新增可选 `equipment_target`。STROLLER 的路线先推车到轮椅区，再由乘客走向实际分配空座；`navigation_steps` 新增 `PARK_STROLLER` maneuver，文字提示遵从安全员停车指导，距离为 null。较远座位的停车后行走距离按对应几何计算，不复用 S03 的距离。App 应展示该步骤的 `text`，不把最终座位编号理解成推车目标。旧 App 输入接口和动作枚举不变，手机 UI 仍由独立项目适配。
+
+孪生 `passengerJourney` 新增可选 `equipmentDestination`，值同设备停车目标。旧帧不带该字段仍可解析；新 STROLLER 帧从入口推车到轮椅区，在停车点分离，推车保留在轮椅区，乘客沿过道到实际分配座位，直到安全员确认阶段。STROLLER 上车展示总时长 22000 ms，其它类别仍为 16000 ms。停车时乘客脚点约 `x=-1.55,z=0.08`，推车中心约 `x=-1.55,z=-0.54`；这些只属于模拟地图。完成的模拟旅程同时占用轮椅区和分配座位，不能再把该区分给另一位轮椅或推车乘客。
+
+### v0.5 车内导航补充（保留；婴儿车以 v0.6 为准）
+
+手机 App 源码已随最新 main 纳入 `app/`；本次 dashboard 集成只下发导航数据，不改 App UI。LLM 在生成已校验动作和座位目标的同一次响应中生成 `navigation_steps` 英文指引，不另外发起一次推理。服务端先按模拟车厢布局计算从单入口内侧、面朝车内开始的路线；模型不得更换目标、左右转顺序或距离。距离是模型几何的近似水平米数，不是真实定位测量。
 
 `Result.cabin_navigation` 新增为 `null` 或 `{layout_id,origin:{type:'ENTRANCE',id:'SINGLE_ENTRANCE',facing:'INTO_BUS'},target,steps,mode:'map_based',simulated:true,requires_operator:true}`。每个 step 为 `{step:number,maneuver:'START'|'STRAIGHT'|'TURN_LEFT'|'TURN_RIGHT'|'ARRIVE',distance_m:number|null,text:string}`；非直行步骤的距离为 null。方向相对于乘客当前面向，不是地图北向；首步明确入口和朝向，末步要求安全员确认，不声明已固定或可发车。
 
 上车阶段的 `Snapshot.navigation.steps` 携带这份路线，`instruction` 为步骤文字；`cabin_route` 携带原始车内导航对象，供 App 提前获知路径。预约/等候阶段的 steps 为空，不提示乘客提前往车内走。仍通过既有 `navigation` SSE 和 `/api/state` 下发。没有乘客实时坐标或逐步完成回执，因此不声称实时转弯纠偏，也不按播放时间自动确认真实乘客已走到某一步。
 
-### v0.4 联调补充（保留；车内导航以 v0.5 为准，旧客户端可忽略新增字段）
+### v0.4 联调补充（保留；车内导航以 v0.5/v0.6 为准，旧客户端可忽略新增字段）
 
 - 手机导航：`Snapshot.navigation` 为 `null` 或 `{id, revision, phase, destination, instruction, simulated:true, animation}`。`phase` 为 `TO_STOP / WAIT_AT_STOP / BOARD_BUS / TO_SEAT / TO_WHEELCHAIR_BAY`，`destination` 为 `{type:'BUS_STOP'|'SEAT'|'WHEELCHAIR_BAY',id}`；只提供已知站点 ID 和文字指引，不伪造 GPS 路线。LLM 生成并通过校验后立即推送，不必等下一条 CV 心跳。SSE 新增 `navigation`，data 为 `{navigation,snapshot}`；`result` 的 data 新增 `snapshot`。旧客户端可继续读 `snapshot` 或轮询 `/api/state`。取消/过期时导航为 null。
 - 手机端为独立项目，本仓库不实现手机 UI。中枢只按 HTTP/SSE 契约下发 navigation、journey.guidance 和 animation 时钟，手机端自行呈现；dashboard 同步展示这份数据。

@@ -94,7 +94,7 @@ Set `NEXT_PUBLIC_API_BASE_URL` or enter the server URL in Connection settings, a
 
 ## v0.4 integration update — 2026-10-03
 
-This section and the v0.4/v0.5 supplements in the root `PROMPT.md` supersede earlier journey and publisher details above. Existing endpoints, input envelopes, authentication and external App deployment options remain supported. Real DeepSeek validation is recorded below and in `HANDOFF.md` section 7.5; live-camera and independent-App acceptance remain outstanding.
+This section and the v0.4/v0.5/v0.6 supplements in the root `PROMPT.md` supersede earlier journey and publisher details above. Existing endpoints, input envelopes, authentication and external App deployment options remain supported. Real DeepSeek validation is recorded below and in `HANDOFF.md` section 7.5; live-camera and independent-App acceptance remain outstanding.
 
 ### Three inputs and shared responses
 
@@ -124,7 +124,7 @@ Each journey transition, planning completion, cancellation and expiry broadcasts
 
 `journey.animation` is `null` or `{id, phase:'arrival'|'boarding', aid, started_at, duration_ms, target}`. Times are hub epoch milliseconds. Clients deduplicate by animation ID and derive the remaining progress from the start time. Heartbeats, duplicate input IDs, snapshot refreshes and reconnects must not restart animations. The dashboard may also display the short `summary`; the passenger App shows guidance and the assigned position instead of planner implementation details.
 
-The passenger App is a separate project; this repository does not implement phone UI. The hub delivers navigation and authoritative journey snapshots over the existing HTTP/SSE interfaces. Configure the App's hub URL, Bearer token, allowed origin and compatible HTTP/HTTPS setup as described above; the App is responsible for rendering those optional fields.
+The native passenger App is now included under `app/` by main@353765a; this dashboard integration does not modify its UI. The hub delivers navigation and authoritative journey snapshots over the existing HTTP/SSE interfaces. Configure the App's hub URL, Bearer token, allowed origin and compatible HTTP/HTTPS setup as described above; the App is responsible for rendering those optional fields. See `HANDOFF-APP.md` and `RUNBOOK.md` at the repository root.
 
 ### v0.5: directional cabin guidance
 
@@ -132,8 +132,18 @@ The same LLM response now verbalizes a trusted interior route, not just a seat I
 
 `Snapshot.navigation.cabin_route` carries the prepared interior route immediately after planning; `navigation.steps` is empty before the boarding phase and carries the same steps in `TO_SEAT` / `TO_WHEELCHAIR_BAY`. Its `instruction` contains those spoken-style steps. Turns are relative to the passenger's current heading, starting at the interior threshold and facing into the bus. For S03, the route is approximately: straight 0.9 m, right, straight 0.7 m, right, straight 0.5 m, then stop for operator assistance. The App still uses `/api/events` or `/api/state`; no new input API is required. Without passenger localisation or step acknowledgements, this is a map-based route description, not turn-by-turn live tracking.
 
+### v0.6: park the stroller before nearby seating
+
+For `STROLLER`, `boarding_target` is the person's free seat, preferring S02/S03. If both are occupied, use the next available tier S05/S06, then S08/S09; never bypass a nearer available tier. These six low-floor aisle seats have supported paths without crossing window seats or rear steps. Optional `equipment_target` is `{type:'WHEELCHAIR_BAY',id:'WHEELCHAIR_BAY'}`. The bay and F01 must be unoccupied. If all six supported seats or the parking bay are unavailable, request operator confirmation. `WHEELCHAIR` keeps the person and chair together at the bay and has no separate equipment target.
+
+`Result.cabin_navigation`, `journey`, `journey.animation` and `Snapshot.navigation` carry the optional `equipment_target`. Stroller directions first reach the bay parking point, include a `PARK_STROLLER` maneuver with null distance and operator-assistance text, then continue to the person's seat. Clients should render its `text`; the final seat is not the stroller's destination. The original input endpoints and action enum remain unchanged.
+
+The twin receives optional `passengerJourney.equipmentDestination`. In the new stroller preview, the person stops at the handle position (x=-1.55,z=0.08) while the stroller centres in the bay (x=-1.55,z=-0.54), then walks to the assigned seat. The parked stroller remains visible after the seated actor hand-off. Farther-seat paths use their own aisle distances and parking progress, rather than reusing S03 geometry. Its open-loop boarding preview lasts 22000 ms; other categories remain at 16000 ms. A consumed stroller journey reserves both bay and seat in the simulated cabin. These fields do not authorize real securement or departure.
+
+The latest main serves one passenger per simulated bus: a new booking after a completed journey resets the cabin to the fixture, representing a fresh bus. A booking before completion does not clear occupied resources. The existing journey keeps its assigned targets until it is replaced; no real occupancy or departure is inferred.
+
 ### Delivery and validation
 
 `yolo_bridge.py` now uses a background FIFO outbox. Failed delivery retains the exact event ID, observation time and body, and retries the oldest event first. Only adjacent, never-attempted `present` events for the same visit can be coalesced; transitions and attempted envelopes are kept. The outbox is in memory, and shutdown reports any pending count rather than claiming persistence.
 
-Vision health exposes `pending_signals`, `signal_error` and the last acknowledged `last_signal`, without exposing credentials. Pure vision tests pass 31 checks: the existing 21 plus 10 delivery tests. Dashboard has 81 passing checks and the twin has 12. A real DeepSeek single-call check passed for wheelchair, cane, stroller and visual assistance over authenticated HTTP/SSE, including all three feedback rounds and directional navigation. CV events in that check are simulated, not a physical-camera or external-App acceptance test. Run `node scripts/check-journey.mjs --key-stdin` from `dashboard/` to repeat it; it makes four paid model calls and rejects rules/fallback results. See `HANDOFF.md` section 7.5 for the acceptance record.
+Vision health exposes `pending_signals`, `signal_error` and the last acknowledged `last_signal`, without exposing credentials. Pure vision tests pass 31 checks: the existing 21 plus 10 delivery tests. The v0.6 dashboard has 100 passing checks and the twin has 15. The v0.5 real DeepSeek check passed for four categories; v0.6 has additionally passed real stroller via-bay parking, farther-seat fallback when S02/S03 are full, and wheelchair direct-to-bay navigation over authenticated HTTP/SSE. CV inputs are simulated, not a physical-camera or external-App acceptance test. Run `node scripts/check-journey.mjs --key-stdin --categories STROLLER,WHEELCHAIR` from `dashboard/` for two paid model calls, or omit `--categories` for four. Add `--categories STROLLER --stroller-nearby-full` to test the farther-seat branch in one paid call. Each category uses an independently reset simulated cabin; same-bus resource contention is covered by regression tests. Rules/fallback results cannot pass the paid check. See `HANDOFF.md` sections 7.5 and 9 for acceptance records.

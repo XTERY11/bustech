@@ -27,11 +27,16 @@ const boardingTarget = {
   },
   required: ['type', 'id'], additionalProperties: false,
 };
+const equipmentTarget = {
+  type: ['object', 'null'],
+  properties: { type: { type: 'string', enum: ['WHEELCHAIR_BAY'] }, id: { type: 'string', enum: ['WHEELCHAIR_BAY'] } },
+  required: ['type', 'id'], additionalProperties: false,
+};
 const navigationSteps = {
   type: ['array', 'null'], minItems: 2, maxItems: 16,
   items: obj({
     step: { type: 'integer', minimum: 1, maximum: 16 },
-    maneuver: { type: 'string', enum: ['START', 'STRAIGHT', 'TURN_LEFT', 'TURN_RIGHT', 'ARRIVE'] },
+    maneuver: { type: 'string', enum: ['START', 'STRAIGHT', 'TURN_LEFT', 'TURN_RIGHT', 'PARK_STROLLER', 'ARRIVE'] },
     distance_m: num(20),
     text: text(200),
   }, ['step', 'maneuver', 'distance_m', 'text'], false),
@@ -101,6 +106,7 @@ export const MODEL_OUTPUT_SCHEMA = {
     plan_status: en(['READY', 'NEEDS_CONFIRMATION', 'CANNOT_EXECUTE']),
     actions: { type: 'array', minItems: 1, maxItems: ACTIONS.length, uniqueItems: true, items: { type: 'string', enum: ACTIONS } },
     boarding_target: boardingTarget,
+    equipment_target: equipmentTarget,
     navigation_steps: navigationSteps,
-  }, ['request_id', 'plan_status', 'decision_summary', 'actions', 'boarding_target', 'navigation_steps'], false),
+  }, ['request_id', 'plan_status', 'decision_summary', 'actions', 'boarding_target', 'equipment_target', 'navigation_steps'], false),
 };

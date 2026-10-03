@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SEATS, createSeatOccupancy, getCabinSnapshot } from '../src/data/cabinLayout';
+import { CABIN, SEATS, createSeatOccupancy, getCabinSnapshot } from '../src/data/cabinLayout';
 import { createVehicleStore } from '../src/state/vehicleState';
 import { connectTelemetry, normalizeArrival, normalizePassengerJourney, normalizeTelemetry } from '../src/adapters/telemetryAdapter';
 import { MockBusSimulator } from '../src/simulation/mockBus';
-import { buildPassengerPath, journeyStageTarget, samplePassengerPath } from '../src/simulation/passengerPath';
+import { buildPassengerPath, buildStrollerJourneyPath, journeyStageTarget, journeyVisibility, samplePassengerPath, sampleStrollerJourney, STROLLER_FORWARD_OFFSET } from '../src/simulation/passengerPath';
 import { advanceArrivalProgress, arrivalPosition, ARRIVAL_SECONDS, wheelRotationForTravel } from '../src/simulation/arrival';
 import { BUS } from '../src/components/BusDigitalTwin/dimensions';
 
@@ -210,4 +210,85 @@ test('passenger paths begin outside, pass the doorway, and terminate at their va
   assert.equal(buildPassengerPath({ type: 'SEAT', id: 'F01' }), null);
   assert.ok(journeyStageTarget('boarding') < journeyStageTarget('navigating'));
   assert.equal(journeyStageTarget('secured'), 1);
+});
+
+test('equipment telemetry accepts stroller parking before every supported aisle-side seat, with old frames unchanged', () => {
+  const base = { journeyId: 'stroller-1', aid: 'stroller', stage: 'navigating', progress: 0.5,
+    destination: { type: 'SEAT', id: 'S02' } };
+  const equipmentDestination = { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' };
+  const valid = { ...base, equipmentDestination };
+  assert.deepEqual(normalizePassengerJourney(valid), valid);
+  for (const id of ['S02', 'S03', 'S05', 'S06', 'S08', 'S09']) {
+    assert.deepEqual(normalizePassengerJourney({ ...valid, destination: { type: 'SEAT', id } }),
+      { ...valid, destination: { type: 'SEAT', id } });
+  }
+  assert.deepEqual(normalizePassengerJourney(base), base, 'old frames must not invent equipment parking');
+  assert.deepEqual(normalizePassengerJourney({ ...base, equipmentDestination: null }), { ...base, equipmentDestination: null });
+  for (const invalid of [
+    { ...valid, aid: 'wheelchair' }, { ...valid, aid: 'cane' },
+    ...['S01', 'S04', 'S07', 'S10', 'S16', 'F01', 'S99'].map(id => ({ ...valid, destination: { type: 'SEAT', id } })),
+    { ...valid, destination: { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' } },
+    { ...base, equipmentDestination: { type: 'SEAT', id: 'S03' } },
+    { ...base, equipmentDestination: { type: 'WHEELCHAIR_BAY', id: 'S03' } },
+    { ...base, equipmentDestination: [] }, { ...base, equipmentDestination: 'WHEELCHAIR_BAY' },
+  ]) assert.equal(normalizePassengerJourney(invalid), undefined);
+  const store = createVehicleStore();
+  store.setVehicleState(normalizeTelemetry({ passengerJourney: valid }));
+  equipmentDestination.id = 'mutated';
+  assert.equal(store.getState().passengerJourney?.equipmentDestination?.id, 'WHEELCHAIR_BAY');
+  store.setVehicleState(normalizeTelemetry({ door: 'open' }));
+  assert.equal(store.getState().passengerJourney?.equipmentDestination?.id, 'WHEELCHAIR_BAY');
+  store.setVehicleState(normalizeTelemetry({ passengerJourney: { ...base, equipmentDestination: null } }));
+  assert.equal(store.getState().passengerJourney?.equipmentDestination, null);
+});
+
+test('stroller via-bay paths park at the true centre before the person continues to any supported near or farther seat', () => {
+  const equipment = { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' } as const;
+  const expectedParkingProgress = { S02: 0.6598212848252332, S03: 0.6598212848252332,
+    S05: 0.573402583610456, S06: 0.573402583610456, S08: 0.5069994057108516, S09: 0.5069994057108516 };
+  for (const id of ['S02', 'S03', 'S05', 'S06', 'S08', 'S09'] as const) {
+    const plan = buildStrollerJourneyPath({ type: 'SEAT', id }, equipment)!;
+    assert.ok(plan);
+    assert.equal(plan.path.length, 9);
+    assert.ok(plan.parkingProgress > 0.5 && plan.parkingProgress < 0.67);
+    assert.ok(Math.abs(plan.parkingProgress - expectedParkingProgress[id]) < 1e-9);
+    const seat = SEATS.find(candidate => candidate.id === id)!;
+    assert.equal(seat.zone, 'low-floor');
+    assert.deepEqual(plan.path[plan.path.length - 2], [seat.position[0], CABIN.floorY, 0.24]);
+    assert.deepEqual(plan.parkingPoint.slice(0, 2), [CABIN.wheelchairBay.x, CABIN.floorY]);
+    assert.ok(Math.abs(plan.parkingPoint[2] - 0.08) < 1e-9);
+    assert.equal(plan.parkingPoint[2] - STROLLER_FORWARD_OFFSET, CABIN.wheelchairBay.z);
+    const before = sampleStrollerJourney(plan, plan.parkingProgress - 0.00001);
+    assert.equal(before.equipmentParked, false);
+    assert.ok(Math.abs(Math.hypot(before.equipment.position[0] - before.passenger.position[0],
+      before.equipment.position[2] - before.passenger.position[2]) - STROLLER_FORWARD_OFFSET) < 1e-9);
+    const parked = sampleStrollerJourney(plan, plan.parkingProgress);
+    assert.equal(parked.equipmentParked, true);
+    assert.deepEqual(parked.passenger.position, plan.parkingPoint);
+    assert.deepEqual(parked.passenger.tangent, [0, 0, -1]);
+    assert.deepEqual(parked.equipment, { position: [CABIN.wheelchairBay.x, CABIN.floorY, CABIN.wheelchairBay.z], tangent: [0, 0, -1] });
+    assert.ok(Math.hypot(...before.equipment.position.map((value, axis) => value - parked.equipment.position[axis])) < 0.001);
+    const final = sampleStrollerJourney(plan, 1);
+    assert.deepEqual(final.passenger.position, seat.position);
+    assert.deepEqual(final.equipment, parked.equipment, 'the stroller must not follow the passenger to the seat');
+    const after = sampleStrollerJourney(plan, plan.parkingProgress + 0.01);
+    assert.ok(after.passenger.position[2] > plan.parkingPoint[2], 'the passenger returns toward the aisle after releasing the stroller');
+    assert.deepEqual(after.equipment, parked.equipment);
+  }
+  assert.equal(buildStrollerJourneyPath({ type: 'SEAT', id: 'S03' }), null);
+  assert.equal(buildStrollerJourneyPath({ type: 'SEAT', id: 'S03' }, null), null);
+  for (const id of ['S01', 'S04', 'S07', 'S10', 'S16'] as const) assert.equal(buildStrollerJourneyPath({ type: 'SEAT', id }, equipment), null);
+  assert.equal(buildStrollerJourneyPath(equipment, equipment), null);
+});
+
+test('seat hand-off hides only the person, keeps separately parked equipment, and never splits a wheelchair passenger', () => {
+  const seat = { type: 'SEAT', id: 'S03' } as const;
+  const bay = { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' } as const;
+  assert.deepEqual(journeyVisibility('navigating', seat, true), { passenger: true, equipment: true });
+  assert.deepEqual(journeyVisibility('seated', seat, true), { passenger: false, equipment: true });
+  assert.deepEqual(journeyVisibility('hidden', seat, true), { passenger: false, equipment: false });
+  assert.deepEqual(journeyVisibility('seated', seat, false), { passenger: false, equipment: false });
+  assert.deepEqual(journeyVisibility('seated', bay, false), { passenger: true, equipment: false });
+  assert.deepEqual(samplePassengerPath(buildPassengerPath(bay)!, 1).position,
+    [CABIN.wheelchairBay.x, CABIN.floorY, CABIN.wheelchairBay.z]);
 });

@@ -57,6 +57,8 @@ export interface PassengerJourney {
   aid: PassengerAid;
   stage: PassengerJourneyStage;
   destination: PassengerDestination;
+  /** Optional stroller parking stop before its passenger continues to its assigned seat. */
+  equipmentDestination?: PassengerDestination | null;
   progress?: number;
 }
 

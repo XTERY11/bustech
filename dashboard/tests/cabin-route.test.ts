@@ -93,3 +93,63 @@ test('unsupported, rear, foldable and malformed targets fail closed; results nev
   assert.equal(cabinRouteFor(target)?.target.id, 'S03');
   assert.equal(cabinRouteFor(target)?.steps[1].distance_m, 0.9);
 });
+
+test('stroller routes visit the handle parking point before turning around and walking alone to any verified low-floor seat', () => {
+  const equipment = { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' };
+  for (const id of safeIds) {
+    const route = cabinRouteFor({ type: 'SEAT', id }, equipment)!;
+    assert.equal(route.steps.length, 15);
+    assert.deepEqual(route.equipment_target, equipment);
+    assert.deepEqual(route.steps.map(step => step.step), Array.from({ length: 15 }, (_, index) => index + 1));
+    assert.deepEqual(route.steps.map(({ maneuver, distance_m }) => [maneuver, distance_m]), [
+      ['START', null], ['STRAIGHT', 0.9], ['TURN_LEFT', null], ['STRAIGHT', 0.2], ['TURN_RIGHT', null], ['STRAIGHT', 0.2],
+      ['PARK_STROLLER', null], ['TURN_RIGHT', null], ['TURN_RIGHT', null], ['STRAIGHT', 0.2], ['TURN_LEFT', null],
+      ['STRAIGHT', Math.round((CABIN_ROUTE_GEOMETRY.seats[id][0] - CABIN_ROUTE_GEOMETRY.stroller_passenger_stop[0]) * 10) / 10],
+      [CABIN_ROUTE_GEOMETRY.seats[id][1] < CABIN_ROUTE_GEOMETRY.aisle_z ? 'TURN_LEFT' : 'TURN_RIGHT', null], ['STRAIGHT', 0.5], ['ARRIVE', null],
+    ]);
+    let position = [...CABIN_ROUTE_GEOMETRY.entrance], heading = [0, -1], parked = false;
+    for (const step of route.steps) {
+      if (step.maneuver === 'TURN_LEFT' || step.maneuver === 'TURN_RIGHT') {
+        heading = step.maneuver === 'TURN_RIGHT' ? [-heading[1], heading[0]] : [heading[1], -heading[0]];
+      } else if (step.maneuver === 'STRAIGHT') {
+        position = position.map((value, axis) => value + heading[axis] * step.distance_m);
+      } else if (step.maneuver === 'PARK_STROLLER') {
+        parked = true;
+        assert.deepEqual(heading.map(value => value || 0), [0, -1]);
+        close(position[0], CABIN_ROUTE_GEOMETRY.stroller_passenger_stop[0], 0.051);
+        close(position[1], CABIN_ROUTE_GEOMETRY.stroller_passenger_stop[1], 0.101);
+        const strollerCenter = position.map((value, axis) => value + heading[axis] * CABIN_ROUTE_GEOMETRY.stroller_ahead_offset);
+        close(strollerCenter[0], CABIN_ROUTE_GEOMETRY.wheelchair_bay[0], 0.051);
+        close(strollerCenter[1], CABIN_ROUTE_GEOMETRY.wheelchair_bay[1], 0.101);
+      }
+    }
+    assert.equal(parked, true);
+    close(position[0], CABIN_ROUTE_GEOMETRY.seats[id][0], 0.051);
+    close(position[1], CABIN_ROUTE_GEOMETRY.seats[id][1], 0.101);
+  }
+});
+
+test('stroller handle stop and forward equipment offset exactly place the aid at the wheelchair-bay centre', () => {
+  close(CABIN_ROUTE_GEOMETRY.stroller_passenger_stop[0], CABIN_ROUTE_GEOMETRY.wheelchair_bay[0]);
+  close(CABIN_ROUTE_GEOMETRY.stroller_passenger_stop[1] - CABIN_ROUTE_GEOMETRY.stroller_ahead_offset, CABIN_ROUTE_GEOMETRY.wheelchair_bay[1]);
+  const source = readFileSync(new URL('../../twin/src/simulation/passengerPath.ts', import.meta.url), 'utf8');
+  const offset = source.match(/STROLLER_FORWARD_OFFSET\s*=\s*([\d.]+)\s*;/);
+  assert.ok(offset, 'the twin must expose its stroller model offset');
+  close(CABIN_ROUTE_GEOMETRY.stroller_ahead_offset, Number(offset[1]));
+});
+
+test('a separate parking target permits all six mapped clear-approach low-floor seats, but not window or raised seats, and is cloned defensively', () => {
+  const bay = { type: 'WHEELCHAIR_BAY', id: 'WHEELCHAIR_BAY' };
+  for (const equipment of [undefined, null]) assert.ok(!cabinRouteFor({ type: 'SEAT', id: 'S03' }, equipment)?.steps.some(step => step.maneuver === 'PARK_STROLLER'));
+  for (const equipment of [[], 'WHEELCHAIR_BAY', {}, { type: 'SEAT', id: 'S02' }, { type: 'WHEELCHAIR_BAY', id: 'S03' }]) {
+    assert.equal(cabinRouteFor({ type: 'SEAT', id: 'S03' }, equipment), null);
+  }
+  for (const target of [{ type: 'SEAT', id: 'S01' }, { type: 'SEAT', id: 'S04' }, { type: 'SEAT', id: 'S07' }, { type: 'SEAT', id: 'S10' }, { type: 'SEAT', id: 'F01' }, bay]) assert.equal(cabinRouteFor(target, bay), null);
+  for (const id of safeIds) assert.equal(cabinRouteFor({ type: 'SEAT', id }, bay)?.steps[6].maneuver, 'PARK_STROLLER');
+  const target = { type: 'SEAT', id: 'S03' }, route = cabinRouteFor(target, bay)!;
+  route.equipment_target!.id = 'OTHER_BAY';
+  route.steps[6].maneuver = 'ARRIVE';
+  assert.equal(bay.id, 'WHEELCHAIR_BAY');
+  assert.deepEqual(cabinRouteFor(target, bay)?.equipment_target, bay);
+  assert.equal(cabinRouteFor(target, bay)?.steps[6].maneuver, 'PARK_STROLLER');
+});

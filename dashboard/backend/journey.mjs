@@ -1,12 +1,14 @@
 // Shared open-loop presentation state. A camera exit is not proof of boarding or securement.
 export const STAGES = ['IDLE', 'BOOKED', 'AT_STOP', 'ON_BOARD'];
 export const DOCK_MS = 4200, ARRIVAL_MS = 10000, BOARDING_MS = 16000;
+export const STROLLER_BOARDING_MS = 22000;
 const VISIBLE = {
   WHEELCHAIR: ['WHEELCHAIR'], STROLLER: ['STROLLER'], WALKER: ['WALKER'],
   CANE: ['CANE', 'CRUTCH'], CRUTCH: ['CRUTCH', 'CANE'], VISUAL_ASSISTANCE: ['CANE'],
 };
 const AIDS = { WHEELCHAIR: 'wheelchair', STROLLER: 'stroller', CANE: 'cane', CRUTCH: 'crutch',
   WALKER: 'walker', VISUAL_ASSISTANCE: 'visual', HEARING_ASSISTANCE: 'hearing' };
+const STROLLER_SEATS = ['S02', 'S03', 'S05', 'S06', 'S08', 'S09'];
 export const matches = (need, labels) => Boolean(need) && labels.length > 0 &&
   (!VISIBLE[need] || labels.some(label => VISIBLE[need].includes(label)));
 export const aidForNeed = need => AIDS[need] ?? 'none';
@@ -16,7 +18,7 @@ export function advance(journey, channel, payload, _planStatus, { eventId, now =
     const active = payload?.active === true && payload?.intent === 'BOARDING';
     return { journey_id: eventId ?? payload?.event_id ?? null, revision: (journey.revision ?? 0) + 1,
       stage: active ? 'BOOKED' : 'IDLE', need: active ? payload.accessibility_need ?? 'UNKNOWN' : null,
-      labels: [], matched: false, seat: null, boarding_target: null, completed: false,
+      labels: [], matched: false, seat: null, boarding_target: null, equipment_target: null, completed: false,
       pending_exit: false, animation: null, visit_id: null, roi_id: null, reason: active ? 'booked' : 'cancelled', updated_at: now };
   }
   if (channel !== 'perception' || !journey.need || journey.completed || journey.stage === 'IDLE') return journey;
@@ -50,18 +52,22 @@ export function advance(journey, channel, payload, _planStatus, { eventId, now =
 /** The initial LLM result can arrive after either CV event. Never lose that pending exit. */
 export function reconcile(journey, result, now = Date.now()) {
   if (journey.stage === 'IDLE' || journey.completed) return journey;
-  const target = result?.plan_status === 'READY' ? result.boarding_target ?? null : null;
-  const next = { ...journey, boarding_target: target, seat: target?.id ?? null };
+  let target = result?.plan_status === 'READY' ? result.boarding_target ?? null : null;
+  const equipment = result?.plan_status === 'READY' && journey.need === 'STROLLER' ? result.equipment_target ?? null : null;
+  if (journey.need === 'STROLLER' && (equipment?.type !== 'WHEELCHAIR_BAY' || equipment.id !== 'WHEELCHAIR_BAY'
+    || target?.type !== 'SEAT' || !STROLLER_SEATS.includes(target.id))) target = null;
+  const next = { ...journey, boarding_target: target, equipment_target: target ? equipment : null, seat: target?.id ?? null };
   if (next.stage !== 'AT_STOP' || !next.matched || !target) {
     next.animation = null;
     return next;
   }
   next.animation ??= { id: `${next.journey_id}:${next.visit_id ?? 'legacy'}:${next.revision}:arrival`, phase: 'arrival', aid: aidForNeed(next.need),
-    started_at: now, duration_ms: ARRIVAL_MS, target };
+    started_at: now, duration_ms: ARRIVAL_MS, target, equipment_target: next.equipment_target };
   if (next.pending_exit && now >= next.animation.started_at + ARRIVAL_MS) {
     next.stage = 'ON_BOARD'; next.completed = true; next.pending_exit = false; next.reason = 'boarding_preview';
     next.animation = { id: `${next.journey_id}:boarding`, phase: 'boarding', aid: aidForNeed(next.need),
-      started_at: now, duration_ms: BOARDING_MS, target };
+      started_at: now, duration_ms: next.need === 'STROLLER' ? STROLLER_BOARDING_MS : BOARDING_MS,
+      target, equipment_target: next.equipment_target };
   }
   return next;
 }
@@ -91,6 +97,8 @@ export function guidance(journey, context, result, now = Date.now()) {
   }
   if (journey.stage === 'ON_BOARD') return journey.boarding_target?.type === 'WHEELCHAIR_BAY'
     ? say('Follow the wheelchair-space guidance', 'Move to the wheelchair space beside the entrance. The safety operator must confirm positioning and securement before departure.')
+    : journey.equipment_target ? say(`Park the stroller, then follow guidance to seat ${journey.seat}`,
+      `Park the stroller in the wheelchair bay following the safety operator's instructions, then follow the highlighted path to assigned seat ${journey.seat}. Please wait for the operator's confirmation.`)
     : say(`Follow guidance to seat ${journey.seat}`, `Follow the highlighted path to seat ${journey.seat} near the entrance. Please sit down and wait for the safety operator's confirmation.`);
   if (journey.reason === 'expired') return say('Booking expired', 'Your booking has expired. Please submit a new assistance request.');
   if (journey.reason === 'cancelled') return say('Booking cancelled', 'Your assistance request has been cancelled.');
@@ -107,6 +115,7 @@ export function navigation(journey, context, result, now = Date.now()) {
     phase = destination.type === 'SEAT' ? 'TO_SEAT' : 'TO_WHEELCHAIR_BAY';
   }
   return { id: journey.journey_id, revision: journey.revision ?? 0, phase, destination,
+    equipment_target: journey.equipment_target ?? null,
     instruction: guidance(journey, context, result, now).display_text, simulated: true, animation: journey.animation ?? null,
     steps: journey.stage === 'ON_BOARD' ? result.cabin_navigation?.steps ?? [] : [], cabin_route: result.cabin_navigation ?? null };
 }
